@@ -80,7 +80,9 @@ Cannot find native binding
   ```json
   "optionalDependencies": {
     "@tailwindcss/oxide-linux-x64-gnu": "4.3.3",
-    "lightningcss-linux-x64-gnu": "1.32.0"
+    "@tailwindcss/oxide-linux-arm64-gnu": "4.3.3",
+    "lightningcss-linux-x64-gnu": "1.32.0",
+    "lightningcss-linux-arm64-gnu": "1.32.0"
   }
   ```
 
