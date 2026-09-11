@@ -2,12 +2,22 @@
 
 import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { Loader2, LogOut, PhoneCall, Search, Sparkles, Image as ImageIcon, SearchX } from "lucide-react";
+import {
+  Loader2,
+  LogOut,
+  PhoneCall,
+  Search,
+  Sparkles,
+  Image as ImageIcon,
+  SearchX,
+  Shield,
+} from "lucide-react";
 import Avatar from "./Avatar";
 import StoriesRow from "./StoriesRow";
 import { api } from "@/lib/api";
 import { timeHHmm, parseCallContent, callLogLabel } from "@/lib/format";
 import type { ConversationListItem, PublicUser, StoryGroup } from "@/lib/types";
+import { parseImageMessage } from "@/lib/message-content";
 
 type Props = {
   me: PublicUser;
@@ -25,7 +35,10 @@ type Props = {
 function previewText(conv: ConversationListItem, meId: string) {
   const lm = conv.lastMessage;
   if (!lm) return "Нет сообщений";
-  if (lm.type === "image") return "🖼 Фото";
+  if (lm.type === "image") {
+    const image = parseImageMessage(lm.content);
+    return image.caption ? `🖼 ${image.caption.replace(/\n/g, " ").slice(0, 56)}` : "🖼 Фото";
+  }
   if (lm.type === "call") {
     const info = parseCallContent(lm.content);
     if (info) return `📞 ${callLogLabel(info)}`;
@@ -90,7 +103,12 @@ export default function Sidebar({
     <aside className="flex h-full w-full flex-col border-r border-white/8 bg-[#0c0c17]/80 backdrop-blur-xl">
       {/* Шапка */}
       <div className="flex items-center gap-3 px-5 pt-5 pb-3">
-        <button onClick={onOpenProfile} className="transition-transform hover:scale-105 active:scale-95">
+        <button
+          type="button"
+          onClick={onOpenProfile}
+          title="Профиль и приватность"
+          className="transition-transform hover:scale-105 active:scale-95"
+        >
           <Avatar name={me.displayName} src={me.avatarUrl} size={44} online={me.showOnline} />
         </button>
         <div className="min-w-0 flex-1">
@@ -101,6 +119,15 @@ export default function Sidebar({
           <p className="truncate text-xs text-white/35">@{me.username}</p>
         </div>
         <button
+          type="button"
+          onClick={onOpenProfile}
+          title="Приватность и настройки профиля"
+          className="glass flex h-9 w-9 items-center justify-center rounded-xl text-white/50 transition-colors hover:text-violet-200"
+        >
+          <Shield className="h-4 w-4" />
+        </button>
+        <button
+          type="button"
           onClick={onLogout}
           title="Выйти"
           className="glass flex h-9 w-9 items-center justify-center rounded-xl text-white/50 transition-colors hover:text-rose-300"

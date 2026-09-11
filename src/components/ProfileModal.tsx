@@ -239,7 +239,7 @@ export default function ProfileModal({ me, onClose, onSaved, onDeletedAccount }:
 
         <button
           onClick={() => void save()}
-          disabled={saving || displayName.trim().length === 0}
+          disabled={saving || busy !== null || displayName.trim().length === 0}
           className="btn-gradient flex w-full items-center justify-center gap-2 rounded-2xl py-3.5 text-[15px] font-semibold text-white disabled:cursor-not-allowed"
         >
           {saving && <Loader2 className="h-4 w-4 animate-spin" />}
@@ -282,25 +282,41 @@ function Toggle({
   hint: string;
 }) {
   return (
-    <button onClick={() => onChange(!checked)} className="flex w-full items-center gap-3 text-left">
-      <span className="glass flex h-9 w-9 shrink-0 items-center justify-center rounded-xl">{icon}</span>
-      <span className="min-w-0 flex-1">
-        <span className="block text-sm font-medium text-white/85">{label}</span>
-        <span className="block text-xs leading-snug text-white/35">{hint}</span>
-      </span>
-      <span
-        className={`relative h-6 w-11 shrink-0 rounded-full transition-colors ${
-          checked ? "bg-violet-500" : "bg-white/15"
-        }`}
-      >
-        <motion.span
-          layout
-          transition={{ type: "spring", bounce: 0.3, duration: 0.3 }}
-          className="absolute top-0.5 h-5 w-5 rounded-full bg-white shadow"
-          style={{ left: checked ? "1.375rem" : "0.125rem" }}
-        />
-      </span>
-    </button>
+    <div className="rounded-2xl border border-white/8 bg-black/10 p-3">
+      <div className="flex items-start gap-3">
+        <span className="glass flex h-9 w-9 shrink-0 items-center justify-center rounded-xl">{icon}</span>
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-medium text-white/85">{label}</p>
+          <p className="mt-0.5 text-xs leading-snug text-white/35">{hint}</p>
+        </div>
+      </div>
+      <div className="mt-3 grid grid-cols-2 gap-2">
+        <button
+          type="button"
+          onClick={() => onChange(true)}
+          aria-pressed={checked}
+          className={`rounded-xl px-3 py-2 text-xs font-semibold transition-colors ${
+            checked
+              ? "bg-emerald-500/20 text-emerald-200 ring-1 ring-emerald-400/40"
+              : "bg-white/5 text-white/35 hover:bg-white/10 hover:text-white/70"
+          }`}
+        >
+          Разрешено
+        </button>
+        <button
+          type="button"
+          onClick={() => onChange(false)}
+          aria-pressed={!checked}
+          className={`rounded-xl px-3 py-2 text-xs font-semibold transition-colors ${
+            !checked
+              ? "bg-rose-500/20 text-rose-200 ring-1 ring-rose-400/40"
+              : "bg-white/5 text-white/35 hover:bg-white/10 hover:text-white/70"
+          }`}
+        >
+          Запрещено
+        </button>
+      </div>
+    </div>
   );
 }
 

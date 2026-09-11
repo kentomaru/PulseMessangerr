@@ -99,6 +99,15 @@ export async function ensureSchema(): Promise<void> {
     alter table users add column if not exists allow_calls boolean not null default true;
     alter table users add column if not exists allow_messages boolean not null default true;
 
+    create table if not exists uploads (
+      name text primary key,
+      owner_id uuid references users(id) on delete cascade,
+      mime_type text not null,
+      data bytea not null,
+      created_at timestamptz not null default now()
+    );
+    alter table uploads add column if not exists owner_id uuid references users(id) on delete cascade;
+
     create table if not exists sessions (
       token text primary key,
       user_id uuid not null references users(id) on delete cascade,

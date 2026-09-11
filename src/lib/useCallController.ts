@@ -1,40 +1,42 @@
 "use client";
 
 /**
- * Контроллер звонков (WebRTC) для Pulse.
+ * WebRTC-контроллер звонков Pulse.
  *
- * Сервер (Next.js API) выступает сигнальным центром через короткий опрос:
- *  1. Звонящий: POST /api/calls        — SDP-offer + статус «ringing».
- *  2. Вызываемый: GET /api/calls/incoming — видит звонок, показывает входящий.
- *  3. Вызываемый: POST /api/calls/[id] {action:"answer"} — SDP-answer.
- *  4. Оба: POST /api/calls/[id] {action:"ice"} — обмен ICE-кандидатами
- *     (GET /api/calls/[id] отдаёт кандидаты второй стороны).
- *  5. POST /api/calls/[id] {action:"hangup"|"decline"} — завершение.
- * Сам аудио/видео поток идёт напрямую между браузерами (P2P), минуя сервер.
+ * Сервер хранит только сигналинг (SDP и ICE-кандидаты). Медиа-потоки идут
+ * напрямую между браузерами. Важные детали:
+ *  — ICE-кандидаты, появившиеся до ответа POST /api/calls, ставятся в очередь;
+ *  — вызываемый никогда не применяет собственный answer как remote description;
+ *  — состояние звонка очищается при реальном разрыве, поэтому повторный звонок
+ *    запускается одним нажатием обычной кнопки вызова.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiError } from "@/lib/api";
-import type {
-  ActiveCall,
-  CallMedia,
-  CallPayload,
-  PublicUser,
-} from "@/lib/types";
+import type { ActiveCall, CallMedia, CallPayload, PublicUser } from "@/lib/types";
 
+const TURN_URL = process.env.NEXT_PUBLIC_TURN_URL;
 const ICE_SERVERS: RTCIceServer[] = [
   { urls: ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"] },
+  { urls: "stun:stun.cloudflare.com:3478" },
+  ...(TURN_URL
+    ? [
+        {
+          urls: TURN_URL,
+          username: process.env.NEXT_PUBLIC_TURN_USERNAME,
+          credential: process.env.NEXT_PUBLIC_TURN_CREDENTIAL,
+        },
+      ]
+    : []),
 ];
 
 export type OngoingCall = ActiveCall;
 export type IncomingCall = CallPayload & { peer: PublicUser };
 
-const INCOMING_POLL_MS = 3_000;
-const CALL_POLL_MS = 1_200;
+const INCOMING_POLL_MS = 2_000;
+const CALL_POLL_MS = 700;
+const DISCONNECTED_GRACE_MS = 8_000;
 
-/**
- * Рингтон для входящего звонка — генерируется через WebAudio,
- * никаких внешних файлов: две ноты по 0.4 с каждые 2 секунды.
- */
+/** Рингтон входящего звонка без внешнего файла. */
 function startRingtone(): { stop: () => void } | null {
   try {
     const Ctx =
@@ -45,25 +47,25 @@ function startRingtone(): { stop: () => void } | null {
     void ctx.resume().catch(() => {});
     let stopped = false;
 
-    const beep = (freq: number, at: number, dur: number) => {
-      const osc = ctx.createOscillator();
+    const beep = (frequency: number, at: number, duration: number) => {
+      const oscillator = ctx.createOscillator();
       const gain = ctx.createGain();
-      osc.type = "sine";
-      osc.frequency.value = freq;
+      oscillator.type = "sine";
+      oscillator.frequency.value = frequency;
       gain.gain.setValueAtTime(0, at);
       gain.gain.linearRampToValueAtTime(0.14, at + 0.04);
-      gain.gain.setValueAtTime(0.14, at + dur - 0.06);
-      gain.gain.linearRampToValueAtTime(0, at + dur);
-      osc.connect(gain).connect(ctx.destination);
-      osc.start(at);
-      osc.stop(at + dur + 0.02);
+      gain.gain.setValueAtTime(0.14, at + duration - 0.06);
+      gain.gain.linearRampToValueAtTime(0, at + duration);
+      oscillator.connect(gain).connect(ctx.destination);
+      oscillator.start(at);
+      oscillator.stop(at + duration + 0.02);
     };
 
     const cycle = () => {
       if (stopped) return;
-      const t0 = ctx.currentTime + 0.02;
-      beep(880, t0, 0.35);
-      beep(660, t0 + 0.42, 0.35);
+      const start = ctx.currentTime + 0.02;
+      beep(880, start, 0.35);
+      beep(660, start + 0.42, 0.35);
     };
     cycle();
     const timer = setInterval(cycle, 2_000);
@@ -90,9 +92,7 @@ export function useCallController(
   const [muted, setMuted] = useState(false);
   const [cameraOn, setCameraOn] = useState(false);
   const [seconds, setSeconds] = useState(0);
-  /** Счётчик изменений удалённого потока — чтобы <video> переподключался. */
   const [streamTick, setStreamTick] = useState(0);
-  /** true, пока идёт запрос на старт/приём звонка (кнопки блокируются). */
   const [starting, setStarting] = useState(false);
 
   const pcRef = useRef<RTCPeerConnection | null>(null);
@@ -100,40 +100,70 @@ export function useCallController(
   const remoteStreamRef = useRef<MediaStream | null>(null);
   const callRef = useRef<OngoingCall | null>(null);
   const incomingRef = useRef<IncomingCall | null>(null);
+  const signalCallIdRef = useRef<string | null>(null);
+  const pendingIceRef = useRef<RTCIceCandidateInit[]>([]);
   const appliedIceRef = useRef(0);
   const answeredRef = useRef(false);
-  const notifyRef = useRef(notify);
-  const meIdRef = useRef(meId);
-  meIdRef.current = meId;
-  const unauthorizedRef = useRef(onUnauthorized);
-  /** Идёт попытка начать/принять звонок — защита от двойного клика. */
   const busyRef = useRef(false);
+  const endingRef = useRef(false);
+  const disconnectedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const ringtoneRef = useRef<{ stop: () => void } | null>(null);
+  const notifyRef = useRef(notify);
+  const unauthorizedRef = useRef(onUnauthorized);
+  const meIdRef = useRef(meId);
+
   notifyRef.current = notify;
   unauthorizedRef.current = onUnauthorized;
-  incomingRef.current = incoming;
+  meIdRef.current = meId;
   callRef.current = call;
+  incomingRef.current = incoming;
 
   const setPhase = useCallback((phase: OngoingCall["phase"]) => {
-    setCall((c) => (c ? { ...c, phase } : c));
+    setCall((current) => {
+      if (!current) return current;
+      const next = { ...current, phase };
+      callRef.current = next;
+      return next;
+    });
+  }, []);
+
+  const clearDisconnectedTimer = useCallback(() => {
+    if (disconnectedTimerRef.current) {
+      clearTimeout(disconnectedTimerRef.current);
+      disconnectedTimerRef.current = null;
+    }
   }, []);
 
   const cleanup = useCallback(() => {
-    try {
-      pcRef.current?.getSenders().forEach((s) => s.track?.stop());
-      pcRef.current?.close();
-    } catch {
-      /* уже закрыт */
-    }
+    clearDisconnectedTimer();
+
+    const pc = pcRef.current;
     pcRef.current = null;
+    if (pc) {
+      // Не даём событию "closed" от нашей очистки выглядеть как новый разрыв.
+      pc.onconnectionstatechange = null;
+      pc.oniceconnectionstatechange = null;
+      try {
+        pc.getSenders().forEach((sender) => sender.track?.stop());
+        pc.close();
+      } catch {
+        /* соединение уже закрыто */
+      }
+    }
+
     ringtoneRef.current?.stop();
     ringtoneRef.current = null;
-    localStreamRef.current?.getTracks().forEach((t) => t.stop());
+    localStreamRef.current?.getTracks().forEach((track) => track.stop());
     localStreamRef.current = null;
+    remoteStreamRef.current?.getTracks().forEach((track) => track.stop());
     remoteStreamRef.current = null;
-    callRef.current = null;
+    signalCallIdRef.current = null;
+    pendingIceRef.current = [];
     appliedIceRef.current = 0;
     answeredRef.current = false;
+    callRef.current = null;
+    incomingRef.current = null;
+
     setCall(null);
     setIncoming(null);
     setSeconds(0);
@@ -141,79 +171,143 @@ export function useCallController(
     setCameraOn(false);
     setStarting(false);
     busyRef.current = false;
-  }, []);
+  }, [clearDisconnectedTimer]);
 
-  const sendIce = useCallback(async (callId: string, side: "caller" | "callee", candidate: RTCIceCandidateInit) => {
+  const sendIce = useCallback(async (callId: string, candidate: RTCIceCandidateInit) => {
     try {
       await api(`/api/calls/${callId}`, {
         method: "POST",
         body: JSON.stringify({ action: "ice", candidate }),
       });
     } catch {
-      /* кандидат дойдет со следующим onicecandidate */
+      // Следующий candidate или обычный опрос всё равно продолжит сигналинг.
     }
   }, []);
 
-  const applyRemoteIce = useCallback(async (info: CallPayload, role: "caller" | "callee") => {
-    const pc = pcRef.current;
-    if (!pc) return;
-    const list = role === "caller" ? info.calleeIce : info.callerIce;
-    const fresh = list.slice(appliedIceRef.current);
-    for (const c of fresh) {
-      try {
-        await pc.addIceCandidate(c);
-      } catch {
-        /* устаревший кандидат */
-      }
-    }
-    appliedIceRef.current = list.length;
-  }, []);
-
-  const createPeer = useCallback(
-    (role: "caller" | "callee"): RTCPeerConnection => {
-      const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
-      const local = localStreamRef.current;
-      if (local) local.getTracks().forEach((t) => pc.addTrack(t, local));
-
-      const remote = new MediaStream();
-      remoteStreamRef.current = remote;
-
-      pc.ontrack = (e) => {
-        e.streams[0]?.getTracks().forEach((t) => {
-          if (!remote.getTracks().some((x) => x.id === t.id)) remote.addTrack(t);
-        });
-        setStreamTick((v) => v + 1);
-      };
-      pc.onicecandidate = (e) => {
-        const c = callRef.current;
-        if (e.candidate && c) void sendIce(c.id, role, e.candidate.toJSON());
-      };
-      pc.onconnectionstatechange = () => {
-        if (pc.connectionState === "failed") {
-          notifyRef.current("Соединение потеряно");
-        }
-      };
-      pcRef.current = pc;
-      return pc;
+  const flushPendingIce = useCallback(
+    async (callId: string) => {
+      const pending = pendingIceRef.current;
+      pendingIceRef.current = [];
+      await Promise.all(pending.map((candidate) => sendIce(callId, candidate)));
     },
     [sendIce],
   );
 
-  /* ─────────── Звонящий ─────────── */
+  const applyRemoteIce = useCallback(
+    async (info: CallPayload, role?: "caller" | "callee") => {
+      const pc = pcRef.current;
+      const currentRole = role ?? callRef.current?.role;
+      if (!pc || !currentRole || !pc.remoteDescription) return;
+
+      const candidates = currentRole === "caller" ? info.calleeIce : info.callerIce;
+      const fresh = candidates.slice(appliedIceRef.current);
+      for (const candidate of fresh) {
+        try {
+          await pc.addIceCandidate(candidate);
+        } catch {
+          // Браузер может отклонить устаревший candidate после смены сети.
+        }
+      }
+      appliedIceRef.current = candidates.length;
+    },
+    [],
+  );
+
+  const finishUnexpected = useCallback(() => {
+    const current = callRef.current;
+    if (!current || endingRef.current) return;
+    endingRef.current = true;
+    const id = current.id;
+    notifyRef.current("Соединение потеряно");
+    void api(`/api/calls/${id}`, {
+      method: "POST",
+      body: JSON.stringify({ action: "hangup" }),
+    }).catch(() => {});
+    cleanup();
+  }, [cleanup]);
+
+  const createPeer = useCallback(
+    (role: "caller" | "callee", callId?: string) => {
+      if (callId) signalCallIdRef.current = callId;
+      const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+      const local = localStreamRef.current;
+      if (local) local.getTracks().forEach((track) => pc.addTrack(track, local));
+
+      const remote = new MediaStream();
+      remoteStreamRef.current = remote;
+
+      pc.ontrack = (event) => {
+        // Некоторые браузеры заполняют event.streams, некоторые могут прислать
+        // только track. В обоих случаях добавляем именно удалённую дорожку.
+        const tracks = [...(event.streams[0]?.getTracks() ?? []), event.track];
+        for (const track of tracks) {
+          if (!remote.getTracks().some((existing) => existing.id === track.id)) {
+            remote.addTrack(track);
+          }
+        }
+        setStreamTick((value) => value + 1);
+      };
+
+      pc.onicecandidate = (event) => {
+        if (!event.candidate) return;
+        const callIdForIce = signalCallIdRef.current;
+        const candidate = event.candidate.toJSON();
+        if (callIdForIce) {
+          void sendIce(callIdForIce, candidate);
+        } else {
+          pendingIceRef.current.push(candidate);
+        }
+      };
+
+      pc.onconnectionstatechange = () => {
+        if (pc.connectionState === "connected") {
+          clearDisconnectedTimer();
+          setPhase("active");
+          return;
+        }
+        if (pc.connectionState === "disconnected") {
+          clearDisconnectedTimer();
+          disconnectedTimerRef.current = setTimeout(finishUnexpected, DISCONNECTED_GRACE_MS);
+          return;
+        }
+        if (pc.connectionState === "failed" || pc.connectionState === "closed") {
+          finishUnexpected();
+        }
+      };
+      pc.oniceconnectionstatechange = () => {
+        if (pc.iceConnectionState === "failed") finishUnexpected();
+      };
+
+      pcRef.current = pc;
+      return pc;
+    },
+    [clearDisconnectedTimer, finishUnexpected, sendIce, setPhase],
+  );
 
   const startCall = useCallback(
-    async (conversationId: string, peer: PublicUser, media: CallMedia = "audio", retry = false) => {
-      // Защита от двойного клика и от звонка поверх активного/входящего.
+    async (
+      conversationId: string,
+      peer: PublicUser,
+      media: CallMedia = "audio",
+      retry = false,
+    ) => {
       if (callRef.current || incomingRef.current || busyRef.current) return;
       busyRef.current = true;
+      endingRef.current = false;
       setStarting(true);
       let stream: MediaStream | null = null;
+      let handedOffToRetry = false;
+
       try {
+        if (!navigator.mediaDevices?.getUserMedia) {
+          throw new Error("Браузер не поддерживает доступ к микрофону");
+        }
         stream = await navigator.mediaDevices.getUserMedia({
           audio: true,
           video: media === "video",
         });
         localStreamRef.current = stream;
+
         const pc = createPeer("caller");
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
@@ -223,6 +317,7 @@ export function useCallController(
           body: JSON.stringify({ conversationId, media, offerSdp: offer.sdp }),
         });
 
+        signalCallIdRef.current = d.call.id;
         const ongoing: OngoingCall = {
           id: d.call.id,
           conversationId,
@@ -234,8 +329,9 @@ export function useCallController(
         callRef.current = ongoing;
         setCall(ongoing);
         setCameraOn(media === "video");
+        await flushPendingIce(d.call.id);
       } catch (err) {
-        stream?.getTracks().forEach((t) => t.stop());
+        stream?.getTracks().forEach((track) => track.stop());
         cleanup();
 
         if (err instanceof ApiError && err.status === 401) {
@@ -243,11 +339,9 @@ export function useCallController(
           return;
         }
 
-        // 409 — в чате уже висит звонок. Сервер прислал его тело.
         if (err instanceof ApiError && err.status === 409 && err.payload?.call) {
-          const busyCall = err.payload.call;
+          const busyCall = err.payload.call as CallPayload;
 
-          // Это мой же зависший звонок → отменяем его и звоним заново (один раз).
           if (busyCall.callerId === meIdRef.current) {
             try {
               await api(`/api/calls/${busyCall.id}`, {
@@ -255,91 +349,100 @@ export function useCallController(
                 body: JSON.stringify({ action: "hangup" }),
               });
             } catch {
-              /* уже закрыт */
+              /* звонок мог уже завершиться */
             }
             if (!retry) {
+              // Передаём управление новому звонку. Внешний finally не должен
+              // сбросить busy-состояние уже начавшейся повторной попытки.
+              handedOffToRetry = true;
               busyRef.current = false;
               setStarting(false);
+              endingRef.current = false;
               await startCallRef.current?.(conversationId, peer, media, true);
               return;
             }
-            notifyRef.current("Предыдущий звонок закрыт, попробуйте ещё раз");
+            notifyRef.current("Предыдущий звонок закрыт — нажмите звонок ещё раз");
             return;
           }
 
-          // Чужой звонок мне же — показываем как входящий, а не как ошибку.
           if (busyCall.calleeId === meIdRef.current && busyCall.status === "ringing" && busyCall.offerSdp) {
             const inc: IncomingCall = { ...busyCall, peer: busyCall.caller ?? peer };
             incomingRef.current = inc;
             setIncoming(inc);
             return;
           }
-
-          notifyRef.current(err.message);
-          return;
         }
 
-        if (err instanceof ApiError) notifyRef.current(err.message);
-        else if (err instanceof Error && err.name === "NotAllowedError")
+        if (err instanceof ApiError) {
+          notifyRef.current(err.message);
+        } else if (err instanceof Error && err.name === "NotAllowedError") {
           notifyRef.current("Нет доступа к микрофону или камере — разрешите доступ в браузере");
-        else notifyRef.current("Не удалось начать звонок");
+        } else {
+          notifyRef.current(err instanceof Error ? err.message : "Не удалось начать звонок");
+        }
       } finally {
-        busyRef.current = false;
-        setStarting(false);
+        if (!handedOffToRetry) {
+          busyRef.current = false;
+          setStarting(false);
+        }
       }
     },
-    [cleanup, createPeer],
+    [cleanup, createPeer, flushPendingIce],
   );
 
   const startCallRef = useRef(startCall);
   startCallRef.current = startCall;
 
-  /* ─────────── Вызываемый: входящие ─────────── */
-
+  // Входящие звонки.
   useEffect(() => {
-    const t = setInterval(async () => {
+    const timer = setInterval(async () => {
       if (callRef.current || incomingRef.current) return;
       try {
         const d = await api<{ calls: CallPayload[] }>("/api/calls/incoming");
-        const c = d.calls[0];
-        if (c?.caller && c.offerSdp) {
-          const inc: IncomingCall = { ...c, peer: c.caller };
+        const current = d.calls[0];
+        if (current?.caller && current.offerSdp) {
+          const inc: IncomingCall = { ...current, peer: current.caller };
           incomingRef.current = inc;
           setIncoming(inc);
         }
-      } catch (e) {
-        // Сессия кончилась — уводим на экран входа, иначе опрос будет
-        // вечно долбить 401 (как после удаления аккаунта).
-        if (e instanceof ApiError && e.status === 401) unauthorizedRef.current();
-        /* иначе сеть моргнула — попробуем в следующий раз */
+      } catch (err) {
+        if (err instanceof ApiError && err.status === 401) unauthorizedRef.current();
       }
     }, INCOMING_POLL_MS);
-    return () => clearInterval(t);
+    return () => clearInterval(timer);
   }, []);
 
   const accept = useCallback(async () => {
     const inc = incomingRef.current;
     if (!inc?.offerSdp || busyRef.current) return;
     busyRef.current = true;
+    endingRef.current = false;
     setStarting(true);
     let stream: MediaStream | null = null;
+
     try {
-      const media = inc.media;
+      if (!navigator.mediaDevices?.getUserMedia) {
+        throw new Error("Браузер не поддерживает доступ к микрофону");
+      }
       stream = await navigator.mediaDevices.getUserMedia({
         audio: true,
-        video: media === "video",
+        video: inc.media === "video",
       });
       localStreamRef.current = stream;
-      const pc = createPeer("callee");
+      signalCallIdRef.current = inc.id;
+
+      const pc = createPeer("callee", inc.id);
       await pc.setRemoteDescription({ type: "offer", sdp: inc.offerSdp });
       await applyRemoteIce(inc, "callee");
       const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
+      answeredRef.current = true;
 
       await api(`/api/calls/${inc.id}`, {
         method: "POST",
         body: JSON.stringify({ action: "answer", answerSdp: answer.sdp }),
       });
+      await flushPendingIce(inc.id);
 
       const ongoing: OngoingCall = {
         id: inc.id,
@@ -347,26 +450,28 @@ export function useCallController(
         role: "callee",
         phase: "connecting",
         peer: inc.peer,
-        media,
+        media: inc.media,
       };
       incomingRef.current = null;
       callRef.current = ongoing;
       setIncoming(null);
       setCall(ongoing);
-      setCameraOn(media === "video");
+      setCameraOn(inc.media === "video");
     } catch (err) {
-      stream?.getTracks().forEach((t) => t.stop());
+      stream?.getTracks().forEach((track) => track.stop());
       cleanup();
       if (err instanceof ApiError && err.status === 401) {
         unauthorizedRef.current();
-        return;
+      } else {
+        notifyRef.current(
+          err instanceof Error ? `Не удалось принять звонок: ${err.message}` : "Не удалось принять звонок",
+        );
       }
-      notifyRef.current(err instanceof Error ? `Не удалось принять звонок: ${err.message}` : "Не удалось принять звонок");
     } finally {
       busyRef.current = false;
       setStarting(false);
     }
-  }, [applyRemoteIce, cleanup, createPeer]);
+  }, [applyRemoteIce, cleanup, createPeer, flushPendingIce]);
 
   const decline = useCallback(async () => {
     const inc = incomingRef.current;
@@ -379,122 +484,121 @@ export function useCallController(
         body: JSON.stringify({ action: "decline" }),
       });
     } catch {
-      /* звонок уже завершён на другой стороне */
+      /* Вторая сторона могла уже завершить звонок. */
     }
   }, []);
 
-  /* ─────────── Завершение ─────────── */
-
   const hangup = useCallback(async () => {
-    const c = callRef.current;
+    const current = callRef.current;
     const inc = incomingRef.current;
+    const id = current?.id ?? inc?.id;
+    const action = current ? "hangup" : "decline";
+    endingRef.current = true;
     cleanup();
+    if (!id) {
+      endingRef.current = false;
+      return;
+    }
     try {
-      if (c) {
-        await api(`/api/calls/${c.id}`, {
-          method: "POST",
-          body: JSON.stringify({ action: "hangup" }),
-        });
-      } else if (inc) {
-        await api(`/api/calls/${inc.id}`, {
-          method: "POST",
-          body: JSON.stringify({ action: "decline" }),
-        });
-      }
+      await api(`/api/calls/${id}`, {
+        method: "POST",
+        body: JSON.stringify({ action }),
+      });
     } catch {
-      /* вторая сторона уже завершила */
+      /* Вторая сторона могла уже завершить звонок. */
+    } finally {
+      endingRef.current = false;
     }
   }, [cleanup]);
 
-  // При закрытии вкладки во время звонка — деликатно завершаем
+  // Завершаем сигналинг, если вкладку закрыли во время звонка.
   useEffect(() => {
     const onLeave = () => {
-      const c = callRef.current;
+      const current = callRef.current;
       const inc = incomingRef.current;
-      const id = c?.id ?? inc?.id;
-      const action = c ? "hangup" : "decline";
-      if (id) {
-        void fetch(`/api/calls/${id}`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action }),
-          keepalive: true,
-          credentials: "include",
-        });
-      }
+      const id = current?.id ?? inc?.id;
+      if (!id) return;
+      void fetch(`/api/calls/${id}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: current ? "hangup" : "decline" }),
+        keepalive: true,
+        credentials: "include",
+      });
     };
     window.addEventListener("beforeunload", onLeave);
     return () => window.removeEventListener("beforeunload", onLeave);
   }, []);
 
-  /* ─────────── Опрос состояния активного звонка ─────────── */
-
+  // Обмен answer/ICE и обнаружение удалённого завершения.
   useEffect(() => {
-    const t = setInterval(async () => {
-      const c = callRef.current;
-      if (!c) return;
+    const timer = setInterval(async () => {
+      const current = callRef.current;
+      if (!current) return;
       try {
-        const d = await api<{ call: CallPayload }>(`/api/calls/${c.id}`);
+        const d = await api<{ call: CallPayload }>(`/api/calls/${current.id}`);
         const info = d.call;
         const pc = pcRef.current;
 
-        if (info.answerSdp && pc && !answeredRef.current) {
-          answeredRef.current = true;
+        // Только caller принимает answer. Callee уже установил offer как remote
+        // description и не должен устанавливать собственный answer ещё раз.
+        if (current.role === "caller" && info.answerSdp && pc && !answeredRef.current) {
           await pc.setRemoteDescription({ type: "answer", sdp: info.answerSdp });
+          answeredRef.current = true;
           setPhase("connecting");
         }
-        if (info.answerSdp) await applyRemoteIce(info, c.role);
+        if (info.answerSdp) await applyRemoteIce(info);
 
-        if (info.status === "active" && c.phase !== "active") setPhase("active");
+        if (pc?.connectionState === "failed" || pc?.iceConnectionState === "failed") {
+          finishUnexpected();
+          return;
+        }
+        if (pc?.connectionState === "connected") setPhase("active");
 
         if (info.status === "ended" || info.status === "declined" || info.status === "missed") {
+          const wasCaller = current.role === "caller";
+          endingRef.current = true;
           cleanup();
-          if (c.role === "caller") {
+          if (wasCaller) {
             if (info.status === "declined") notifyRef.current("Звонок отклонён");
             else if (info.status === "missed") notifyRef.current("Без ответа");
             else notifyRef.current("Звонок завершён");
           } else {
             notifyRef.current("Звонок завершён");
           }
+          endingRef.current = false;
         }
-      } catch (e) {
-        if (e instanceof ApiError && e.status === 401) {
+      } catch (err) {
+        if (err instanceof ApiError && err.status === 401) {
           cleanup();
           unauthorizedRef.current();
         }
-        /* иначе сеть моргнула — в следующий раз */
       }
     }, CALL_POLL_MS);
-    return () => clearInterval(t);
-  }, [applyRemoteIce, cleanup, setPhase]);
-
-  /* ─────────── Таймер активного звонка ─────────── */
+    return () => clearInterval(timer);
+  }, [applyRemoteIce, cleanup, finishUnexpected, setPhase]);
 
   useEffect(() => {
     if (call?.phase !== "active") return;
-    const t = setInterval(() => setSeconds((s) => s + 1), 1_000);
-    return () => clearInterval(t);
+    const timer = setInterval(() => setSeconds((value) => value + 1), 1_000);
+    return () => clearInterval(timer);
   }, [call?.phase]);
 
-  /* ─────────── Микрофон / камера ─────────── */
-
   const toggleMute = useCallback(() => {
-    setMuted((m) => {
-      const next = !m;
-      localStreamRef.current?.getAudioTracks().forEach((t) => (t.enabled = !next));
+    setMuted((value) => {
+      const next = !value;
+      localStreamRef.current?.getAudioTracks().forEach((track) => (track.enabled = !next));
       return next;
     });
   }, []);
 
   const toggleCamera = useCallback(() => {
-    setCameraOn((on) => {
-      const next = !on;
-      localStreamRef.current?.getVideoTracks().forEach((t) => (t.enabled = next));
+    setCameraOn((value) => {
+      const next = !value;
+      localStreamRef.current?.getVideoTracks().forEach((track) => (track.enabled = next));
       return next;
     });
   }, []);
-
-  /* ─────────── Рингтон входящего ─────────── */
 
   useEffect(() => {
     if (!incoming) {

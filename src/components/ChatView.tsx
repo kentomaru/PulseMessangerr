@@ -22,7 +22,8 @@ import {
 } from "lucide-react";
 import Avatar from "./Avatar";
 import WallpaperModal from "./WallpaperModal";
-import { api, ApiError } from "@/lib/api";
+import { api, ApiError, uploadFile } from "@/lib/api";
+import { parseImageMessage } from "@/lib/message-content";
 import {
   callLogLabel,
   dayLabel,
@@ -35,13 +36,18 @@ import {
 import { wallpaperStyle } from "@/lib/wallpapers";
 import type { CallMedia, ChatMessage, Peer, PublicUser } from "@/lib/types";
 
+type PendingImage = {
+  file: File;
+  previewUrl: string;
+};
+
 type Props = {
   me: PublicUser;
   conversationId: string;
   peer: Peer;
   onBack: () => void;
-  onCall: (media: CallMedia) => void;
-  onViewPeer: () => void;
+  onCall: (media: CallMedia, peer: Peer) => void;
+  onViewPeer: (peer: Peer) => void;
   callBusy: boolean;
   refreshConversations: () => void;
   notify: (msg: string) => void;
@@ -64,8 +70,8 @@ export default function ChatView({
   const [peerState, setPeerState] = useState<Peer>(peer);
   const [wallpaper, setWallpaper] = useState<string | null>(null);
   const [text, setText] = useState("");
+  const [pendingImage, setPendingImage] = useState<PendingImage | null>(null);
   const [sending, setSending] = useState(false);
-  const [uploading, setUploading] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [showWallpaper, setShowWallpaper] = useState(false);
   const [lightbox, setLightbox] = useState<string | null>(null);
@@ -76,6 +82,12 @@ export default function ChatView({
   const lastTypingSent = useRef(0);
   const lastCount = useRef(0);
   const loadedRef = useRef(false);
+
+  useEffect(() => {
+    return () => {
+      if (pendingImage) URL.revokeObjectURL(pendingImage.previewUrl);
+    };
+  }, [pendingImage]);
 
   const load = useCallback(async () => {
     try {
@@ -128,43 +140,56 @@ export default function ChatView({
   };
 
   const send = async () => {
-    const content = text.trim();
-    if (!content || sending) return;
+    const caption = text.trim();
+    if ((!caption && !pendingImage) || sending) return;
     setSending(true);
-    setText("");
+
     try {
-      await api("/api/messages", {
-        method: "POST",
-        body: JSON.stringify({ conversationId, type: "text", content }),
-      });
+      if (pendingImage) {
+        // Выбор файла только готовит вложение. Загрузка и создание сообщения
+        // происходят здесь, после нажатия на общую кнопку «Отправить».
+        const url = await uploadFile(pendingImage.file);
+        await api("/api/messages", {
+          method: "POST",
+          body: JSON.stringify({
+            conversationId,
+            type: "image",
+            content: url,
+            caption,
+          }),
+        });
+        setPendingImage(null);
+        setText("");
+      } else {
+        await api("/api/messages", {
+          method: "POST",
+          body: JSON.stringify({ conversationId, type: "text", content: caption }),
+        });
+        setText("");
+      }
       await load();
       refreshConversations();
     } catch (e) {
-      setText(content);
       notify(e instanceof Error ? e.message : "Не удалось отправить");
     } finally {
       setSending(false);
     }
   };
 
-  const sendImage = async (file: File | null) => {
+  const chooseImage = (file: File | null) => {
     if (!file) return;
-    setUploading(true);
-    try {
-      const { uploadFile } = await import("@/lib/api");
-      const url = await uploadFile(file);
-      await api("/api/messages", {
-        method: "POST",
-        body: JSON.stringify({ conversationId, type: "image", content: url }),
-      });
-      await load();
-      refreshConversations();
-    } catch (e) {
-      notify(e instanceof Error ? e.message : "Не удалось отправить фото");
-    } finally {
-      setUploading(false);
+    if (!file.type.startsWith("image/")) {
+      notify("Можно прикреплять только изображения");
+      return;
     }
+    if (file.size > 10 * 1024 * 1024) {
+      notify("Файл больше 10 МБ");
+      return;
+    }
+    setPendingImage({ file, previewUrl: URL.createObjectURL(file) });
   };
+
+  const removePendingImage = () => setPendingImage(null);
 
   const removeMessage = async (id: string) => {
     try {
@@ -201,7 +226,7 @@ export default function ChatView({
         >
           <ArrowLeft className="h-4 w-4" />
         </button>
-        <button onClick={onViewPeer} className="flex min-w-0 items-center gap-3 text-left">
+        <button type="button" onClick={() => onViewPeer(peerState)} className="flex min-w-0 items-center gap-3 text-left">
           <Avatar
             name={peerState.displayName}
             src={peerState.avatarUrl}
@@ -241,7 +266,8 @@ export default function ChatView({
 
         <div className="ml-auto flex items-center gap-1.5">
           <button
-            onClick={() => onCall("audio")}
+            type="button"
+            onClick={() => onCall("audio", peerState)}
             disabled={callBusy}
             title="Аудиозвонок"
             className="glass flex h-10 w-10 items-center justify-center rounded-xl text-white/75 transition-colors hover:text-white disabled:opacity-40"
@@ -249,7 +275,8 @@ export default function ChatView({
             <Phone className="h-4.5 w-4.5" />
           </button>
           <button
-            onClick={() => onCall("video")}
+            type="button"
+            onClick={() => onCall("video", peerState)}
             disabled={callBusy}
             title="Видеозвонок"
             className="glass flex h-10 w-10 items-center justify-center rounded-xl text-white/75 transition-colors hover:text-white disabled:opacity-40"
@@ -258,6 +285,7 @@ export default function ChatView({
           </button>
           <div className="relative">
             <button
+              type="button"
               onClick={() => setMenuOpen((v) => !v)}
               className="glass flex h-10 w-10 items-center justify-center rounded-xl text-white/75 transition-colors hover:text-white"
             >
@@ -266,12 +294,18 @@ export default function ChatView({
             <AnimatePresence>
               {menuOpen && (
                 <>
-                  <div className="fixed inset-0 z-20" onClick={() => setMenuOpen(false)} />
+                  <button
+                    type="button"
+                    aria-label="Закрыть меню"
+                    className="fixed inset-0 z-[70] cursor-default"
+                    onClick={() => setMenuOpen(false)}
+                  />
                   <motion.div
                     initial={{ opacity: 0, y: -6, scale: 0.96 }}
                     animate={{ opacity: 1, y: 0, scale: 1 }}
                     exit={{ opacity: 0, y: -4, scale: 0.97 }}
-                    className="glass-strong absolute right-0 z-30 mt-2 w-52 overflow-hidden rounded-2xl p-1.5 shadow-2xl"
+                    className="glass-strong absolute right-0 z-[80] mt-2 w-52 overflow-hidden rounded-2xl p-1.5 shadow-2xl"
+                    onClick={(event) => event.stopPropagation()}
                   >
                     <MenuItem
                       icon={<Palette className="h-4 w-4" />}
@@ -286,7 +320,7 @@ export default function ChatView({
                       label="Профиль"
                       onClick={() => {
                         setMenuOpen(false);
-                        onViewPeer();
+                        onViewPeer(peerState);
                       }}
                     />
                   </motion.div>
@@ -346,50 +380,78 @@ export default function ChatView({
 
       {/* Поле ввода */}
       <div className="glass-strong relative z-10 border-t border-white/8 px-4 py-3">
-        <div className="mx-auto flex max-w-2xl items-end gap-2.5">
-          <button
-            onClick={() => fileRef.current?.click()}
-            disabled={uploading}
-            title="Отправить фото"
-            className="glass flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl text-white/70 transition-colors hover:text-white disabled:opacity-50"
-          >
-            {uploading ? <Loader2 className="h-4.5 w-4.5 animate-spin" /> : <ImagePlus className="h-4.5 w-4.5" />}
-          </button>
-          <input
-            ref={fileRef}
-            type="file"
-            accept="image/png,image/jpeg,image/webp,image/gif"
-            className="hidden"
-            onChange={(e) => {
-              void sendImage(e.target.files?.[0] ?? null);
-              e.target.value = "";
-            }}
-          />
-          <textarea
-            value={text}
-            onChange={(e) => {
-              setText(e.target.value);
-              sendTyping();
-            }}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                void send();
-              }
-            }}
-            rows={1}
-            maxLength={4000}
-            placeholder="Сообщение…"
-            className="ring-focus nice-scroll max-h-32 min-h-11 flex-1 resize-none rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3 text-[15px] transition-all placeholder:text-white/30"
-          />
-          <button
-            onClick={() => void send()}
-            disabled={!text.trim() || sending}
-            title="Отправить"
-            className="btn-gradient flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl text-white"
-          >
-            {sending ? <Loader2 className="h-4.5 w-4.5 animate-spin" /> : <Send className="h-4.5 w-4.5" />}
-          </button>
+        <div className="mx-auto max-w-2xl">
+          {pendingImage && (
+            <div className="mb-2.5 flex items-center gap-3 rounded-2xl border border-white/10 bg-white/[0.04] p-2.5">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={pendingImage.previewUrl}
+                alt="Прикреплённое фото"
+                className="h-14 w-14 rounded-xl object-cover"
+              />
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-medium text-white/80">Фото прикреплено</p>
+                <p className="truncate text-xs text-white/35">
+                  Добавьте подпись и нажмите «Отправить»
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={removePendingImage}
+                title="Убрать фото"
+                className="rounded-xl p-2 text-white/45 transition-colors hover:bg-white/10 hover:text-white"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+          )}
+          <div className="flex items-end gap-2.5">
+            <button
+              type="button"
+              onClick={() => fileRef.current?.click()}
+              disabled={sending}
+              title="Прикрепить фото"
+              className="glass flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl text-white/70 transition-colors hover:text-white disabled:opacity-50"
+            >
+              <ImagePlus className="h-4.5 w-4.5" />
+            </button>
+            <input
+              ref={fileRef}
+              type="file"
+              accept="image/png,image/jpeg,image/webp,image/gif"
+              className="hidden"
+              onChange={(e) => {
+                chooseImage(e.target.files?.[0] ?? null);
+                e.target.value = "";
+              }}
+            />
+            <textarea
+              value={text}
+              onChange={(e) => {
+                setText(e.target.value);
+                sendTyping();
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  void send();
+                }
+              }}
+              rows={1}
+              maxLength={4000}
+              placeholder={pendingImage ? "Подпись к фото…" : "Сообщение…"}
+              className="ring-focus nice-scroll max-h-32 min-h-11 flex-1 resize-none rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3 text-[15px] transition-all placeholder:text-white/30"
+            />
+            <button
+              type="button"
+              onClick={() => void send()}
+              disabled={(!text.trim() && !pendingImage) || sending}
+              title="Отправить"
+              className="btn-gradient flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl text-white"
+            >
+              {sending ? <Loader2 className="h-4.5 w-4.5 animate-spin" /> : <Send className="h-4.5 w-4.5" />}
+            </button>
+          </div>
         </div>
       </div>
 
@@ -445,8 +507,9 @@ function MenuItem({
 }) {
   return (
     <button
+      type="button"
       onClick={onClick}
-      className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm text-white/80 transition-colors hover:bg-white/8 hover:text-white"
+      className="relative z-[81] flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm text-white/80 transition-colors hover:bg-white/8 hover:text-white"
     >
       {icon}
       {label}
@@ -478,23 +541,37 @@ function MessageBubble({
     );
   }
 
+  const image = message.type === "image" ? parseImageMessage(message.content) : null;
+
   return (
     <div className={`group flex items-center gap-1.5 py-0.5 ${own ? "justify-end" : "justify-start"}`}>
       {!own && <div className="w-1" />}
       <div className={`relative max-w-[78%] sm:max-w-[70%] ${own ? "order-1" : ""}`}>
-        {message.type === "image" ? (
-          <button
-            onClick={() => onOpenImage(message.content)}
-            className="block overflow-hidden rounded-3xl ring-1 ring-white/10 transition-transform hover:scale-[1.01]"
+        {image ? (
+          <div
+            className={`overflow-hidden rounded-3xl ring-1 ring-white/10 ${
+              own ? "bubble-own" : "bubble-peer"
+            }`}
           >
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={message.content}
-              alt="Фото"
-              className="max-h-80 w-full max-w-xs object-cover"
-              draggable={false}
-            />
-          </button>
+            <button
+              type="button"
+              onClick={() => onOpenImage(image.url)}
+              className="block w-full overflow-hidden transition-transform hover:scale-[1.01]"
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={image.url}
+                alt="Фото"
+                className="max-h-80 w-full max-w-xs object-cover"
+                draggable={false}
+              />
+            </button>
+            {image.caption && (
+              <p className="px-4 py-2.5 text-[15px] leading-relaxed whitespace-pre-wrap break-words text-white">
+                {image.caption}
+              </p>
+            )}
+          </div>
         ) : (
           <div
             className={`rounded-3xl px-4 py-2.5 text-[15px] leading-relaxed whitespace-pre-wrap break-words ${

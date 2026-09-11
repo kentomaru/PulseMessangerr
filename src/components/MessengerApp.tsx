@@ -69,7 +69,7 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
     void loadConversations();
     void loadStories();
     const t = setInterval(loadConversations, 4000);
-    const ts = setInterval(loadStories, 30_000);
+    const ts = setInterval(loadStories, 5_000);
     return () => {
       clearInterval(t);
       clearInterval(ts);
@@ -93,6 +93,16 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
     },
     [loadConversations, notify],
   );
+
+  const openUserCard = useCallback(async (user: PublicUser) => {
+    // Берём свежую карточку с сервера, а не устаревший снимок из списка чатов.
+    try {
+      const d = await api<{ user: PublicUser }>(`/api/users/${user.id}`);
+      setViewUser(d.user);
+    } catch {
+      setViewUser(user);
+    }
+  }, []);
 
   const logout = useCallback(async () => {
     try {
@@ -152,8 +162,8 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
             conversationId={activeConv.id}
             peer={activeConv.peer}
             onBack={() => setActiveId(null)}
-            onCall={(media) => callCtl.startCall(activeConv.id, activeConv.peer, media)}
-            onViewPeer={() => setViewUser(activeConv.peer)}
+            onCall={(media, user) => callCtl.startCall(activeConv.id, user, media)}
+            onViewPeer={(user) => void openUserCard(user)}
             callBusy={!!callCtl.call || !!callCtl.incoming || callCtl.starting}
             refreshConversations={loadConversations}
             notify={notify}

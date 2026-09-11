@@ -4,6 +4,7 @@ import { conversationMembers, messages, users } from "@/db/schema";
 import { and, desc, eq, isNull, ne } from "drizzle-orm";
 import { publicUser } from "@/lib/auth";
 import { isUuid, withApi } from "@/lib/api-helpers";
+import { encodeImageMessage, isUploadUrl } from "@/lib/message-content";
 
 async function assertMember(conversationId: string, userId: string) {
   const rows = await db
@@ -82,20 +83,24 @@ export const POST = withApi("messages:send", async ({ req, me, log }) => {
   if (conversationId && !isUuid(conversationId))
     return NextResponse.json({ error: "Чат не найден" }, { status: 404 });
   const content = String(body.content ?? "").trim();
+  const caption = typeof body.caption === "string" ? body.caption.trim() : "";
 
   if (!conversationId || !content)
     return NextResponse.json({ error: "Пустое сообщение" }, { status: 400 });
   if (content.length > 4000)
     return NextResponse.json({ error: "Слишком длинное сообщение" }, { status: 400 });
-  if (type === "image" && !content.startsWith("/api/files/"))
+  if (caption.length > 4000)
+    return NextResponse.json({ error: "Подпись слишком длинная" }, { status: 400 });
+  if (type === "image" && !isUploadUrl(content))
     return NextResponse.json({ error: "Некорректная ссылка на изображение" }, { status: 400 });
 
   const membership = await assertMember(conversationId, me.id);
   if (!membership) return NextResponse.json({ error: "Нет доступа" }, { status: 403 });
 
+  const storedContent = type === "image" ? encodeImageMessage(content, caption) : content;
   const [msg] = await db
     .insert(messages)
-    .values({ conversationId, senderId: me.id, type, content })
+    .values({ conversationId, senderId: me.id, type, content: storedContent })
     .returning();
 
   await db

@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionUser } from "@/lib/auth";
+import { db } from "@/db";
+import { uploads } from "@/db/schema";
 import { createLogger } from "@/lib/logger";
 import { randomUUID } from "crypto";
 import { mkdir, writeFile } from "fs/promises";
@@ -41,10 +43,20 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Файл больше 10 МБ" }, { status: 400 });
 
     const name = `${randomUUID()}.${ext}`;
-    const dir = path.join(process.cwd(), "data", "uploads");
-    await mkdir(dir, { recursive: true });
     const buffer = Buffer.from(await file.arrayBuffer());
-    await writeFile(path.join(dir, name), buffer);
+
+    try {
+      await db.insert(uploads).values({ name, ownerId: me.id, mimeType: file.type, data: buffer });
+    } catch (err) {
+      // Локальный fallback полезен для разработки без PostgreSQL. На Railway
+      // основное хранилище — PostgreSQL, иначе файл пропадёт после деплоя.
+      log.warn("Не удалось сохранить файл в PostgreSQL, используем локальный fallback", {
+        err: err instanceof Error ? err.message : String(err),
+      });
+      const dir = path.join(process.cwd(), "data", "uploads");
+      await mkdir(dir, { recursive: true });
+      await writeFile(path.join(dir, name), buffer);
+    }
 
     log.info("Файл загружен", { userId: me.id, name, size: String(file.size), ms: String(Date.now() - started) });
     return NextResponse.json({ url: `/api/files/${name}` });

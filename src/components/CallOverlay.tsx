@@ -70,13 +70,19 @@ export default function CallOverlay({
   const peer = call?.peer ?? incoming?.peer ?? null;
 
   useEffect(() => {
-    if (remoteVideoRef.current) remoteVideoRef.current.srcObject = remoteStreamRef.current ?? null;
-    if (audioRef.current) audioRef.current.srcObject = remoteStreamRef.current ?? null;
+    const stream = remoteStreamRef.current ?? null;
+    if (remoteVideoRef.current) remoteVideoRef.current.srcObject = stream;
+    if (audioRef.current) {
+      audioRef.current.srcObject = stream;
+      // После getUserMedia браузер уже получил пользовательский жест, но
+      // отдельному audio-элементу всё равно явно просим начать воспроизведение.
+      if (stream) void audioRef.current.play().catch(() => {});
+    }
   }, [streamTick, remoteStreamRef, call?.phase, call?.id]);
 
   useEffect(() => {
     if (localVideoRef.current) localVideoRef.current.srcObject = localStreamRef.current ?? null;
-  }, [localStreamRef, call?.id]);
+  }, [streamTick, localStreamRef, call?.id]);
 
   return (
     <motion.div
@@ -86,7 +92,13 @@ export default function CallOverlay({
       className="fixed inset-0 z-[80] flex items-center justify-center bg-[#07070f]/95 backdrop-blur-xl"
     >
       {/* Дальний звук (для аудиозвонков) */}
-      <audio ref={audioRef} autoPlay playsInline className="hidden" />
+      <audio
+        ref={audioRef}
+        autoPlay
+        playsInline
+        aria-label="Удалённый звук звонка"
+        className="pointer-events-none absolute h-px w-px opacity-0"
+      />
 
       {showVideoStage && call ? (
         <div className="relative h-full w-full">

@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm";
 import {
   boolean,
+  customType,
   index,
   jsonb,
   pgTable,
@@ -10,6 +11,15 @@ import {
   uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
+
+// PostgreSQL bytea сохраняет загруженные изображения между Railway-деплоями.
+// Файловая система контейнера Railway временная, поэтому одного data/uploads
+// недостаточно для аватаров, баннеров и историй.
+const bytea = customType<{ data: Buffer; driverData: Buffer }>({
+  dataType() {
+    return "bytea";
+  },
+});
 
 /** Пользователи. Пароль хранится только в виде scrypt-хэша. */
 export const users = pgTable("users", {
@@ -29,6 +39,21 @@ export const users = pgTable("users", {
 });
 
 export type User = typeof users.$inferSelect;
+
+/**
+ * Загруженные изображения. Храним бинарные данные в PostgreSQL, чтобы
+ * ссылки на аватары, баннеры, истории и фото сообщений работали у всех
+ * пользователей и не исчезали после перезапуска/нового Railway-контейнера.
+ */
+export const uploads = pgTable("uploads", {
+  name: text("name").primaryKey(),
+  ownerId: uuid("owner_id").references(() => users.id, { onDelete: "cascade" }),
+  mimeType: text("mime_type").notNull(),
+  data: bytea("data").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export type Upload = typeof uploads.$inferSelect;
 
 /** Сессии (cookie pulse_session → пользователь). */
 export const sessions = pgTable(
