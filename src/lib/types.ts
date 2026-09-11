@@ -5,12 +5,16 @@ export type PublicUser = {
   avatarUrl: string | null;
   bannerUrl: string | null;
   bio: string;
-  lastSeenAt: string;
+  /** null, если пользователь скрыл статус (приватность). */
+  lastSeenAt: string | null;
   createdAt: string;
   online: boolean;
+  showOnline: boolean;
+  allowCalls: boolean;
+  allowMessages: boolean;
 };
 
-export type Peer = PublicUser & { lastReadAt?: string };
+export type Peer = PublicUser & { lastReadAt?: string | null; typingAt?: string | null };
 
 export type ChatMessage = {
   id: string;
@@ -35,13 +39,20 @@ export type ConversationListItem = {
   unreadCount: number;
 };
 
+export type CallMedia = "audio" | "video";
+export type CallStatus = "ringing" | "active" | "ended" | "declined" | "missed";
+
 export type CallPayload = {
   id: string;
   conversationId: string;
   callerId: string;
-  status: "ringing" | "active" | "ended" | "declined" | "missed";
+  calleeId: string | null;
+  media: CallMedia;
+  status: CallStatus;
   offerSdp: string | null;
   answerSdp: string | null;
+  callerIce: RTCIceCandidateInit[];
+  calleeIce: RTCIceCandidateInit[];
   createdAt: string;
   answeredAt: string | null;
   endedAt: string | null;
@@ -54,4 +65,30 @@ export type ActiveCall = {
   role: "caller" | "callee";
   phase: "outgoing" | "incoming" | "connecting" | "active" | "ended";
   peer: PublicUser;
+  media: CallMedia;
+};
+
+/** JSON, который хранится в сообщении типа «call». */
+export type CallLogInfo = {
+  callId?: string;
+  status: "ended" | "missed" | "declined" | "cancelled";
+  durationSec: number;
+  callerId: string;
+  media: CallMedia;
+};
+
+export type StoryItem = {
+  id: string;
+  userId: string;
+  mediaUrl: string;
+  caption: string;
+  createdAt: string;
+  expiresAt: string;
+  viewed: boolean;
+  viewCount: number;
+};
+
+export type StoryGroup = {
+  user: PublicUser;
+  stories: StoryItem[];
 };

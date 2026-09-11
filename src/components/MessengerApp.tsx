@@ -2,24 +2,29 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
+import { CheckCircle2 } from "lucide-react";
 import { api } from "@/lib/api";
-import type { ConversationListItem, PublicUser } from "@/lib/types";
+import type { ConversationListItem, PublicUser, StoryGroup } from "@/lib/types";
 import { useCallController } from "@/lib/useCallController";
 import Sidebar from "./Sidebar";
 import ChatView from "./ChatView";
 import ProfileModal from "./ProfileModal";
 import UserCardModal from "./UserCardModal";
 import CallOverlay from "./CallOverlay";
-import { CheckCircle2 } from "lucide-react";
+import StoryComposer from "./StoryComposer";
+import StoryViewer from "./StoryViewer";
 
 type Toast = { id: number; msg: string };
 
 export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
   const [me, setMe] = useState(initialMe);
   const [conversations, setConversations] = useState<ConversationListItem[]>([]);
+  const [storyGroups, setStoryGroups] = useState<StoryGroup[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [showProfile, setShowProfile] = useState(false);
   const [viewUser, setViewUser] = useState<PublicUser | null>(null);
+  const [storyComposer, setStoryComposer] = useState(false);
+  const [storyViewer, setStoryViewer] = useState<number | null>(null);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const toastId = useRef(0);
 
@@ -40,11 +45,25 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
     }
   }, []);
 
+  const loadStories = useCallback(async () => {
+    try {
+      const d = await api<{ groups: StoryGroup[] }>("/api/stories");
+      setStoryGroups(d.groups);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
   useEffect(() => {
     void loadConversations();
+    void loadStories();
     const t = setInterval(loadConversations, 4000);
-    return () => clearInterval(t);
-  }, [loadConversations]);
+    const ts = setInterval(loadStories, 30_000);
+    return () => {
+      clearInterval(t);
+      clearInterval(ts);
+    };
+  }, [loadConversations, loadStories]);
 
   const activeConv = conversations.find((c) => c.id === activeId) ?? null;
 
@@ -72,10 +91,30 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
     }
   }, []);
 
-  // jump to the chat behind an incoming call
+  // Переключаемся на чат, в который приходит звонок
   useEffect(() => {
     if (callCtl.incoming) setActiveId(callCtl.incoming.conversationId);
   }, [callCtl.incoming]);
+
+  const markWatched = useCallback(
+    (storyId: string) => {
+      setStoryGroups((gs) =>
+        gs.map((g) => ({ ...g, stories: g.stories.map((s) => (s.id === storyId ? { ...s, viewed: true } : s)) })),
+      );
+      void api(`/api/stories/${storyId}/view`, { method: "POST" }).catch(() => {});
+    },
+    [],
+  );
+
+  const removeStory = useCallback((storyId: string) => {
+    setStoryGroups((gs) => {
+      const next = gs
+        .map((g) => ({ ...g, stories: g.stories.filter((s) => s.id !== storyId) }))
+        .filter((g) => g.stories.length > 0);
+      return next;
+    });
+    void loadStories();
+  }, [loadStories]);
 
   return (
     <main className="relative z-10 flex h-dvh overflow-hidden">
@@ -84,10 +123,13 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
           me={me}
           conversations={conversations}
           activeId={activeId}
+          storyGroups={storyGroups}
           onSelect={setActiveId}
           onOpenProfile={() => setShowProfile(true)}
           onOpenChat={openConversationWith}
           onLogout={logout}
+          onOpenStories={(idx) => setStoryViewer(idx)}
+          onAddStory={() => setStoryComposer(true)}
         />
       </div>
 
@@ -99,10 +141,11 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
             conversationId={activeConv.id}
             peer={activeConv.peer}
             onBack={() => setActiveId(null)}
-            onCall={() => callCtl.startCall(activeConv.id, activeConv.peer)}
+            onCall={(media) => callCtl.startCall(activeConv.id, activeConv.peer, media)}
             onViewPeer={() => setViewUser(activeConv.peer)}
             callBusy={!!callCtl.call}
             refreshConversations={loadConversations}
+            notify={notify}
           />
         ) : (
           <EmptyState />
@@ -120,6 +163,9 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
               void loadConversations();
               notify("Профиль обновлён");
             }}
+            onDeletedAccount={() => {
+              window.location.href = "/";
+            }}
           />
         )}
         {viewUser && (
@@ -132,16 +178,41 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
             }}
           />
         )}
+        {storyComposer && (
+          <StoryComposer
+            onClose={() => setStoryComposer(false)}
+            notify={notify}
+            onPublished={() => {
+              setStoryComposer(false);
+              void loadStories();
+            }}
+          />
+        )}
+        {storyViewer !== null && storyGroups[storyViewer] && (
+          <StoryViewer
+            me={me}
+            groups={storyGroups}
+            startGroupIndex={storyViewer}
+            onClose={() => setStoryViewer(null)}
+            onWatched={markWatched}
+            onDeleted={removeStory}
+          />
+        )}
         {(callCtl.call || callCtl.incoming) && (
           <CallOverlay
             call={callCtl.call}
             incoming={callCtl.incoming}
             muted={callCtl.muted}
+            cameraOn={callCtl.cameraOn}
             seconds={callCtl.seconds}
+            streamTick={callCtl.streamTick}
+            localStreamRef={callCtl.localStreamRef}
+            remoteStreamRef={callCtl.remoteStreamRef}
             onAccept={callCtl.accept}
             onDecline={callCtl.decline}
             onHangup={callCtl.hangup}
             onToggleMute={callCtl.toggleMute}
+            onToggleCamera={callCtl.toggleCamera}
           />
         )}
       </AnimatePresence>
@@ -173,7 +244,15 @@ function EmptyState() {
       <div className="relative">
         <div className="absolute inset-0 animate-ping rounded-full bg-violet-600/20 blur-2xl" />
         <div className="btn-gradient relative flex h-20 w-20 items-center justify-center rounded-[1.6rem]">
-          <svg viewBox="0 0 24 24" className="h-9 w-9 text-white" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+          <svg
+            viewBox="0 0 24 24"
+            className="h-9 w-9 text-white"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.8"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
             <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" />
           </svg>
         </div>
