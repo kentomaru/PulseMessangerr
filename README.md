@@ -59,6 +59,41 @@ npm run dev                   # http://localhost:3000
   начинает работать без перезапуска;
 - healthcheck честно возвращает `200` только когда база жива.
 
+### Ошибка сборки «Cannot find native binding»
+
+Симптом: деплой на Railway падает на `npm run build` с ошибкой вида
+
+```
+Error: Cannot find module '../lightningcss.linux-x64-gnu.node'
+Cannot find native binding
+```
+
+Причина: Tailwind v4 и его CSS-движок (`@tailwindcss/oxide`, `lightningcss`)
+подтягивают платформенные бинарники через **optional dependencies**. В окружении
+сборки Railway они могут не установиться (npm пропускает optional-пакеты при
+ошибке сети/платформы), и postcss падает уже на `src/app/globals.css`.
+
+Фикс (уже применён):
+
+- в `package.json` linux-бинарники закреплены явно:
+
+  ```json
+  "optionalDependencies": {
+    "@tailwindcss/oxide-linux-x64-gnu": "4.3.3",
+    "lightningcss-linux-x64-gnu": "1.32.0"
+  }
+  ```
+
+- в `railway.json` сборка идёт командой, которая не даёт их пропустить:
+
+  ```json
+  "buildCommand": "npm ci --include=optional && npm run build"
+  ```
+
+Проверить локально: `rm -rf node_modules/lightningcss-linux-x64-gnu
+node_modules/@tailwindcss/oxide-linux-x64-gnu && npm run build` — до фикса
+сборка падала, после `npm ci --include=optional` проходит.
+
 ## Логи: «где что сломалось?»
 
 Все логи — структурированные, в stdout (Railway их показывает в Deploy Logs):
