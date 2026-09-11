@@ -23,11 +23,13 @@ type Props = {
   me: PublicUser;
   onClose: () => void;
   onSaved: (u: PublicUser) => void;
+  onUpdated?: (u: PublicUser) => void;
   onDeletedAccount: () => void;
 };
 
-export default function ProfileModal({ me, onClose, onSaved, onDeletedAccount }: Props) {
+export default function ProfileModal({ me, onClose, onSaved, onUpdated, onDeletedAccount }: Props) {
   const [displayName, setDisplayName] = useState(me.displayName);
+  const [section, setSection] = useState<"profile" | "privacy">("profile");
   const [bio, setBio] = useState(me.bio);
   const [avatarUrl, setAvatarUrl] = useState<string | null>(me.avatarUrl);
   const [bannerUrl, setBannerUrl] = useState<string | null>(me.bannerUrl);
@@ -50,6 +52,14 @@ export default function ProfileModal({ me, onClose, onSaved, onDeletedAccount }:
       const url = await uploadFile(file);
       if (kind === "avatar") setAvatarUrl(url);
       else setBannerUrl(url);
+
+      // Фото профиля и баннер сохраняются сразу после загрузки, независимо
+      // от того, нажал ли пользователь общую кнопку сохранения.
+      const d = await api<{ user: PublicUser }>("/api/auth/me", {
+        method: "PATCH",
+        body: JSON.stringify(kind === "avatar" ? { avatarUrl: url } : { bannerUrl: url }),
+      });
+      onUpdated?.(d.user);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Ошибка загрузки");
     } finally {
@@ -171,7 +181,30 @@ export default function ProfileModal({ me, onClose, onSaved, onDeletedAccount }:
           <p className="text-xs text-white/35">@{me.username}</p>
         </div>
 
-        <label className="block">
+        <div className="grid grid-cols-2 gap-1 rounded-2xl border border-white/8 bg-white/[0.03] p-1">
+          <button
+            type="button"
+            onClick={() => setSection("profile")}
+            className={`rounded-xl px-3 py-2.5 text-sm font-medium transition-colors ${
+              section === "profile" ? "bg-white/10 text-white" : "text-white/40 hover:text-white/75"
+            }`}
+          >
+            Профиль
+          </button>
+          <button
+            type="button"
+            onClick={() => setSection("privacy")}
+            className={`rounded-xl px-3 py-2.5 text-sm font-medium transition-colors ${
+              section === "privacy" ? "bg-white/10 text-white" : "text-white/40 hover:text-white/75"
+            }`}
+          >
+            Конфиденциальность
+          </button>
+        </div>
+
+        {section === "profile" ? (
+          <>
+          <label className="block">
           <span className="mb-1.5 block text-xs font-medium tracking-wide text-white/45 uppercase">
             Отображаемое имя
           </span>
@@ -197,14 +230,17 @@ export default function ProfileModal({ me, onClose, onSaved, onDeletedAccount }:
           />
           <span className="mt-1 block text-right text-[11px] text-white/25">{bio.length}/280</span>
         </label>
-
-        {/* Приватность */}
-        <div className="rounded-2xl border border-white/8 bg-white/[0.03] p-4">
-          <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-white/85">
-            <Shield className="h-4 w-4 text-violet-300" />
-            Приватность
-          </div>
-          <div className="space-y-3.5">
+          </>
+        ) : (
+          <div className="rounded-2xl border border-white/8 bg-white/[0.03] p-4">
+            <div className="mb-1 flex items-center gap-2 text-sm font-semibold text-white/85">
+              <Shield className="h-4 w-4 text-violet-300" />
+              Настройки конфиденциальности
+            </div>
+            <p className="mb-4 text-xs leading-relaxed text-white/40">
+              Эти параметры применяются сервером к статусу, звонкам, чатам, историям и прочтению сообщений.
+            </p>
+            <div className="space-y-3.5">
             <Toggle
               checked={showOnline}
               onChange={setShowOnline}
@@ -249,7 +285,8 @@ export default function ProfileModal({ me, onClose, onSaved, onDeletedAccount }:
           >
             Политика конфиденциальности →
           </a>
-        </div>
+          </div>
+        )}
 
         {error && (
           <p className="rounded-xl border border-rose-500/25 bg-rose-500/10 px-4 py-2.5 text-sm text-rose-300">

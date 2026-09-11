@@ -22,7 +22,7 @@ export type ChatMessage = {
   id: string;
   conversationId: string;
   senderId: string;
-  type: "text" | "image" | "call";
+  type: "text" | "image" | "video" | "file" | "voice" | "voice-circle" | "call";
   content: string;
   createdAt: string;
   deletedAt: string | null;

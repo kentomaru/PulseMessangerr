@@ -7,10 +7,14 @@ import {
   ArrowLeft,
   Check,
   CheckCheck,
-  ImagePlus,
+  Circle,
+  FileText,
   Loader2,
+  Mic,
+  Square,
   MoreVertical,
   Palette,
+  Paperclip,
   Phone,
   PhoneIncoming,
   PhoneMissed,
@@ -24,7 +28,8 @@ import {
 import Avatar from "./Avatar";
 import WallpaperModal from "./WallpaperModal";
 import { api, ApiError, uploadFile } from "@/lib/api";
-import { parseImageMessage } from "@/lib/message-content";
+import { parseAttachmentMessage } from "@/lib/message-content";
+import type { AttachmentMessageContent } from "@/lib/message-content";
 import {
   callLogLabel,
   dayLabel,
@@ -37,10 +42,12 @@ import {
 import { wallpaperStyle } from "@/lib/wallpapers";
 import type { CallMedia, ChatMessage, Peer, PublicUser } from "@/lib/types";
 
-type PendingImage = {
+type PendingAttachment = {
   file: File;
-  previewUrl: string;
+  previewUrl: string | null;
 };
+
+type RecordingKind = "voice" | "voice-circle";
 
 type Props = {
   me: PublicUser;
@@ -71,8 +78,10 @@ export default function ChatView({
   const [peerState, setPeerState] = useState<Peer>(peer);
   const [wallpaper, setWallpaper] = useState<string | null>(null);
   const [text, setText] = useState("");
-  const [pendingImage, setPendingImage] = useState<PendingImage | null>(null);
+  const [pendingAttachment, setPendingAttachment] = useState<PendingAttachment | null>(null);
   const [sending, setSending] = useState(false);
+  const [recording, setRecording] = useState<RecordingKind | null>(null);
+  const [recordingSeconds, setRecordingSeconds] = useState(0);
   const [menuOpen, setMenuOpen] = useState(false);
   const [menuPosition, setMenuPosition] = useState({ top: 0, right: 16 });
   const [showWallpaper, setShowWallpaper] = useState(false);
@@ -82,15 +91,29 @@ export default function ChatView({
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
   const menuButtonRef = useRef<HTMLButtonElement | null>(null);
+  const recorderRef = useRef<MediaRecorder | null>(null);
+  const recordingStreamRef = useRef<MediaStream | null>(null);
+  const recordingChunksRef = useRef<Blob[]>([]);
+  const recordingCancelledRef = useRef(false);
+  const recordingStartedAtRef = useRef(0);
+  const recordingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const lastTypingSent = useRef(0);
   const lastCount = useRef(0);
   const loadedRef = useRef(false);
 
   useEffect(() => {
     return () => {
-      if (pendingImage) URL.revokeObjectURL(pendingImage.previewUrl);
+      if (pendingAttachment?.previewUrl) URL.revokeObjectURL(pendingAttachment.previewUrl);
     };
-  }, [pendingImage]);
+  }, [pendingAttachment]);
+
+  useEffect(() => {
+    return () => {
+      recordingCancelledRef.current = true;
+      if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
+      recordingRefCleanup(recorderRef, recordingStreamRef);
+    };
+  }, []);
 
   const load = useCallback(async () => {
     try {
@@ -156,24 +179,33 @@ export default function ChatView({
 
   const send = async () => {
     const caption = text.trim();
-    if ((!caption && !pendingImage) || sending) return;
+    if ((!caption && !pendingAttachment) || sending) return;
     setSending(true);
 
     try {
-      if (pendingImage) {
+      if (pendingAttachment) {
         // Выбор файла только готовит вложение. Загрузка и создание сообщения
         // происходят здесь, после нажатия на общую кнопку «Отправить».
-        const url = await uploadFile(pendingImage.file);
+        const attachment = pendingAttachment;
+        const url = await uploadFile(attachment.file);
+        const type = attachment.file.type.startsWith("image/")
+          ? "image"
+          : attachment.file.type.startsWith("video/")
+            ? "video"
+            : "file";
         await api("/api/messages", {
           method: "POST",
           body: JSON.stringify({
             conversationId,
-            type: "image",
+            type,
             content: url,
             caption,
+            name: attachment.file.name,
+            mimeType: attachment.file.type,
+            size: attachment.file.size,
           }),
         });
-        setPendingImage(null);
+        setPendingAttachment(null);
         setText("");
       } else {
         await api("/api/messages", {
@@ -191,20 +223,123 @@ export default function ChatView({
     }
   };
 
-  const chooseImage = (file: File | null) => {
+  const chooseAttachment = (file: File | null) => {
     if (!file) return;
-    if (!file.type.startsWith("image/")) {
-      notify("Можно прикреплять только изображения");
+    if (file.size > 500 * 1024 * 1024) {
+      notify("Файл больше 500 МБ");
       return;
     }
-    if (file.size > 10 * 1024 * 1024) {
-      notify("Файл больше 10 МБ");
-      return;
-    }
-    setPendingImage({ file, previewUrl: URL.createObjectURL(file) });
+    const previewUrl = file.type.startsWith("image/") || file.type.startsWith("video/")
+      ? URL.createObjectURL(file)
+      : null;
+    setPendingAttachment({ file, previewUrl });
   };
 
-  const removePendingImage = () => setPendingImage(null);
+  const removePendingAttachment = () => setPendingAttachment(null);
+
+  const finishRecording = async (cancelled: boolean) => {
+    const recorder = recorderRef.current;
+    if (!recorder) return;
+    recordingCancelledRef.current = cancelled;
+    if (recorder.state !== "inactive") recorder.stop();
+  };
+
+  const startRecording = async (kind: RecordingKind) => {
+    if (recording || sending) return;
+    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
+      notify("Браузер не поддерживает запись с микрофона");
+      return;
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: true,
+        video: kind === "voice-circle" ? { facingMode: "user" } : false,
+      });
+      const candidates = kind === "voice-circle"
+        ? ["video/webm;codecs=vp8,opus", "video/webm"]
+        : ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg;codecs=opus"];
+      const mimeType = candidates.find((value) => MediaRecorder.isTypeSupported(value));
+      let recorder: MediaRecorder;
+      try {
+        recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+      } catch {
+        stream.getTracks().forEach((track) => track.stop());
+        notify("Браузер не поддерживает этот формат записи");
+        return;
+      }
+
+      recordingChunksRef.current = [];
+      recordingCancelledRef.current = false;
+      recordingStreamRef.current = stream;
+      recorderRef.current = recorder;
+      recordingStartedAtRef.current = Date.now();
+      setRecordingSeconds(0);
+      setRecording(kind);
+      recordingTimerRef.current = setInterval(() => {
+        setRecordingSeconds(Math.floor((Date.now() - recordingStartedAtRef.current) / 1000));
+      }, 250);
+
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) recordingChunksRef.current.push(event.data);
+      };
+      recorder.onerror = () => {
+        notify("Не удалось записать сообщение");
+        void finishRecording(true);
+      };
+      recorder.onstop = () => {
+        const duration = Math.max(1, Math.round((Date.now() - recordingStartedAtRef.current) / 1000));
+        const wasCancelled = recordingCancelledRef.current;
+        const chunks = recordingChunksRef.current;
+        const actualMime = recorder.mimeType || mimeType || (kind === "voice-circle" ? "video/webm" : "audio/webm");
+        recordingRefCleanup(recorderRef, recordingStreamRef);
+        recordingChunksRef.current = [];
+        if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
+        recordingTimerRef.current = null;
+        setRecording(null);
+        setRecordingSeconds(0);
+        if (wasCancelled || chunks.length === 0) return;
+
+        const extension = actualMime.includes("mp4") ? "mp4" : actualMime.includes("ogg") ? "ogg" : "webm";
+        const file = new File(chunks, `message-${Date.now()}.${extension}`, { type: actualMime });
+        void (async () => {
+          setSending(true);
+          try {
+            const url = await uploadFile(file);
+            await api("/api/messages", {
+              method: "POST",
+              body: JSON.stringify({
+                conversationId,
+                type: kind,
+                content: url,
+                name: kind === "voice-circle" ? "Видеосообщение" : "Голосовое сообщение",
+                mimeType: actualMime,
+                size: file.size,
+                duration,
+              }),
+            });
+            await load();
+            refreshConversations();
+          } catch (e) {
+            notify(e instanceof Error ? e.message : "Не удалось отправить запись");
+          } finally {
+            setSending(false);
+          }
+        })();
+      };
+      recorder.start(250);
+    } catch (e) {
+      const error = e as DOMException;
+      const message = error?.name === "NotAllowedError"
+        ? "Разрешите доступ к микрофону в настройках браузера"
+        : error?.name === "NotFoundError"
+          ? "Микрофон не найден"
+          : kind === "voice-circle"
+            ? "Не удалось включить камеру и микрофон"
+            : "Не удалось включить микрофон";
+      notify(message);
+    }
+  };
 
   const removeMessage = async (id: string) => {
     try {
@@ -401,50 +536,108 @@ export default function ChatView({
       {/* Поле ввода */}
       <div className="glass-strong relative z-10 border-t border-white/8 px-4 py-3">
         <div className="mx-auto max-w-2xl">
-          {pendingImage && (
+          {recording && (
+            <div className="mb-2.5 flex items-center gap-3 rounded-2xl border border-rose-300/20 bg-rose-500/[0.08] p-2.5">
+              <span className="flex min-w-0 flex-1 items-center gap-2 text-sm text-rose-100">
+                <span className="h-2.5 w-2.5 animate-pulse rounded-full bg-rose-300" />
+                {recording === "voice-circle" ? "Записывается видеосообщение" : "Записывается голосовое"}
+                <span className="text-white/45">{formatRecordingTime(recordingSeconds)}</span>
+              </span>
+              <button
+                type="button"
+                onClick={() => void finishRecording(true)}
+                title="Отменить запись"
+                className="rounded-xl p-2 text-white/50 transition-colors hover:bg-white/10 hover:text-white"
+              >
+                <X className="h-4 w-4" />
+              </button>
+              <button
+                type="button"
+                onClick={() => void finishRecording(false)}
+                title="Остановить и отправить"
+                className="flex items-center gap-1.5 rounded-xl bg-rose-400/20 px-3 py-2 text-xs font-medium text-rose-100 transition-colors hover:bg-rose-400/30"
+              >
+                <Square className="h-3.5 w-3.5 fill-current" />
+                Отправить
+              </button>
+            </div>
+          )}
+          {pendingAttachment && (
             <div className="mb-2.5 flex items-center gap-3 rounded-2xl border border-white/10 bg-white/[0.04] p-2.5">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={pendingImage.previewUrl}
-                alt="Прикреплённое фото"
-                className="h-14 w-14 rounded-xl object-cover"
-              />
+              {pendingAttachment.previewUrl ? (
+                pendingAttachment.file.type.startsWith("video/") ? (
+                  <video
+                    src={pendingAttachment.previewUrl}
+                    muted
+                    className="h-14 w-14 rounded-xl object-cover"
+                  />
+                ) : (
+                  /* eslint-disable-next-line @next/next/no-img-element */
+                  <img
+                    src={pendingAttachment.previewUrl}
+                    alt="Предпросмотр вложения"
+                    className="h-14 w-14 rounded-xl object-cover"
+                  />
+                )
+              ) : (
+                <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-xl bg-white/10 text-white/60">
+                  <FileText className="h-6 w-6" />
+                </span>
+              )}
               <div className="min-w-0 flex-1">
-                <p className="text-sm font-medium text-white/80">Фото прикреплено</p>
+                <p className="truncate text-sm font-medium text-white/80">{pendingAttachment.file.name}</p>
                 <p className="truncate text-xs text-white/35">
-                  Добавьте подпись и нажмите «Отправить»
+                  {formatBytes(pendingAttachment.file.size)} · добавьте подпись и отправьте
                 </p>
               </div>
               <button
                 type="button"
-                onClick={removePendingImage}
-                title="Убрать фото"
+                onClick={removePendingAttachment}
+                title="Убрать вложение"
                 className="rounded-xl p-2 text-white/45 transition-colors hover:bg-white/10 hover:text-white"
               >
                 <X className="h-4 w-4" />
               </button>
             </div>
           )}
-          <div className="flex items-end gap-2.5">
+          <div className="flex items-end gap-2">
             <button
               type="button"
               onClick={() => fileRef.current?.click()}
-              disabled={sending}
-              title="Прикрепить фото"
+              disabled={sending || Boolean(recording)}
+              title="Прикрепить файл до 500 МБ"
               className="glass flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl text-white/70 transition-colors hover:text-white disabled:opacity-50"
             >
-              <ImagePlus className="h-4.5 w-4.5" />
+              <Paperclip className="h-4.5 w-4.5" />
             </button>
             <input
               ref={fileRef}
               type="file"
-              accept="image/png,image/jpeg,image/webp,image/gif"
+              accept="*/*"
               className="hidden"
               onChange={(e) => {
-                chooseImage(e.target.files?.[0] ?? null);
+                chooseAttachment(e.target.files?.[0] ?? null);
                 e.target.value = "";
               }}
             />
+            <button
+              type="button"
+              onClick={() => void startRecording("voice")}
+              disabled={sending || Boolean(recording)}
+              title="Записать голосовое"
+              className="glass flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl text-white/70 transition-colors hover:text-white disabled:opacity-50"
+            >
+              <Mic className="h-4.5 w-4.5" />
+            </button>
+            <button
+              type="button"
+              onClick={() => void startRecording("voice-circle")}
+              disabled={sending || Boolean(recording)}
+              title="Записать видеосообщение"
+              className="glass flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl text-white/70 transition-colors hover:text-white disabled:opacity-50"
+            >
+              <Circle className="h-4.5 w-4.5" />
+            </button>
             <textarea
               value={text}
               onChange={(e) => {
@@ -459,15 +652,16 @@ export default function ChatView({
               }}
               rows={1}
               maxLength={4000}
-              placeholder={pendingImage ? "Подпись к фото…" : "Сообщение…"}
-              className="ring-focus nice-scroll max-h-32 min-h-11 flex-1 resize-none rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3 text-[15px] transition-all placeholder:text-white/30"
+              disabled={Boolean(recording)}
+              placeholder={pendingAttachment ? "Подпись к вложению…" : "Сообщение…"}
+              className="ring-focus nice-scroll max-h-32 min-h-11 flex-1 resize-none rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3 text-[15px] transition-all placeholder:text-white/30 disabled:opacity-50"
             />
             <button
               type="button"
               onClick={() => void send()}
-              disabled={(!text.trim() && !pendingImage) || sending}
+              disabled={Boolean(recording) || (!text.trim() && !pendingAttachment) || sending}
               title="Отправить"
-              className="btn-gradient flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl text-white"
+              className="btn-gradient flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl text-white disabled:opacity-50"
             >
               {sending ? <Loader2 className="h-4.5 w-4.5 animate-spin" /> : <Send className="h-4.5 w-4.5" />}
             </button>
@@ -561,37 +755,27 @@ function MessageBubble({
     );
   }
 
-  const image = message.type === "image" ? parseImageMessage(message.content) : null;
+  const attachmentType =
+    message.type === "image" ||
+    message.type === "video" ||
+    message.type === "file" ||
+    message.type === "voice" ||
+    message.type === "voice-circle"
+      ? message.type
+      : null;
+  const attachment = attachmentType ? parseAttachmentMessage(message.content) : null;
 
   return (
     <div className={`group flex items-center gap-1.5 py-0.5 ${own ? "justify-end" : "justify-start"}`}>
       {!own && <div className="w-1" />}
       <div className={`relative max-w-[78%] sm:max-w-[70%] ${own ? "order-1" : ""}`}>
-        {image ? (
-          <div
-            className={`overflow-hidden rounded-3xl ring-1 ring-white/10 ${
-              own ? "bubble-own" : "bubble-peer"
-            }`}
-          >
-            <button
-              type="button"
-              onClick={() => onOpenImage(image.url)}
-              className="block w-full overflow-hidden transition-transform hover:scale-[1.01]"
-            >
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={image.url}
-                alt="Фото"
-                className="max-h-80 w-full max-w-xs object-cover"
-                draggable={false}
-              />
-            </button>
-            {image.caption && (
-              <p className="px-4 py-2.5 text-[15px] leading-relaxed whitespace-pre-wrap break-words text-white">
-                {image.caption}
-              </p>
-            )}
-          </div>
+        {attachment && attachmentType ? (
+          <AttachmentBubble
+            type={attachmentType}
+            attachment={attachment}
+            own={own}
+            onOpenImage={onOpenImage}
+          />
         ) : (
           <div
             className={`rounded-3xl px-4 py-2.5 text-[15px] leading-relaxed whitespace-pre-wrap break-words ${
@@ -625,6 +809,131 @@ function MessageBubble({
       )}
     </div>
   );
+}
+
+type AttachmentType = "image" | "video" | "file" | "voice" | "voice-circle";
+
+function AttachmentBubble({
+  type,
+  attachment,
+  own,
+  onOpenImage,
+}: {
+  type: AttachmentType;
+  attachment: AttachmentMessageContent;
+  own: boolean;
+  onOpenImage: (url: string) => void;
+}) {
+  const shell = `overflow-hidden rounded-3xl ring-1 ring-white/10 ${own ? "bubble-own" : "bubble-peer"}`;
+  const caption = attachment.caption ? (
+    <p className="px-4 py-2.5 text-[15px] leading-relaxed whitespace-pre-wrap break-words text-white">
+      {attachment.caption}
+    </p>
+  ) : null;
+
+  if (type === "image") {
+    return (
+      <div className={shell}>
+        <button
+          type="button"
+          onClick={() => onOpenImage(attachment.url)}
+          className="block w-full overflow-hidden transition-transform hover:scale-[1.01]"
+        >
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={attachment.url}
+            alt={attachment.caption || "Фото"}
+            className="max-h-80 w-full max-w-xs object-cover"
+            draggable={false}
+          />
+        </button>
+        {caption}
+      </div>
+    );
+  }
+
+  if (type === "video") {
+    return (
+      <div className={`${shell} max-w-xs`}>
+        <video
+          src={attachment.url}
+          controls
+          playsInline
+          preload="metadata"
+          className="max-h-80 w-full object-contain"
+        />
+        {(attachment.name !== "Файл" || caption) && (
+          <p className="px-4 pt-2.5 text-xs text-white/55">{attachment.name}</p>
+        )}
+        {caption}
+      </div>
+    );
+  }
+
+  if (type === "voice" || type === "voice-circle") {
+    return (
+      <div className={`${shell} ${type === "voice-circle" ? "rounded-[50%] p-1" : "p-3"}`}>
+        {type === "voice-circle" ? (
+          <video
+            src={attachment.url}
+            controls
+            playsInline
+            preload="metadata"
+            className="aspect-square w-48 rounded-[50%] object-cover"
+          />
+        ) : (
+          <audio src={attachment.url} controls preload="metadata" className="max-w-[min(18rem,70vw)]" />
+        )}
+        {attachment.duration ? (
+          <p className="px-2 pt-1 text-center text-[11px] text-white/45">
+            {formatRecordingTime(attachment.duration)}
+          </p>
+        ) : null}
+        {caption}
+      </div>
+    );
+  }
+
+  return (
+    <div className={`${shell} flex min-w-52 items-center gap-3 px-4 py-3`}>
+      <FileText className="h-7 w-7 shrink-0 text-white/65" />
+      <div className="min-w-0">
+        <a
+          href={attachment.url}
+          download={attachment.name}
+          className="block truncate text-sm font-medium text-white underline decoration-white/20 underline-offset-4 hover:decoration-white/70"
+        >
+          {attachment.name}
+        </a>
+        {attachment.size > 0 && <p className="text-xs text-white/40">{formatBytes(attachment.size)}</p>}
+        {caption}
+      </div>
+    </div>
+  );
+}
+
+function formatBytes(value: number) {
+  if (value < 1024) return `${value} Б`;
+  if (value < 1024 * 1024) return `${Math.round(value / 1024)} КБ`;
+  if (value < 1024 * 1024 * 1024) return `${(value / (1024 * 1024)).toFixed(1)} МБ`;
+  return `${(value / (1024 * 1024 * 1024)).toFixed(1)} ГБ`;
+}
+
+function formatRecordingTime(value: number) {
+  const minutes = Math.floor(value / 60).toString().padStart(2, "0");
+  const seconds = Math.max(0, value % 60).toString().padStart(2, "0");
+  return `${minutes}:${seconds}`;
+}
+
+function recordingRefCleanup(
+  recorderRef: { current: MediaRecorder | null },
+  streamRef: { current: MediaStream | null },
+) {
+  const recorder = recorderRef.current;
+  if (recorder && recorder.state !== "inactive") recorder.stop();
+  recorderRef.current = null;
+  streamRef.current?.getTracks().forEach((track) => track.stop());
+  streamRef.current = null;
 }
 
 function CallLogBubble({ message, meId }: { message: ChatMessage; meId: string }) {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ImagePlus, Loader2, Send, X } from "lucide-react";
 import { ModalShell } from "./ProfileModal";
 import { api, uploadFile } from "@/lib/api";
@@ -20,6 +20,12 @@ export default function StoryComposer({ onClose, onPublished, notify }: Props) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const inputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (previewUrl) URL.revokeObjectURL(previewUrl);
+    };
+  }, [previewUrl]);
 
   const pick = (f: File | null) => {
     setError("");

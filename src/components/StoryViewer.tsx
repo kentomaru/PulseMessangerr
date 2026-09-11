@@ -30,51 +30,72 @@ export default function StoryViewer({
   onWatched,
   onDeleted,
 }: Props) {
-  const [gi, setGi] = useState(startGroupIndex);
-  const [si, setSi] = useState(0);
+  const [activeStoryId, setActiveStoryId] = useState<string | null>(
+    () => groups[startGroupIndex]?.stories[0]?.id ?? null,
+  );
   const [paused, setPaused] = useState(false);
   const [showViewers, setShowViewers] = useState(false);
   const [viewers, setViewers] = useState<Viewer[] | null>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const group = groups[gi];
+  // Историю выбираем по стабильному id, а не по индексу: фоновые обновления
+  // списка и удаление другой истории больше не показывают первое фото повторно.
+  const gi = groups.findIndex((candidate) =>
+    candidate.stories.some((candidateStory) => candidateStory.id === activeStoryId),
+  );
+  const safeGi = gi >= 0 ? gi : Math.min(startGroupIndex, Math.max(0, groups.length - 1));
+  const group = groups[safeGi];
+  const si = group ? Math.max(0, group.stories.findIndex((candidate) => candidate.id === activeStoryId)) : 0;
   const story: StoryItem | undefined = group?.stories[si];
   const isMine = group?.user.id === me.id;
 
+  useEffect(() => {
+    if (gi >= 0) return;
+    const fallback = groups[safeGi]?.stories[0]?.id ?? null;
+    if (fallback !== activeStoryId) setActiveStoryId(fallback);
+  }, [activeStoryId, groups, gi, safeGi]);
+
   const next = useCallback(() => {
-    setSi((curSi) => {
-      if (curSi + 1 < (groups[gi]?.stories.length ?? 0)) return curSi + 1;
-      setGi((curGi) => {
-        if (curGi + 1 < groups.length) {
-          return curGi + 1;
-        }
-        onClose();
-        return curGi;
-      });
-      return 0;
-    });
-  }, [gi, groups, onClose]);
+    if (!group || !story) return;
+    const nextStory = group.stories[si + 1];
+    if (nextStory) {
+      setActiveStoryId(nextStory.id);
+      return;
+    }
+    const nextGroup = groups[safeGi + 1];
+    if (nextGroup?.stories[0]) {
+      setActiveStoryId(nextGroup.stories[0].id);
+      return;
+    }
+    onClose();
+  }, [group, groups, safeGi, si, story, onClose]);
 
   const prev = useCallback(() => {
-    setSi((curSi) => {
-      if (curSi > 0) return curSi - 1;
-      if (gi > 0) {
-        setGi(gi - 1);
-        return 0;
-      }
-      return 0;
-    });
-  }, [gi]);
+    if (!group || !story) return;
+    const previousStory = group.stories[si - 1];
+    if (previousStory) {
+      setActiveStoryId(previousStory.id);
+      return;
+    }
+    const previousGroup = groups[safeGi - 1];
+    const lastStory = previousGroup?.stories.at(-1);
+    if (lastStory) setActiveStoryId(lastStory.id);
+  }, [group, groups, safeGi, si, story]);
 
-  // автопереход
+  // автопереход. next меняется при фоновой перезагрузке групп, поэтому таймер
+  // вызывает его через ref и не начинает пятую секунду заново каждые 5 секунд.
+  const nextRef = useRef(next);
+  nextRef.current = next;
+  const currentStoryId = story?.id;
+
   useEffect(() => {
-    if (!story || paused || showViewers) return;
-    onWatched(story.id);
-    timerRef.current = setTimeout(next, STORY_MS);
+    if (!currentStoryId || paused || showViewers) return;
+    onWatched(currentStoryId);
+    timerRef.current = setTimeout(() => nextRef.current(), STORY_MS);
     return () => {
       if (timerRef.current) clearTimeout(timerRef.current);
     };
-  }, [story?.id, paused, showViewers, next, story, onWatched]);
+  }, [currentStoryId, paused, showViewers, onWatched]);
 
   // клавиатура
   useEffect(() => {
@@ -104,11 +125,15 @@ export default function StoryViewer({
     try {
       await api(`/api/stories/${story.id}`, { method: "DELETE" });
       onDeleted(story.id);
-      const rest = groups[gi]?.stories.filter((s) => s.id !== story.id);
-      if (rest && rest.length > 0) {
-        setSi(0);
+      const rest = group?.stories.filter((s) => s.id !== story.id) ?? [];
+      if (rest.length > 0) {
+        setActiveStoryId(rest[0].id);
       } else {
-        onClose();
+        const nextGroup = groups[safeGi + 1];
+        const previousGroup = groups[safeGi - 1];
+        const replacement = nextGroup?.stories[0] ?? previousGroup?.stories.at(-1);
+        if (replacement) setActiveStoryId(replacement.id);
+        else onClose();
       }
     } catch {
       onClose();

@@ -4,7 +4,7 @@ import { conversationMembers, messages, users } from "@/db/schema";
 import { and, desc, eq, isNull, ne } from "drizzle-orm";
 import { publicUser } from "@/lib/auth";
 import { isUuid, withApi } from "@/lib/api-helpers";
-import { encodeImageMessage, isUploadUrl } from "@/lib/message-content";
+import { encodeAttachmentMessage, isFileUrl } from "@/lib/message-content";
 
 async function assertMember(conversationId: string, userId: string) {
   const rows = await db
@@ -79,11 +79,18 @@ export const GET = withApi("messages", async ({ req, me }) => {
 export const POST = withApi("messages:send", async ({ req, me, log }) => {
   const body = await req.json();
   const conversationId = String(body.conversationId ?? "");
-  const type = body.type === "image" ? "image" : "text";
+  const allowedTypes = new Set(["text", "image", "video", "file", "voice", "voice-circle"]);
+  const requestedType = String(body.type ?? "text");
+  const type = allowedTypes.has(requestedType) ? requestedType : "text";
   if (conversationId && !isUuid(conversationId))
     return NextResponse.json({ error: "Чат не найден" }, { status: 404 });
   const content = String(body.content ?? "").trim();
   const caption = typeof body.caption === "string" ? body.caption.trim() : "";
+  const name = typeof body.name === "string" ? body.name.trim().slice(0, 255) : "Файл";
+  const mimeType = typeof body.mimeType === "string" ? body.mimeType.slice(0, 120) : "";
+  const size = typeof body.size === "number" && body.size >= 0 ? Math.round(body.size) : 0;
+  const duration = typeof body.duration === "number" && body.duration >= 0 ? Math.round(body.duration) : undefined;
+  const isAttachment = type !== "text";
 
   if (!conversationId || !content)
     return NextResponse.json({ error: "Пустое сообщение" }, { status: 400 });
@@ -91,13 +98,15 @@ export const POST = withApi("messages:send", async ({ req, me, log }) => {
     return NextResponse.json({ error: "Слишком длинное сообщение" }, { status: 400 });
   if (caption.length > 4000)
     return NextResponse.json({ error: "Подпись слишком длинная" }, { status: 400 });
-  if (type === "image" && !isUploadUrl(content))
-    return NextResponse.json({ error: "Некорректная ссылка на изображение" }, { status: 400 });
+  if (isAttachment && !isFileUrl(content))
+    return NextResponse.json({ error: "Некорректная ссылка на файл" }, { status: 400 });
 
   const membership = await assertMember(conversationId, me.id);
   if (!membership) return NextResponse.json({ error: "Нет доступа" }, { status: 403 });
 
-  const storedContent = type === "image" ? encodeImageMessage(content, caption) : content;
+  const storedContent = isAttachment
+    ? encodeAttachmentMessage({ url: content, caption, name, mimeType, size, duration })
+    : content;
   const [msg] = await db
     .insert(messages)
     .values({ conversationId, senderId: me.id, type, content: storedContent })

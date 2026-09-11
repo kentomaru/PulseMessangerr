@@ -4,6 +4,7 @@ import { stories, storyViews, users } from "@/db/schema";
 import { and, asc, eq, gt, inArray, lt, or, sql } from "drizzle-orm";
 import { publicUser } from "@/lib/auth";
 import { withApi } from "@/lib/api-helpers";
+import { isFileUrl } from "@/lib/message-content";
 
 const STORY_TTL_MS = 24 * 60 * 60 * 1000; // 24 часа
 
@@ -34,7 +35,11 @@ export const GET = withApi("stories", async ({ me, log }) => {
     .orderBy(asc(stories.createdAt))
     .limit(200);
 
-  if (active.length === 0) return NextResponse.json({ groups: [] });
+  if (active.length === 0)
+    return NextResponse.json(
+      { groups: [] },
+      { headers: { "Cache-Control": "no-store, max-age=0" } },
+    );
 
   const storyIds = active.map((r) => r.story.id);
   const myViews = await db
@@ -77,7 +82,10 @@ export const GET = withApi("stories", async ({ me, log }) => {
     return bt - at;
   });
 
-  return NextResponse.json({ groups });
+  return NextResponse.json(
+    { groups },
+    { headers: { "Cache-Control": "no-store, max-age=0" } },
+  );
 });
 
 /** POST /api/stories — опубликовать историю { mediaUrl, caption }. */
@@ -86,7 +94,7 @@ export const POST = withApi("stories:create", async ({ req, me, log }) => {
   const mediaUrl = String(body.mediaUrl ?? "");
   const caption = String(body.caption ?? "").trim().slice(0, 140);
 
-  if (!mediaUrl.startsWith("/api/files/"))
+  if (!isFileUrl(mediaUrl))
     return NextResponse.json({ error: "Сначала загрузите изображение" }, { status: 400 });
 
   const [story] = await db

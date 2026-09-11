@@ -27,6 +27,7 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
   const [storyViewer, setStoryViewer] = useState<number | null>(null);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const toastId = useRef(0);
+  const storyRequestRef = useRef(0);
   const unauthorizedRef = useRef(false);
 
   const notify = useCallback((msg: string) => {
@@ -57,9 +58,10 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
   }, []);
 
   const loadStories = useCallback(async () => {
+    const requestId = ++storyRequestRef.current;
     try {
-      const d = await api<{ groups: StoryGroup[] }>("/api/stories");
-      setStoryGroups(d.groups);
+      const d = await api<{ groups: StoryGroup[] }>("/api/stories", { cache: "no-store" });
+      if (requestId === storyRequestRef.current) setStoryGroups(d.groups);
     } catch {
       /* ignore */
     }
@@ -185,6 +187,11 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
               void loadConversations();
               notify("Профиль обновлён");
             }}
+            onUpdated={(u: PublicUser) => {
+              setMe(u);
+              void loadConversations();
+              notify("Изменение профиля сохранено");
+            }}
             onDeletedAccount={() => {
               window.location.href = "/";
             }}
@@ -235,6 +242,10 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
             onHangup={callCtl.hangup}
             onToggleMute={callCtl.toggleMute}
             onToggleCamera={callCtl.toggleCamera}
+            audioInputs={callCtl.audioInputs}
+            selectedAudioInputId={callCtl.selectedAudioInputId}
+            micStatus={callCtl.micStatus}
+            onSelectAudioInput={callCtl.selectAudioInput}
           />
         )}
       </AnimatePresence>

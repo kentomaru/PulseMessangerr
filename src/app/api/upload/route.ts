@@ -8,13 +8,15 @@ import { mkdir, writeFile } from "fs/promises";
 import path from "path";
 
 const log = createLogger("api:upload");
+const MAX_FILE_SIZE = 500 * 1024 * 1024;
 
-const ALLOWED: Record<string, string> = {
-  "image/png": "png",
-  "image/jpeg": "jpg",
-  "image/webp": "webp",
-  "image/gif": "gif",
-};
+function extensionFor(file: File): string {
+  const original = file.name.split(/[\\/]/).pop() ?? "file";
+  const ext = original.split(".").pop()?.toLowerCase().replace(/[^a-z0-9]/g, "") ?? "";
+  if (ext && ext.length <= 16) return ext;
+  const mimeExt = file.type.split("/")[1]?.replace(/[^a-z0-9]/g, "");
+  return mimeExt && mimeExt.length <= 16 ? mimeExt : "bin";
+}
 
 export async function POST(req: NextRequest) {
   const started = Date.now();
@@ -32,21 +34,16 @@ export async function POST(req: NextRequest) {
     const file = form.get("file");
     if (!(file instanceof File))
       return NextResponse.json({ error: "Файл не найден" }, { status: 400 });
+    if (file.size > MAX_FILE_SIZE)
+      return NextResponse.json({ error: "Файл больше 500 МБ" }, { status: 413 });
 
-    const ext = ALLOWED[file.type];
-    if (!ext)
-      return NextResponse.json(
-        { error: "Поддерживаются только изображения (PNG, JPG, WebP, GIF)" },
-        { status: 400 },
-      );
-    if (file.size > 10 * 1024 * 1024)
-      return NextResponse.json({ error: "Файл больше 10 МБ" }, { status: 400 });
-
+    const ext = extensionFor(file);
     const name = `${randomUUID()}.${ext}`;
+    const mimeType = file.type || "application/octet-stream";
     const buffer = Buffer.from(await file.arrayBuffer());
 
     try {
-      await db.insert(uploads).values({ name, ownerId: me.id, mimeType: file.type, data: buffer });
+      await db.insert(uploads).values({ name, ownerId: me.id, mimeType, data: buffer });
     } catch (err) {
       // Локальный fallback полезен для разработки без PostgreSQL. На Railway
       // основное хранилище — PostgreSQL, иначе файл пропадёт после деплоя.
@@ -58,7 +55,13 @@ export async function POST(req: NextRequest) {
       await writeFile(path.join(dir, name), buffer);
     }
 
-    log.info("Файл загружен", { userId: me.id, name, size: String(file.size), ms: String(Date.now() - started) });
+    log.info("Файл загружен", {
+      userId: me.id,
+      name,
+      mimeType,
+      size: String(file.size),
+      ms: String(Date.now() - started),
+    });
     return NextResponse.json({ url: `/api/files/${name}` });
   } catch (err) {
     log.error("Ошибка загрузки файла", { err });

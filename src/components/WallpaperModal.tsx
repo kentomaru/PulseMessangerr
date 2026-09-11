@@ -14,7 +14,7 @@ type Props = {
   notify: (msg: string) => void;
 };
 
-/** Выбор обоев чата: пресет, своя картинка или сброс. У каждого участника — свои. */
+/** Выбор общих обоев чата: пресет, своя картинка или сброс. */
 export default function WallpaperModal({ conversationId, current, onClose, onSaved, notify }: Props) {
   const [selected, setSelected] = useState<string | null>(current);
   const [busy, setBusy] = useState(false);
@@ -40,6 +40,14 @@ export default function WallpaperModal({ conversationId, current, onClose, onSav
 
   const upload = async (file: File | null) => {
     if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      setError("Для обоев нужна картинка");
+      return;
+    }
+    if (file.size > 500 * 1024 * 1024) {
+      setError("Картинка больше 500 МБ");
+      return;
+    }
     setUploading(true);
     setError("");
     try {

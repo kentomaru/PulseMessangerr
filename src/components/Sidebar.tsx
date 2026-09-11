@@ -17,7 +17,7 @@ import StoriesRow from "./StoriesRow";
 import { api } from "@/lib/api";
 import { timeHHmm, parseCallContent, callLogLabel } from "@/lib/format";
 import type { ConversationListItem, PublicUser, StoryGroup } from "@/lib/types";
-import { parseImageMessage } from "@/lib/message-content";
+import { parseAttachmentMessage } from "@/lib/message-content";
 
 type Props = {
   me: PublicUser;
@@ -35,9 +35,25 @@ type Props = {
 function previewText(conv: ConversationListItem, meId: string) {
   const lm = conv.lastMessage;
   if (!lm) return "Нет сообщений";
-  if (lm.type === "image") {
-    const image = parseImageMessage(lm.content);
-    return image.caption ? `🖼 ${image.caption.replace(/\n/g, " ").slice(0, 56)}` : "🖼 Фото";
+  if (["image", "video", "file", "voice", "voice-circle"].includes(lm.type)) {
+    const attachment = parseAttachmentMessage(lm.content);
+    const prefix =
+      lm.type === "image"
+        ? "🖼"
+        : lm.type === "video"
+          ? "🎥"
+          : lm.type === "voice"
+            ? "🎙"
+            : lm.type === "voice-circle"
+              ? "⭕"
+              : "📎";
+    const label =
+      lm.type === "image"
+        ? attachment.caption || "Фото"
+        : lm.type === "video"
+          ? attachment.name === "Файл" ? "Видео" : attachment.name
+          : attachment.name;
+    return `${prefix} ${label.replace(/\n/g, " ").slice(0, 56)}`;
   }
   if (lm.type === "call") {
     const info = parseCallContent(lm.content);

@@ -82,6 +82,50 @@ function startRingtone(): { stop: () => void } | null {
   }
 }
 
+type LocalMediaResult = {
+  stream: MediaStream;
+  cameraOn: boolean;
+};
+
+async function getLocalMedia(media: CallMedia, audioDeviceId?: string): Promise<LocalMediaResult> {
+  if (!navigator.mediaDevices?.getUserMedia) {
+    throw new Error("Браузер не поддерживает доступ к микрофону");
+  }
+
+  const audio = audioDeviceId ? { deviceId: { exact: audioDeviceId } } : true;
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio,
+      video: media === "video",
+    });
+    return { stream, cameraOn: stream.getVideoTracks().length > 0 };
+  } catch (videoError) {
+    // Видеозвонок должен продолжаться с микрофоном, если камера отсутствует,
+    // занята другим приложением или не разрешена. Удалённое видео при этом
+    // всё равно будет принято через recvonly transceiver.
+    if (media !== "video") throw videoError;
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio, video: false });
+      return { stream, cameraOn: false };
+    } catch {
+      throw videoError;
+    }
+  }
+}
+
+function mediaErrorMessage(error: unknown, media: CallMedia) {
+  const name = error instanceof DOMException ? error.name : "";
+  if (name === "NotAllowedError" || name === "PermissionDeniedError") {
+    return "Нет доступа к микрофону — разрешите его в настройках браузера";
+  }
+  if (name === "NotFoundError") {
+    return media === "video" ? "Камера или микрофон не найдены" : "Микрофон не найден";
+  }
+  if (name === "NotReadableError") return "Микрофон или камера уже заняты другой программой";
+  if (name === "OverconstrainedError") return "Выбранный микрофон недоступен — выберите другое устройство";
+  return error instanceof Error ? error.message : "Не удалось включить микрофон";
+}
+
 export function useCallController(
   meId: string,
   notify: (msg: string) => void,
@@ -94,6 +138,9 @@ export function useCallController(
   const [seconds, setSeconds] = useState(0);
   const [streamTick, setStreamTick] = useState(0);
   const [starting, setStarting] = useState(false);
+  const [audioInputs, setAudioInputs] = useState<MediaDeviceInfo[]>([]);
+  const [selectedAudioInputId, setSelectedAudioInputId] = useState("");
+  const [micStatus, setMicStatus] = useState("");
 
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
@@ -169,6 +216,7 @@ export function useCallController(
     setSeconds(0);
     setMuted(false);
     setCameraOn(false);
+    setMicStatus("");
     setStarting(false);
     busyRef.current = false;
   }, [clearDisconnectedTimer]);
@@ -225,6 +273,22 @@ export function useCallController(
     }).catch(() => {});
     cleanup();
   }, [cleanup]);
+
+  const refreshAudioInputs = useCallback(async () => {
+    if (!navigator.mediaDevices?.enumerateDevices) return;
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const inputs = devices.filter((device) => device.kind === "audioinput");
+      setAudioInputs(inputs);
+      setSelectedAudioInputId((current) =>
+        current && inputs.some((device) => device.deviceId === current)
+          ? current
+          : inputs[0]?.deviceId ?? "",
+      );
+    } catch {
+      setAudioInputs([]);
+    }
+  }, []);
 
   const createPeer = useCallback(
     (role: "caller" | "callee", callId?: string) => {
@@ -299,14 +363,17 @@ export function useCallController(
       let handedOffToRetry = false;
 
       try {
-        if (!navigator.mediaDevices?.getUserMedia) {
-          throw new Error("Браузер не поддерживает доступ к микрофону");
-        }
-        stream = await navigator.mediaDevices.getUserMedia({
-          audio: true,
-          video: media === "video",
-        });
+        const localMedia = await getLocalMedia(media, selectedAudioInputId || undefined);
+        stream = localMedia.stream;
         localStreamRef.current = stream;
+        const inputTrack = stream.getAudioTracks()[0];
+        const inputDeviceId = inputTrack?.getSettings().deviceId;
+        setMicStatus(`Микрофон подключён: ${inputTrack?.label || "по умолчанию"}`);
+        if (inputDeviceId) setSelectedAudioInputId(inputDeviceId);
+        void refreshAudioInputs();
+        if (media === "video" && !localMedia.cameraOn) {
+          notifyRef.current("Камера недоступна — звонок продолжится в аудиорежиме");
+        }
 
         const pc = createPeer("caller");
         const offer = await pc.createOffer();
@@ -328,9 +395,16 @@ export function useCallController(
         };
         callRef.current = ongoing;
         setCall(ongoing);
-        setCameraOn(media === "video");
+        setCameraOn(localMedia.cameraOn);
         await flushPendingIce(d.call.id);
       } catch (err) {
+        const failedCallId = signalCallIdRef.current;
+        if (failedCallId) {
+          await api(`/api/calls/${failedCallId}`, {
+            method: "POST",
+            body: JSON.stringify({ action: "hangup" }),
+          }).catch(() => {});
+        }
         stream?.getTracks().forEach((track) => track.stop());
         cleanup();
 
@@ -375,10 +449,8 @@ export function useCallController(
 
         if (err instanceof ApiError) {
           notifyRef.current(err.message);
-        } else if (err instanceof Error && err.name === "NotAllowedError") {
-          notifyRef.current("Нет доступа к микрофону или камере — разрешите доступ в браузере");
         } else {
-          notifyRef.current(err instanceof Error ? err.message : "Не удалось начать звонок");
+          notifyRef.current(mediaErrorMessage(err, media));
         }
       } finally {
         if (!handedOffToRetry) {
@@ -387,7 +459,7 @@ export function useCallController(
         }
       }
     },
-    [cleanup, createPeer, flushPendingIce],
+    [cleanup, createPeer, flushPendingIce, refreshAudioInputs, selectedAudioInputId],
   );
 
   const startCallRef = useRef(startCall);
@@ -421,18 +493,27 @@ export function useCallController(
     let stream: MediaStream | null = null;
 
     try {
-      if (!navigator.mediaDevices?.getUserMedia) {
-        throw new Error("Браузер не поддерживает доступ к микрофону");
-      }
-      stream = await navigator.mediaDevices.getUserMedia({
-        audio: true,
-        video: inc.media === "video",
-      });
+      const localMedia = await getLocalMedia(inc.media, selectedAudioInputId || undefined);
+      stream = localMedia.stream;
       localStreamRef.current = stream;
+      const inputTrack = stream.getAudioTracks()[0];
+      const inputDeviceId = inputTrack?.getSettings().deviceId;
+      setMicStatus(`Микрофон подключён: ${inputTrack?.label || "по умолчанию"}`);
+      if (inputDeviceId) setSelectedAudioInputId(inputDeviceId);
+      void refreshAudioInputs();
       signalCallIdRef.current = inc.id;
+      if (inc.media === "video" && !localMedia.cameraOn) {
+        notifyRef.current("Камера не найдена — вы подключитесь без своего видео");
+      }
 
       const pc = createPeer("callee", inc.id);
       await pc.setRemoteDescription({ type: "offer", sdp: inc.offerSdp });
+      if (inc.media === "video" && !localMedia.cameraOn) {
+        const remoteVideo = pc
+          .getTransceivers()
+          .find((transceiver) => transceiver.receiver.track.kind === "video");
+        if (remoteVideo) remoteVideo.direction = "recvonly";
+      }
       await applyRemoteIce(inc, "callee");
       const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
@@ -456,22 +537,38 @@ export function useCallController(
       callRef.current = ongoing;
       setIncoming(null);
       setCall(ongoing);
-      setCameraOn(inc.media === "video");
+      setCameraOn(localMedia.cameraOn);
     } catch (err) {
+      // Если камера/микрофон, SDP или POST answer завершились ошибкой,
+      // обязательно закрываем серверный ringing-call. Иначе caller будет
+      // бесконечно видеть «Вызываем…», а следующий звонок получит 409.
+      await api(`/api/calls/${inc.id}`, {
+        method: "POST",
+        body: JSON.stringify({ action: answeredRef.current ? "hangup" : "decline" }),
+      }).catch(() => {});
       stream?.getTracks().forEach((track) => track.stop());
       cleanup();
       if (err instanceof ApiError && err.status === 401) {
         unauthorizedRef.current();
       } else {
         notifyRef.current(
-          err instanceof Error ? `Не удалось принять звонок: ${err.message}` : "Не удалось принять звонок",
+          err instanceof ApiError
+            ? `Не удалось принять звонок: ${err.message}`
+            : `Не удалось принять звонок: ${mediaErrorMessage(err, inc.media)}`,
         );
       }
     } finally {
       busyRef.current = false;
       setStarting(false);
     }
-  }, [applyRemoteIce, cleanup, createPeer, flushPendingIce]);
+  }, [
+    applyRemoteIce,
+    cleanup,
+    createPeer,
+    flushPendingIce,
+    refreshAudioInputs,
+    selectedAudioInputId,
+  ]);
 
   const decline = useCallback(async () => {
     const inc = incomingRef.current;
@@ -584,6 +681,36 @@ export function useCallController(
     return () => clearInterval(timer);
   }, [call?.phase]);
 
+  const selectAudioInput = useCallback(async (deviceId: string) => {
+    setSelectedAudioInputId(deviceId);
+    if (!localStreamRef.current || !pcRef.current || !callRef.current) return;
+    try {
+      const replacementStream = await navigator.mediaDevices.getUserMedia({
+        audio: deviceId ? { deviceId: { exact: deviceId } } : true,
+        video: false,
+      });
+      const replacementTrack = replacementStream.getAudioTracks()[0];
+      if (!replacementTrack) throw new Error("Микрофон не найден");
+      const sender = pcRef.current.getSenders().find((item) => item.track?.kind === "audio");
+      if (sender) await sender.replaceTrack(replacementTrack);
+      const currentStream = localStreamRef.current;
+      currentStream.getAudioTracks().forEach((track) => {
+        currentStream.removeTrack(track);
+        track.stop();
+      });
+      currentStream.addTrack(replacementTrack);
+      setMicStatus(`Микрофон подключён: ${replacementTrack.label || "выбранное устройство"}`);
+      setStreamTick((value) => value + 1);
+      void refreshAudioInputs();
+    } catch (err) {
+      notifyRef.current(
+        err instanceof DOMException && err.name === "NotAllowedError"
+          ? "Нет доступа к выбранному микрофону"
+          : "Не удалось переключить микрофон",
+      );
+    }
+  }, [refreshAudioInputs]);
+
   const toggleMute = useCallback(() => {
     setMuted((value) => {
       const next = !value;
@@ -593,9 +720,15 @@ export function useCallController(
   }, []);
 
   const toggleCamera = useCallback(() => {
+    const tracks = localStreamRef.current?.getVideoTracks() ?? [];
+    if (tracks.length === 0) {
+      notifyRef.current("Камера недоступна на этом устройстве");
+      setCameraOn(false);
+      return;
+    }
     setCameraOn((value) => {
       const next = !value;
-      localStreamRef.current?.getVideoTracks().forEach((track) => (track.enabled = next));
+      tracks.forEach((track) => (track.enabled = next));
       return next;
     });
   }, []);
@@ -630,5 +763,9 @@ export function useCallController(
     hangup,
     toggleMute,
     toggleCamera,
+    audioInputs,
+    selectedAudioInputId,
+    micStatus,
+    selectAudioInput,
   };
 }

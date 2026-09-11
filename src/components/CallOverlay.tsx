@@ -29,6 +29,10 @@ type Props = {
   onHangup: () => void;
   onToggleMute: () => void;
   onToggleCamera: () => void;
+  audioInputs: MediaDeviceInfo[];
+  selectedAudioInputId: string;
+  micStatus: string;
+  onSelectAudioInput: (deviceId: string) => void;
 };
 
 function statusText(call: OngoingCall | null, seconds: number) {
@@ -59,6 +63,10 @@ export default function CallOverlay({
   onHangup,
   onToggleMute,
   onToggleCamera,
+  audioInputs,
+  selectedAudioInputId,
+  micStatus,
+  onSelectAudioInput,
 }: Props) {
   const remoteVideoRef = useRef<HTMLVideoElement | null>(null);
   const localVideoRef = useRef<HTMLVideoElement | null>(null);
@@ -78,6 +86,8 @@ export default function CallOverlay({
   const isVideo = active ? active.media === "video" : false;
   const showVideoStage = isVideo && (call?.phase === "active" || call?.phase === "connecting");
   const peer = call?.peer ?? incoming?.peer ?? null;
+  const remoteHasVideo = Boolean(remoteStreamRef.current?.getVideoTracks().some((track) => track.readyState === "live"));
+  const localHasVideo = Boolean(localStreamRef.current?.getVideoTracks().some((track) => track.readyState === "live"));
 
   useEffect(() => {
     const stream = remoteStreamRef.current ?? null;
@@ -129,15 +139,32 @@ export default function CallOverlay({
 
       {showVideoStage && call ? (
         <div className="relative h-full w-full">
-          <video
-            ref={remoteVideoRef}
-            autoPlay
-            playsInline
-            className="h-full w-full bg-black object-cover"
-          />
-          {/* Собственное превью */}
+          {remoteHasVideo ? (
+            <video
+              ref={remoteVideoRef}
+              autoPlay
+              playsInline
+              muted
+              className="h-full w-full bg-black object-cover"
+            />
+          ) : (
+            <div className="flex h-full w-full flex-col items-center justify-center gap-4 bg-[#080812] text-center">
+              <div className="glass-strong rounded-full p-2">
+                {peer && <Avatar name={peer.displayName} src={peer.avatarUrl} size={118} />}
+              </div>
+              <p className="max-w-xs text-sm text-white/55">Ожидание видео собеседника…</p>
+            </div>
+          )}
+          {/* Собственное превью. Отсутствие камеры не прерывает звонок. */}
           <div className="glass-strong absolute top-5 right-5 aspect-[3/4] w-32 overflow-hidden rounded-2xl sm:w-40">
-            <video ref={localVideoRef} autoPlay playsInline muted className="h-full w-full object-cover" />
+            {localHasVideo && cameraOn ? (
+              <video ref={localVideoRef} autoPlay playsInline muted className="h-full w-full object-cover" />
+            ) : (
+              <div className="flex h-full flex-col items-center justify-center gap-2 px-2 text-center text-white/55">
+                <VideoOff className="h-5 w-5" />
+                <span className="text-[11px]">Камера выключена</span>
+              </div>
+            )}
           </div>
           <VideoCallControls
             name={peer?.displayName ?? ""}
@@ -147,6 +174,10 @@ export default function CallOverlay({
             onToggleMute={onToggleMute}
             onToggleCamera={onToggleCamera}
             onHangup={onHangup}
+            audioInputs={audioInputs}
+            selectedAudioInputId={selectedAudioInputId}
+            micStatus={micStatus}
+            onSelectAudioInput={onSelectAudioInput}
           />
         </div>
       ) : (
@@ -219,6 +250,12 @@ export default function CallOverlay({
                   {cameraOn ? <Video className="h-5 w-5" /> : <VideoOff className="h-5 w-5" />}
                 </ControlButton>
               )}
+              <MicrophonePicker
+                audioInputs={audioInputs}
+                selectedAudioInputId={selectedAudioInputId}
+                micStatus={micStatus}
+                onSelectAudioInput={onSelectAudioInput}
+              />
               <button
                 onClick={onHangup}
                 className="flex h-14 w-14 items-center justify-center rounded-full bg-rose-500 text-white shadow-[0_10px_30px_-6px_rgba(244,63,94,0.6)] transition-transform hover:scale-105 active:scale-95"
@@ -258,6 +295,45 @@ function ControlButton({
   );
 }
 
+function MicrophonePicker({
+  audioInputs,
+  selectedAudioInputId,
+  micStatus,
+  onSelectAudioInput,
+}: {
+  audioInputs: MediaDeviceInfo[];
+  selectedAudioInputId: string;
+  micStatus: string;
+  onSelectAudioInput: (deviceId: string) => void;
+}) {
+  if (audioInputs.length <= 1) {
+    return micStatus ? (
+      <span className="max-w-28 truncate text-[10px] text-white/45" title={micStatus}>
+        <Mic className="mr-1 inline h-3 w-3" />
+        {audioInputs[0]?.label || "Микрофон подключён"}
+      </span>
+    ) : null;
+  }
+
+  return (
+    <label className="flex max-w-36 items-center gap-1.5 rounded-full bg-white/10 px-2.5 py-2 text-white/70" title={micStatus || "Выбрать микрофон"}>
+      <Mic className="h-3.5 w-3.5 shrink-0" />
+      <select
+        aria-label="Выбрать микрофон"
+        value={selectedAudioInputId}
+        onChange={(event) => onSelectAudioInput(event.target.value)}
+        className="min-w-0 max-w-28 bg-transparent text-[11px] outline-none"
+      >
+        {audioInputs.map((device, index) => (
+          <option key={`${device.deviceId}-${index}`} value={device.deviceId} className="bg-[#171725] text-white">
+            {device.label || `Микрофон ${index + 1}`}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
 function VideoCallControls({
   name,
   status,
@@ -266,6 +342,10 @@ function VideoCallControls({
   onToggleMute,
   onToggleCamera,
   onHangup,
+  audioInputs,
+  selectedAudioInputId,
+  micStatus,
+  onSelectAudioInput,
 }: {
   name: string;
   status: string;
@@ -274,6 +354,10 @@ function VideoCallControls({
   onToggleMute: () => void;
   onToggleCamera: () => void;
   onHangup: () => void;
+  audioInputs: MediaDeviceInfo[];
+  selectedAudioInputId: string;
+  micStatus: string;
+  onSelectAudioInput: (deviceId: string) => void;
 }) {
   return (
     <div className="glass-strong absolute bottom-6 left-1/2 flex -translate-x-1/2 items-center gap-5 rounded-full px-6 py-3">
@@ -287,6 +371,12 @@ function VideoCallControls({
       <ControlButton active={!cameraOn} onClick={onToggleCamera} title={cameraOn ? "Выключить камеру" : "Включить камеру"}>
         {cameraOn ? <Video className="h-5 w-5" /> : <VideoOff className="h-5 w-5" />}
       </ControlButton>
+      <MicrophonePicker
+        audioInputs={audioInputs}
+        selectedAudioInputId={selectedAudioInputId}
+        micStatus={micStatus}
+        onSelectAudioInput={onSelectAudioInput}
+      />
       <button
         onClick={onHangup}
         className="flex h-12 w-12 items-center justify-center rounded-full bg-rose-500 text-white transition-transform hover:scale-105 active:scale-95"
