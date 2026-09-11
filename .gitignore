@@ -1,1 +1,12 @@
 data/uploads
+node_modules
+.next
+out
+.env
+.env.*
+!.env.example
+*.log
+.DS_Store
+next-env.d.ts
+tsconfig.tsbuildinfo
+drizzle/meta

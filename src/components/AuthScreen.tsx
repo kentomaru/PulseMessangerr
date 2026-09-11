@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Lock, User, AtSign, Loader2, PhoneCall, MessagesSquare, Sparkles } from "lucide-react";
+import { Lock, User, AtSign, Loader2, PhoneCall, MessagesSquare, Sparkles, Eye, EyeOff } from "lucide-react";
 import { api } from "@/lib/api";
 
 type Mode = "login" | "register";
@@ -12,6 +12,7 @@ export default function AuthScreen() {
   const [username, setUsername] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -77,7 +78,7 @@ export default function AuthScreen() {
               <div className="glass flex h-9 w-9 items-center justify-center rounded-xl">
                 <PhoneCall className="h-4 w-4 text-cyan-300" />
               </div>
-              Голосовые звонки прямо в браузере
+              Голосовые и видеозвонки в браузере
             </div>
           </div>
         </div>
@@ -160,11 +161,20 @@ export default function AuthScreen() {
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="Пароль"
-                  type="password"
+                  type={showPassword ? "text" : "password"}
                   autoComplete={mode === "login" ? "current-password" : "new-password"}
                   required
                   className="w-full bg-transparent text-[15px] placeholder:text-white/30"
                 />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword((v) => !v)}
+                  tabIndex={-1}
+                  className="shrink-0 text-white/35 transition-colors hover:text-white/70"
+                  title={showPassword ? "Скрыть пароль" : "Показать пароль"}
+                >
+                  {showPassword ? <EyeOff className="h-4.5 w-4.5" /> : <Eye className="h-4.5 w-4.5" />}
+                </button>
               </label>
 
               <AnimatePresence>
@@ -192,10 +202,17 @@ export default function AuthScreen() {
               <p className="text-center text-xs text-white/30">
                 {mode === "login"
                   ? "Нет аккаунта? Переключитесь на регистрацию"
-                  : "Имя пользователя — латиница, цифры и _, 3–24 символа"}
+                  : "Имя пользователя — латиница, цифры и _, 3–24 символа. Пароль — не менее 6 символов"}
               </p>
             </motion.form>
           </AnimatePresence>
+
+          <p className="mt-6 text-center text-[11px] text-white/25">
+            Продолжая, вы соглашаетесь с{" "}
+            <a href="/privacy" target="_blank" rel="noreferrer" className="text-violet-300/70 transition-colors hover:text-violet-200">
+              политикой конфиденциальности
+            </a>
+          </p>
         </div>
       </div>
     </main>

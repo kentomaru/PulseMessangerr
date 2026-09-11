@@ -2,14 +2,19 @@ export async function api<T = unknown>(
   path: string,
   options: RequestInit = {},
 ): Promise<T> {
-  const res = await fetch(path, {
-    ...options,
-    headers:
-      options.body instanceof FormData
-        ? options.headers
-        : { "Content-Type": "application/json", ...(options.headers ?? {}) },
-    credentials: "include",
-  });
+  let res: Response;
+  try {
+    res = await fetch(path, {
+      ...options,
+      headers:
+        options.body instanceof FormData
+          ? options.headers
+          : { "Content-Type": "application/json", ...(options.headers ?? {}) },
+      credentials: "include",
+    });
+  } catch {
+    throw new ApiError("Нет соединения с сервером", 0);
+  }
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
     throw new ApiError((data as { error?: string }).error ?? "Ошибка запроса", res.status);
@@ -28,7 +33,7 @@ export class ApiError extends Error {
 export async function uploadFile(file: File): Promise<string> {
   const form = new FormData();
   form.append("file", file);
-  const res = await fetch("/api/upload", { method: "POST", body: form });
+  const res = await fetch("/api/upload", { method: "POST", body: form, credentials: "include" });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new ApiError(data.error ?? "Не удалось загрузить файл", res.status);
   return data.url as string;

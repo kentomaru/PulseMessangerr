@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
+import { createLogger } from "@/lib/logger";
 import { readFile } from "fs/promises";
 import path from "path";
+
+const log = createLogger("api:files");
 
 const MIME: Record<string, string> = {
   png: "image/png",
@@ -15,8 +18,10 @@ export async function GET(
   ctx: { params: Promise<{ name: string }> },
 ) {
   const { name } = await ctx.params;
-  if (!/^[a-zA-Z0-9-]+\.(png|jpg|jpeg|webp|gif)$/.test(name))
+  if (!/^[a-zA-Z0-9-]+\.(png|jpg|jpeg|webp|gif)$/.test(name)) {
+    log.debug("Запрос файла отклонён (недопустимое имя)", { name });
     return NextResponse.json({ error: "Недопустимое имя" }, { status: 400 });
+  }
 
   const ext = name.split(".").pop()!.toLowerCase();
   try {
@@ -29,6 +34,7 @@ export async function GET(
       },
     });
   } catch {
+    log.debug("Файл не найден", { name });
     return NextResponse.json({ error: "Не найден" }, { status: 404 });
   }
 }

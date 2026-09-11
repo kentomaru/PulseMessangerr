@@ -2,16 +2,14 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/db";
 import { users } from "@/db/schema";
 import { ilike, ne, or, and } from "drizzle-orm";
-import { getSessionUser, publicUser } from "@/lib/auth";
+import { publicUser } from "@/lib/auth";
+import { withApi } from "@/lib/api-helpers";
 
-export async function GET(req: NextRequest) {
-  const me = await getSessionUser();
-  if (!me) return NextResponse.json({ error: "Не авторизован" }, { status: 401 });
-
+export const GET = withApi("users:search", async ({ req, me }) => {
   const q = (req.nextUrl.searchParams.get("q") ?? "").trim();
   if (q.length < 1) return NextResponse.json({ users: [] });
 
-  const pattern = `%${q.replace(/[%_]/g, "")}%`;
+  const pattern = `%${q.replace(/[%_\\]/g, "")}%`;
   const found = await db
     .select()
     .from(users)
@@ -24,4 +22,4 @@ export async function GET(req: NextRequest) {
     .limit(20);
 
   return NextResponse.json({ users: found.map(publicUser) });
-}
+});

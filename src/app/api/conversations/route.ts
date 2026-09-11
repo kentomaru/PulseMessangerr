@@ -1,18 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/db";
-import {
-  conversations,
-  conversationMembers,
-  messages,
-  users,
-} from "@/db/schema";
-import { and, desc, eq, inArray, isNull, ne, sql } from "drizzle-orm";
-import { getSessionUser, publicUser } from "@/lib/auth";
+import { conversations, conversationMembers, messages, users } from "@/db/schema";
+import { and, desc, eq, gt, inArray, isNull, ne, sql } from "drizzle-orm";
+import { publicUser } from "@/lib/auth";
+import { withApi } from "@/lib/api-helpers";
 
-export async function GET() {
-  const me = await getSessionUser();
-  if (!me) return NextResponse.json({ error: "Не авторизован" }, { status: 401 });
-
+export const GET = withApi("conversations", async ({ me }) => {
   const myMemberships = await db
     .select()
     .from(conversationMembers)
@@ -21,9 +14,7 @@ export async function GET() {
   if (myMemberships.length === 0) return NextResponse.json({ conversations: [] });
 
   const convIds = myMemberships.map((m) => m.conversationId);
-  const lastReadMap = new Map(
-    myMemberships.map((m) => [m.conversationId, m.lastReadAt]),
-  );
+  const lastReadMap = new Map(myMemberships.map((m) => [m.conversationId, m.lastReadAt]));
 
   const allMembers = await db
     .select({ member: conversationMembers, user: users })
@@ -36,27 +27,34 @@ export async function GET() {
     .from(messages)
     .where(and(inArray(messages.conversationId, convIds), isNull(messages.deletedAt)))
     .orderBy(desc(messages.createdAt))
-    .limit(400);
+    .limit(500);
 
   const lastMessageByConv = new Map<string, (typeof recentMessages)[number]>();
   for (const m of recentMessages) {
     if (!lastMessageByConv.has(m.conversationId)) lastMessageByConv.set(m.conversationId, m);
   }
 
+  // Непрочитанные: честный count относительно моего last_read_at (без ограничения на 400 сообщений)
   const unreadRows = await db
-    .select({
-      conversationId: messages.conversationId,
-      count: sql<number>`count(*)::int`,
-    })
+    .select({ conversationId: messages.conversationId, count: sql<number>`count(*)::int` })
     .from(messages)
+    .innerJoin(
+      conversationMembers,
+      and(
+        eq(conversationMembers.conversationId, messages.conversationId),
+        eq(conversationMembers.userId, me.id),
+      ),
+    )
     .where(
       and(
         inArray(messages.conversationId, convIds),
         ne(messages.senderId, me.id),
         isNull(messages.deletedAt),
+        gt(messages.createdAt, conversationMembers.lastReadAt),
       ),
     )
     .groupBy(messages.conversationId);
+  const unreadByConv = new Map(unreadRows.map((r) => [r.conversationId, Number(r.count)]));
 
   const result = convIds
     .map((cid) => {
@@ -65,17 +63,7 @@ export async function GET() {
       if (!peerRow) return null;
       const peer = { ...publicUser(peerRow.user), lastReadAt: peerRow.member.lastReadAt };
       const lastMessage = lastMessageByConv.get(cid) ?? null;
-      const myLastRead = lastReadMap.get(cid) ?? new Date(0);
-      const unreadRow = unreadRows.find((r) => r.conversationId === cid);
-      const unreadCount =
-        unreadRow && lastMessage && new Date(lastMessage.createdAt) > new Date(myLastRead)
-          ? recentMessages.filter(
-              (m) =>
-                m.conversationId === cid &&
-                m.senderId !== me.id &&
-                new Date(m.createdAt) > new Date(myLastRead),
-            ).length
-          : 0;
+      void lastReadMap;
       return {
         id: cid,
         peer,
@@ -88,7 +76,7 @@ export async function GET() {
               createdAt: lastMessage.createdAt,
             }
           : null,
-        unreadCount,
+        unreadCount: unreadByConv.get(cid) ?? 0,
       };
     })
     .filter(Boolean)
@@ -99,22 +87,19 @@ export async function GET() {
     });
 
   return NextResponse.json({ conversations: result });
-}
+});
 
-export async function POST(req: NextRequest) {
-  const me = await getSessionUser();
-  if (!me) return NextResponse.json({ error: "Не авторизован" }, { status: 401 });
-
+export const POST = withApi("conversations:create", async ({ req, me, log }) => {
   const body = await req.json();
   const userId = String(body.userId ?? "");
   if (!userId || userId === me.id)
     return NextResponse.json({ error: "Некорректный пользователь" }, { status: 400 });
 
   const peerRows = await db.select().from(users).where(eq(users.id, userId)).limit(1);
-  if (!peerRows[0])
-    return NextResponse.json({ error: "Пользователь не найден" }, { status: 404 });
+  const peer = peerRows[0];
+  if (!peer) return NextResponse.json({ error: "Пользователь не найден" }, { status: 404 });
 
-  // find existing DM
+  // ищем существующий личный чат
   const myConvs = await db
     .select({ conversationId: conversationMembers.conversationId })
     .from(conversationMembers)
@@ -128,9 +113,15 @@ export async function POST(req: NextRequest) {
   const shared = myConvs.map((c) => c.conversationId).filter((id) => peerSet.has(id));
 
   if (shared.length > 0) {
-    return NextResponse.json({
-      conversation: { id: shared[0], peer: publicUser(peerRows[0]) },
-    });
+    return NextResponse.json({ conversation: { id: shared[0], peer: publicUser(peer) } });
+  }
+
+  // Приватность: пользователь запретил новые личные чаты
+  if (!peer.allowMessages) {
+    return NextResponse.json(
+      { error: `${peer.displayName} запретил(а) новые личные чаты` },
+      { status: 403 },
+    );
   }
 
   const [conv] = await db.insert(conversations).values({ isGroup: false }).returning();
@@ -138,8 +129,7 @@ export async function POST(req: NextRequest) {
     { conversationId: conv.id, userId: me.id },
     { conversationId: conv.id, userId },
   ]);
+  log.info("Создан чат", { conversationId: conv.id, with: peer.username });
 
-  return NextResponse.json({
-    conversation: { id: conv.id, peer: publicUser(peerRows[0]) },
-  });
-}
+  return NextResponse.json({ conversation: { id: conv.id, peer: publicUser(peer) } });
+});
