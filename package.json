@@ -3,6 +3,9 @@
   "version": "1.0.0",
   "private": true,
   "description": "Pulse — мессенджер: чаты, звонки (WebRTC), истории, обои чатов и приватность",
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "dev": "next dev -H 0.0.0.0 -p 3000",
     "build": "next build",
@@ -27,6 +30,12 @@
     "@types/react-dom": "^19.3.0",
     "drizzle-kit": "^0.31.10",
     "tailwindcss": "^4.3.3",
-    "typescript": "~5.9.0"
+    "typescript": "~5.9.3"
+  },
+  "optionalDependencies": {
+    "@tailwindcss/oxide-linux-x64-gnu": "4.3.3",
+    "@tailwindcss/oxide-linux-arm64-gnu": "4.3.3",
+    "lightningcss-linux-x64-gnu": "1.32.0",
+    "lightningcss-linux-arm64-gnu": "1.32.0"
   }
 }
