@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import {
   Mic,
@@ -63,6 +63,16 @@ export default function CallOverlay({
   const remoteVideoRef = useRef<HTMLVideoElement | null>(null);
   const localVideoRef = useRef<HTMLVideoElement | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const [audioNeedsGesture, setAudioNeedsGesture] = useState(false);
+
+  const enableAudio = () => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    void audio
+      .play()
+      .then(() => setAudioNeedsGesture(false))
+      .catch(() => setAudioNeedsGesture(true));
+  };
 
   const active = call ?? incoming;
   const isVideo = active ? active.media === "video" : false;
@@ -76,7 +86,14 @@ export default function CallOverlay({
       audioRef.current.srcObject = stream;
       // После getUserMedia браузер уже получил пользовательский жест, но
       // отдельному audio-элементу всё равно явно просим начать воспроизведение.
-      if (stream) void audioRef.current.play().catch(() => {});
+      if (stream) {
+        void audioRef.current
+          .play()
+          .then(() => setAudioNeedsGesture(false))
+          .catch(() => setAudioNeedsGesture(true));
+      } else {
+        setAudioNeedsGesture(false);
+      }
     }
   }, [streamTick, remoteStreamRef, call?.phase, call?.id]);
 
@@ -99,6 +116,16 @@ export default function CallOverlay({
         aria-label="Удалённый звук звонка"
         className="pointer-events-none absolute h-px w-px opacity-0"
       />
+      {audioNeedsGesture && call && (
+        <button
+          type="button"
+          onClick={enableAudio}
+          className="glass-strong absolute top-5 left-1/2 z-20 flex -translate-x-1/2 items-center gap-2 rounded-full px-4 py-2.5 text-sm text-white/90 shadow-xl"
+        >
+          <Volume2 className="h-4 w-4 text-violet-300" />
+          Включить звук
+        </button>
+      )}
 
       {showVideoStage && call ? (
         <div className="relative h-full w-full">

@@ -61,7 +61,10 @@ export const GET = withApi("conversations", async ({ me }) => {
       const members = allMembers.filter((r) => r.member.conversationId === cid);
       const peerRow = members.find((r) => r.user.id !== me.id);
       if (!peerRow) return null;
-      const peer = { ...publicUser(peerRow.user), lastReadAt: peerRow.member.lastReadAt };
+      const peer = {
+        ...publicUser(peerRow.user),
+        lastReadAt: peerRow.user.showReadReceipts ? peerRow.member.lastReadAt : null,
+      };
       const lastMessage = lastMessageByConv.get(cid) ?? null;
       void lastReadMap;
       return {

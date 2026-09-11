@@ -68,7 +68,7 @@ export const GET = withApi("messages", async ({ req, me }) => {
     peer: peers[0]
       ? {
           ...publicUser(peers[0].user),
-          lastReadAt: peers[0].member.lastReadAt,
+          lastReadAt: peers[0].user.showReadReceipts ? peers[0].member.lastReadAt : null,
           typingAt: peers[0].member.typingAt,
         }
       : null,

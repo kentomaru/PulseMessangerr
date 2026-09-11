@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   ArrowLeft,
@@ -73,12 +74,14 @@ export default function ChatView({
   const [pendingImage, setPendingImage] = useState<PendingImage | null>(null);
   const [sending, setSending] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [menuPosition, setMenuPosition] = useState({ top: 0, right: 16 });
   const [showWallpaper, setShowWallpaper] = useState(false);
   const [lightbox, setLightbox] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
+  const menuButtonRef = useRef<HTMLButtonElement | null>(null);
   const lastTypingSent = useRef(0);
   const lastCount = useRef(0);
   const loadedRef = useRef(false);
@@ -131,6 +134,18 @@ export default function ChatView({
     const t = setInterval(() => void load(), 2_500);
     return () => clearInterval(t);
   }, [load]);
+
+  const toggleMenu = () => {
+    const button = menuButtonRef.current;
+    if (button) {
+      const rect = button.getBoundingClientRect();
+      setMenuPosition({
+        top: rect.bottom + 8,
+        right: Math.max(12, window.innerWidth - rect.right),
+      });
+    }
+    setMenuOpen((value) => !value);
+  };
 
   const sendTyping = () => {
     const now = Date.now();
@@ -285,51 +300,56 @@ export default function ChatView({
           </button>
           <div className="relative">
             <button
+              ref={menuButtonRef}
               type="button"
-              onClick={() => setMenuOpen((v) => !v)}
+              aria-label="Открыть меню чата"
+              aria-expanded={menuOpen}
+              onClick={toggleMenu}
               className="glass flex h-10 w-10 items-center justify-center rounded-xl text-white/75 transition-colors hover:text-white"
             >
               <MoreVertical className="h-4.5 w-4.5" />
             </button>
-            <AnimatePresence>
-              {menuOpen && (
-                <>
-                  <button
-                    type="button"
-                    aria-label="Закрыть меню"
-                    className="fixed inset-0 z-[70] cursor-default"
-                    onClick={() => setMenuOpen(false)}
-                  />
-                  <motion.div
-                    initial={{ opacity: 0, y: -6, scale: 0.96 }}
-                    animate={{ opacity: 1, y: 0, scale: 1 }}
-                    exit={{ opacity: 0, y: -4, scale: 0.97 }}
-                    className="glass-strong absolute right-0 z-[80] mt-2 w-52 overflow-hidden rounded-2xl p-1.5 shadow-2xl"
-                    onClick={(event) => event.stopPropagation()}
-                  >
-                    <MenuItem
-                      icon={<Palette className="h-4 w-4" />}
-                      label="Обои чата"
-                      onClick={() => {
-                        setMenuOpen(false);
-                        setShowWallpaper(true);
-                      }}
-                    />
-                    <MenuItem
-                      icon={<UserRound className="h-4 w-4" />}
-                      label="Профиль"
-                      onClick={() => {
-                        setMenuOpen(false);
-                        onViewPeer(peerState);
-                      }}
-                    />
-                  </motion.div>
-                </>
-              )}
-            </AnimatePresence>
           </div>
         </div>
       </div>
+
+      {menuOpen &&
+        typeof document !== "undefined" &&
+        createPortal(
+          <AnimatePresence>
+            <button
+              type="button"
+              aria-label="Закрыть меню"
+              className="fixed inset-0 z-[999] cursor-default"
+              onClick={() => setMenuOpen(false)}
+            />
+            <motion.div
+              initial={{ opacity: 0, y: -6, scale: 0.96 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: -4, scale: 0.97 }}
+              style={{ top: menuPosition.top, right: menuPosition.right }}
+              className="glass-strong fixed z-[1000] w-52 overflow-hidden rounded-2xl p-1.5 shadow-2xl"
+            >
+              <MenuItem
+                icon={<Palette className="h-4 w-4" />}
+                label="Обои чата"
+                onClick={() => {
+                  setMenuOpen(false);
+                  setShowWallpaper(true);
+                }}
+              />
+              <MenuItem
+                icon={<UserRound className="h-4 w-4" />}
+                label="Профиль"
+                onClick={() => {
+                  setMenuOpen(false);
+                  onViewPeer(peerState);
+                }}
+              />
+            </motion.div>
+          </AnimatePresence>,
+          document.body,
+        )}
 
       {/* Сообщения */}
       <div ref={scrollRef} className="nice-scroll relative z-10 min-h-0 flex-1 overflow-y-auto px-4 py-5">

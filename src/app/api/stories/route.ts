@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/db";
 import { stories, storyViews, users } from "@/db/schema";
-import { and, asc, eq, gt, inArray, lt, sql } from "drizzle-orm";
+import { and, asc, eq, gt, inArray, lt, or, sql } from "drizzle-orm";
 import { publicUser } from "@/lib/auth";
 import { withApi } from "@/lib/api-helpers";
 
@@ -25,7 +25,12 @@ export const GET = withApi("stories", async ({ me, log }) => {
     .select({ story: stories, user: users })
     .from(stories)
     .innerJoin(users, eq(stories.userId, users.id))
-    .where(gt(stories.expiresAt, new Date()))
+    .where(
+      and(
+        gt(stories.expiresAt, new Date()),
+        or(eq(stories.userId, me.id), eq(users.allowStories, true)),
+      ),
+    )
     .orderBy(asc(stories.createdAt))
     .limit(200);
 

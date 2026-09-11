@@ -38,6 +38,8 @@ export const PATCH = withApi("auth/me", async ({ req, me, log }) => {
   if (typeof body.showOnline === "boolean") patch.showOnline = body.showOnline;
   if (typeof body.allowCalls === "boolean") patch.allowCalls = body.allowCalls;
   if (typeof body.allowMessages === "boolean") patch.allowMessages = body.allowMessages;
+  if (typeof body.showReadReceipts === "boolean") patch.showReadReceipts = body.showReadReceipts;
+  if (typeof body.allowStories === "boolean") patch.allowStories = body.allowStories;
 
   if (Object.keys(patch).length === 0)
     return NextResponse.json({ error: "Нечего обновлять" }, { status: 400 });

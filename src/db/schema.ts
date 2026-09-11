@@ -36,6 +36,8 @@ export const users = pgTable("users", {
   showOnline: boolean("show_online").notNull().default(true),
   allowCalls: boolean("allow_calls").notNull().default(true),
   allowMessages: boolean("allow_messages").notNull().default(true),
+  showReadReceipts: boolean("show_read_receipts").notNull().default(true),
+  allowStories: boolean("allow_stories").notNull().default(true),
 });
 
 export type User = typeof users.$inferSelect;

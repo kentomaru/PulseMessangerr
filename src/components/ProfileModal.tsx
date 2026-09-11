@@ -4,6 +4,8 @@ import { useRef, useState } from "react";
 import { motion } from "framer-motion";
 import {
   Camera,
+  CheckCheck,
+  EyeOff,
   ImageIcon,
   Loader2,
   LogOut,
@@ -32,6 +34,8 @@ export default function ProfileModal({ me, onClose, onSaved, onDeletedAccount }:
   const [showOnline, setShowOnline] = useState(me.showOnline);
   const [allowCalls, setAllowCalls] = useState(me.allowCalls);
   const [allowMessages, setAllowMessages] = useState(me.allowMessages);
+  const [showReadReceipts, setShowReadReceipts] = useState(me.showReadReceipts);
+  const [allowStories, setAllowStories] = useState(me.allowStories);
   const [saving, setSaving] = useState(false);
   const [busy, setBusy] = useState<"avatar" | "banner" | null>(null);
   const [error, setError] = useState("");
@@ -67,6 +71,8 @@ export default function ProfileModal({ me, onClose, onSaved, onDeletedAccount }:
           showOnline,
           allowCalls,
           allowMessages,
+          showReadReceipts,
+          allowStories,
         }),
       });
       onSaved(d.user);
@@ -219,6 +225,20 @@ export default function ProfileModal({ me, onClose, onSaved, onDeletedAccount }:
               icon={<MessageSquareLock className="h-4 w-4 text-white/50" />}
               label="Разрешать новые личные чаты"
               hint="Существующие чаты продолжат работать"
+            />
+            <Toggle
+              checked={showReadReceipts}
+              onChange={setShowReadReceipts}
+              icon={<CheckCheck className="h-4 w-4 text-white/50" />}
+              label="Показывать прочтение сообщений"
+              hint="Собеседник не увидит вторую галочку, если вы это запретите"
+            />
+            <Toggle
+              checked={allowStories}
+              onChange={setAllowStories}
+              icon={<EyeOff className="h-4 w-4 text-white/50" />}
+              label="Показывать мои истории другим"
+              hint="Ваши истории останутся видны вам, но скроются у других"
             />
           </div>
           <a

@@ -98,6 +98,8 @@ export async function ensureSchema(): Promise<void> {
     alter table users add column if not exists show_online boolean not null default true;
     alter table users add column if not exists allow_calls boolean not null default true;
     alter table users add column if not exists allow_messages boolean not null default true;
+    alter table users add column if not exists show_read_receipts boolean not null default true;
+    alter table users add column if not exists allow_stories boolean not null default true;
 
     create table if not exists uploads (
       name text primary key,
