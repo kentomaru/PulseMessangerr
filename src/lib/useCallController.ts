@@ -31,7 +31,60 @@ export type IncomingCall = CallPayload & { peer: PublicUser };
 const INCOMING_POLL_MS = 3_000;
 const CALL_POLL_MS = 1_200;
 
-export function useCallController(notify: (msg: string) => void) {
+/**
+ * Рингтон для входящего звонка — генерируется через WebAudio,
+ * никаких внешних файлов: две ноты по 0.4 с каждые 2 секунды.
+ */
+function startRingtone(): { stop: () => void } | null {
+  try {
+    const Ctx =
+      window.AudioContext ??
+      (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (!Ctx) return null;
+    const ctx = new Ctx();
+    void ctx.resume().catch(() => {});
+    let stopped = false;
+
+    const beep = (freq: number, at: number, dur: number) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.value = freq;
+      gain.gain.setValueAtTime(0, at);
+      gain.gain.linearRampToValueAtTime(0.14, at + 0.04);
+      gain.gain.setValueAtTime(0.14, at + dur - 0.06);
+      gain.gain.linearRampToValueAtTime(0, at + dur);
+      osc.connect(gain).connect(ctx.destination);
+      osc.start(at);
+      osc.stop(at + dur + 0.02);
+    };
+
+    const cycle = () => {
+      if (stopped) return;
+      const t0 = ctx.currentTime + 0.02;
+      beep(880, t0, 0.35);
+      beep(660, t0 + 0.42, 0.35);
+    };
+    cycle();
+    const timer = setInterval(cycle, 2_000);
+
+    return {
+      stop: () => {
+        stopped = true;
+        clearInterval(timer);
+        void ctx.close().catch(() => {});
+      },
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function useCallController(
+  meId: string,
+  notify: (msg: string) => void,
+  onUnauthorized: () => void = () => {},
+) {
   const [call, setCall] = useState<OngoingCall | null>(null);
   const [incoming, setIncoming] = useState<IncomingCall | null>(null);
   const [muted, setMuted] = useState(false);
@@ -39,6 +92,8 @@ export function useCallController(notify: (msg: string) => void) {
   const [seconds, setSeconds] = useState(0);
   /** Счётчик изменений удалённого потока — чтобы <video> переподключался. */
   const [streamTick, setStreamTick] = useState(0);
+  /** true, пока идёт запрос на старт/приём звонка (кнопки блокируются). */
+  const [starting, setStarting] = useState(false);
 
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
@@ -48,7 +103,14 @@ export function useCallController(notify: (msg: string) => void) {
   const appliedIceRef = useRef(0);
   const answeredRef = useRef(false);
   const notifyRef = useRef(notify);
+  const meIdRef = useRef(meId);
+  meIdRef.current = meId;
+  const unauthorizedRef = useRef(onUnauthorized);
+  /** Идёт попытка начать/принять звонок — защита от двойного клика. */
+  const busyRef = useRef(false);
+  const ringtoneRef = useRef<{ stop: () => void } | null>(null);
   notifyRef.current = notify;
+  unauthorizedRef.current = onUnauthorized;
   incomingRef.current = incoming;
   callRef.current = call;
 
@@ -64,6 +126,8 @@ export function useCallController(notify: (msg: string) => void) {
       /* уже закрыт */
     }
     pcRef.current = null;
+    ringtoneRef.current?.stop();
+    ringtoneRef.current = null;
     localStreamRef.current?.getTracks().forEach((t) => t.stop());
     localStreamRef.current = null;
     remoteStreamRef.current = null;
@@ -75,6 +139,8 @@ export function useCallController(notify: (msg: string) => void) {
     setSeconds(0);
     setMuted(false);
     setCameraOn(false);
+    setStarting(false);
+    busyRef.current = false;
   }, []);
 
   const sendIce = useCallback(async (callId: string, side: "caller" | "callee", candidate: RTCIceCandidateInit) => {
@@ -136,8 +202,11 @@ export function useCallController(notify: (msg: string) => void) {
   /* ─────────── Звонящий ─────────── */
 
   const startCall = useCallback(
-    async (conversationId: string, peer: PublicUser, media: CallMedia = "audio") => {
-      if (callRef.current || incomingRef.current) return;
+    async (conversationId: string, peer: PublicUser, media: CallMedia = "audio", retry = false) => {
+      // Защита от двойного клика и от звонка поверх активного/входящего.
+      if (callRef.current || incomingRef.current || busyRef.current) return;
+      busyRef.current = true;
+      setStarting(true);
       let stream: MediaStream | null = null;
       try {
         stream = await navigator.mediaDevices.getUserMedia({
@@ -168,14 +237,62 @@ export function useCallController(notify: (msg: string) => void) {
       } catch (err) {
         stream?.getTracks().forEach((t) => t.stop());
         cleanup();
+
+        if (err instanceof ApiError && err.status === 401) {
+          unauthorizedRef.current();
+          return;
+        }
+
+        // 409 — в чате уже висит звонок. Сервер прислал его тело.
+        if (err instanceof ApiError && err.status === 409 && err.payload?.call) {
+          const busyCall = err.payload.call;
+
+          // Это мой же зависший звонок → отменяем его и звоним заново (один раз).
+          if (busyCall.callerId === meIdRef.current) {
+            try {
+              await api(`/api/calls/${busyCall.id}`, {
+                method: "POST",
+                body: JSON.stringify({ action: "hangup" }),
+              });
+            } catch {
+              /* уже закрыт */
+            }
+            if (!retry) {
+              busyRef.current = false;
+              setStarting(false);
+              await startCallRef.current?.(conversationId, peer, media, true);
+              return;
+            }
+            notifyRef.current("Предыдущий звонок закрыт, попробуйте ещё раз");
+            return;
+          }
+
+          // Чужой звонок мне же — показываем как входящий, а не как ошибку.
+          if (busyCall.calleeId === meIdRef.current && busyCall.status === "ringing" && busyCall.offerSdp) {
+            const inc: IncomingCall = { ...busyCall, peer: busyCall.caller ?? peer };
+            incomingRef.current = inc;
+            setIncoming(inc);
+            return;
+          }
+
+          notifyRef.current(err.message);
+          return;
+        }
+
         if (err instanceof ApiError) notifyRef.current(err.message);
         else if (err instanceof Error && err.name === "NotAllowedError")
           notifyRef.current("Нет доступа к микрофону или камере — разрешите доступ в браузере");
         else notifyRef.current("Не удалось начать звонок");
+      } finally {
+        busyRef.current = false;
+        setStarting(false);
       }
     },
     [cleanup, createPeer],
   );
+
+  const startCallRef = useRef(startCall);
+  startCallRef.current = startCall;
 
   /* ─────────── Вызываемый: входящие ─────────── */
 
@@ -190,8 +307,11 @@ export function useCallController(notify: (msg: string) => void) {
           incomingRef.current = inc;
           setIncoming(inc);
         }
-      } catch {
-        /* сеть моргнула — попробуем в следующий раз */
+      } catch (e) {
+        // Сессия кончилась — уводим на экран входа, иначе опрос будет
+        // вечно долбить 401 (как после удаления аккаунта).
+        if (e instanceof ApiError && e.status === 401) unauthorizedRef.current();
+        /* иначе сеть моргнула — попробуем в следующий раз */
       }
     }, INCOMING_POLL_MS);
     return () => clearInterval(t);
@@ -199,7 +319,9 @@ export function useCallController(notify: (msg: string) => void) {
 
   const accept = useCallback(async () => {
     const inc = incomingRef.current;
-    if (!inc?.offerSdp) return;
+    if (!inc?.offerSdp || busyRef.current) return;
+    busyRef.current = true;
+    setStarting(true);
     let stream: MediaStream | null = null;
     try {
       const media = inc.media;
@@ -235,7 +357,14 @@ export function useCallController(notify: (msg: string) => void) {
     } catch (err) {
       stream?.getTracks().forEach((t) => t.stop());
       cleanup();
+      if (err instanceof ApiError && err.status === 401) {
+        unauthorizedRef.current();
+        return;
+      }
       notifyRef.current(err instanceof Error ? `Не удалось принять звонок: ${err.message}` : "Не удалось принять звонок");
+    } finally {
+      busyRef.current = false;
+      setStarting(false);
     }
   }, [applyRemoteIce, cleanup, createPeer]);
 
@@ -328,8 +457,12 @@ export function useCallController(notify: (msg: string) => void) {
             notifyRef.current("Звонок завершён");
           }
         }
-      } catch {
-        /* сеть моргнула — в следующий раз */
+      } catch (e) {
+        if (e instanceof ApiError && e.status === 401) {
+          cleanup();
+          unauthorizedRef.current();
+        }
+        /* иначе сеть моргнула — в следующий раз */
       }
     }, CALL_POLL_MS);
     return () => clearInterval(t);
@@ -361,9 +494,26 @@ export function useCallController(notify: (msg: string) => void) {
     });
   }, []);
 
+  /* ─────────── Рингтон входящего ─────────── */
+
+  useEffect(() => {
+    if (!incoming) {
+      ringtoneRef.current?.stop();
+      ringtoneRef.current = null;
+      return;
+    }
+    ringtoneRef.current?.stop();
+    ringtoneRef.current = startRingtone();
+    return () => {
+      ringtoneRef.current?.stop();
+      ringtoneRef.current = null;
+    };
+  }, [incoming]);
+
   return {
     call,
     incoming,
+    starting,
     muted,
     cameraOn,
     seconds,

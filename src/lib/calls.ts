@@ -4,7 +4,7 @@
  */
 import { db } from "@/db";
 import { calls, messages, users, type Call, type User } from "@/db/schema";
-import { eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { publicUser } from "@/lib/auth";
 import { createLogger } from "@/lib/logger";
 import type { CallLogInfo, CallMedia, CallPayload, CallStatus } from "@/lib/types";
@@ -89,6 +89,52 @@ export async function expireIfStale(call: Call): Promise<Call> {
     return rows[0] ?? call;
   }
   return call;
+}
+
+/** Активный звонок, висящий дольше этого времени, считаем «зомби». */
+export const ACTIVE_ZOMBIE_MS = 4 * 60 * 60 * 1000;
+
+/**
+ * Закрывает в чате «повисшие» звонки:
+ *  — ringing дольше RING_TIMEOUT_MS (40 с) → missed;
+ *  — active дольше ACTIVE_ZOMBIE_MS (4 ч) → ended (браузер закрылся без hangup).
+ * Возвращает оставшийся живой звонок (или null, если чат свободен).
+ */
+export async function closeStaleCalls(conversationId: string): Promise<Call | null> {
+  const rows = await db
+    .select()
+    .from(calls)
+    .where(
+      and(
+        eq(calls.conversationId, conversationId),
+        inArray(calls.status, ["ringing", "active"]),
+      ),
+    );
+
+  let alive: Call | null = null;
+  for (const row of rows) {
+    const startedAt = new Date(row.answeredAt ?? row.createdAt).getTime();
+    const age = Date.now() - startedAt;
+    const staleRinging = row.status === "ringing" && age > RING_TIMEOUT_MS;
+    const staleActive = row.status === "active" && age > ACTIVE_ZOMBIE_MS;
+
+    if (staleRinging || staleActive) {
+      await db
+        .update(calls)
+        .set({ status: staleRinging ? "missed" : "ended", endedAt: new Date() })
+        .where(eq(calls.id, row.id));
+      await insertCallLog(row, staleRinging ? "missed" : "ended", 0);
+      log.info("Закрыт повисший звонок", {
+        callId: row.id,
+        conversationId,
+        was: row.status,
+        ageSec: String(Math.round(age / 1000)),
+      });
+      continue;
+    }
+    if (!alive || new Date(row.createdAt) > new Date(alive.createdAt)) alive = row;
+  }
+  return alive;
 }
 
 /** Достаёт пользователя-звонящего для_payload'а. */
