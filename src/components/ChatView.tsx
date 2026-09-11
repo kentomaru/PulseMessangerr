@@ -22,7 +22,7 @@ import {
 } from "lucide-react";
 import Avatar from "./Avatar";
 import WallpaperModal from "./WallpaperModal";
-import { api } from "@/lib/api";
+import { api, ApiError } from "@/lib/api";
 import {
   callLogLabel,
   dayLabel,
@@ -45,6 +45,7 @@ type Props = {
   callBusy: boolean;
   refreshConversations: () => void;
   notify: (msg: string) => void;
+  onUnauthorized: () => void;
 };
 
 export default function ChatView({
@@ -57,6 +58,7 @@ export default function ChatView({
   callBusy,
   refreshConversations,
   notify,
+  onUnauthorized,
 }: Props) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [peerState, setPeerState] = useState<Peer>(peer);
@@ -73,6 +75,7 @@ export default function ChatView({
   const fileRef = useRef<HTMLInputElement | null>(null);
   const lastTypingSent = useRef(0);
   const lastCount = useRef(0);
+  const loadedRef = useRef(false);
 
   const load = useCallback(async () => {
     try {
@@ -84,7 +87,8 @@ export default function ChatView({
       setMessages(d.messages);
       if (d.peer) setPeerState(d.peer);
       setWallpaper(d.wallpaper);
-      if (!loaded) {
+      if (!loadedRef.current) {
+        loadedRef.current = true;
         setLoaded(true);
         requestAnimationFrame(() =>
           scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight }),
@@ -97,12 +101,18 @@ export default function ChatView({
         });
       }
       lastCount.current = d.messages.length;
-    } catch {
-      /* сеть моргнула — следующий опрос поправит */
+    } catch (e) {
+      // 401 — сессия кончилась (например, аккаунт удалён): уводим на экран входа.
+      if (e instanceof ApiError && e.status === 401) onUnauthorized();
+      /* иначе сеть моргнула — следующий опрос поправит */
     }
-  }, [conversationId, loaded]);
+    // ВАЖНО: зависимость только от conversationId. Если сюда попадёт `loaded`,
+    // функция load пересоздаётся после первой загрузки → эффект ниже
+    // перезапускается и сбрасывает состояние — чат «перезагружается» в цикле.
+  }, [conversationId, onUnauthorized]);
 
   useEffect(() => {
+    loadedRef.current = false;
     setLoaded(false);
     lastCount.current = 0;
     void load();

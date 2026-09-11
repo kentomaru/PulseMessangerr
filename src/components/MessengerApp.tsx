@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { CheckCircle2 } from "lucide-react";
-import { api } from "@/lib/api";
+import { api, ApiError } from "@/lib/api";
 import type { ConversationListItem, PublicUser, StoryGroup } from "@/lib/types";
 import { useCallController } from "@/lib/useCallController";
 import Sidebar from "./Sidebar";
@@ -27,6 +27,7 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
   const [storyViewer, setStoryViewer] = useState<number | null>(null);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const toastId = useRef(0);
+  const unauthorizedRef = useRef(false);
 
   const notify = useCallback((msg: string) => {
     const id = ++toastId.current;
@@ -34,14 +35,24 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
     setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 3800);
   }, []);
 
-  const callCtl = useCallController(notify);
+  /** Сессия истекла (401 в любом опросе) — возвращаем на экран входа. */
+  const handleUnauthorized = useCallback(() => {
+    if (unauthorizedRef.current) return;
+    unauthorizedRef.current = true;
+    window.location.href = "/";
+  }, []);
+
+  const handleUnauthorizedRef = useRef(handleUnauthorized);
+  handleUnauthorizedRef.current = handleUnauthorized;
+
+  const callCtl = useCallController(me.id, notify, handleUnauthorized);
 
   const loadConversations = useCallback(async () => {
     try {
       const d = await api<{ conversations: ConversationListItem[] }>("/api/conversations");
       setConversations(d.conversations);
-    } catch {
-      /* ignore */
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 401) handleUnauthorizedRef.current();
     }
   }, []);
 
@@ -143,9 +154,10 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
             onBack={() => setActiveId(null)}
             onCall={(media) => callCtl.startCall(activeConv.id, activeConv.peer, media)}
             onViewPeer={() => setViewUser(activeConv.peer)}
-            callBusy={!!callCtl.call}
+            callBusy={!!callCtl.call || !!callCtl.incoming || callCtl.starting}
             refreshConversations={loadConversations}
             notify={notify}
+            onUnauthorized={handleUnauthorized}
           />
         ) : (
           <EmptyState />

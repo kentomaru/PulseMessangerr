@@ -17,16 +17,25 @@ export async function api<T = unknown>(
   }
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    throw new ApiError((data as { error?: string }).error ?? "Ошибка запроса", res.status);
+    throw new ApiError(
+      (data as { error?: string }).error ?? "Ошибка запроса",
+      res.status,
+      data as Record<string, unknown>,
+    );
   }
   return data as T;
 }
 
 export class ApiError extends Error {
   status: number;
-  constructor(message: string, status: number) {
+  /** Тело ответа целиком — например, при 409 сервер кладёт сюда { call }. */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  payload?: any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  constructor(message: string, status: number, payload?: any) {
     super(message);
     this.status = status;
+    this.payload = payload;
   }
 }
 

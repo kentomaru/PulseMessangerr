@@ -1,10 +1,9 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { db } from "@/db";
 import { calls, conversationMembers, users } from "@/db/schema";
-import { and, eq, inArray } from "drizzle-orm";
-import { publicUser } from "@/lib/auth";
+import { and, eq } from "drizzle-orm";
 import { isUuid, withApi } from "@/lib/api-helpers";
-import { serializeCall } from "@/lib/calls";
+import { closeStaleCalls, getCallCaller, serializeCall } from "@/lib/calls";
 
 /**
  * POST /api/calls — начать звонок.
@@ -52,14 +51,27 @@ export const POST = withApi("calls:start", async ({ req, me, log }) => {
     );
   }
 
-  // Уже есть активный/звонящий звонок в этом чате?
-  const activeCalls = await db
-    .select({ id: calls.id })
-    .from(calls)
-    .where(and(eq(calls.conversationId, conversationId), inArray(calls.status, ["ringing", "active"])))
-    .limit(1);
-  if (activeCalls[0])
-    return NextResponse.json({ error: "Звонок уже идёт" }, { status: 409 });
+  // Сначала закрываем повисшие звонки (ringing >40 с, active-зомби >4 ч),
+  // потом проверяем, остался ли реально живой звонок в этом чате.
+  const alive = await closeStaleCalls(conversationId);
+  if (alive) {
+    const aliveCaller = await getCallCaller(alive);
+    log.info("Старт звонка отклонён: в чате уже есть звонок", {
+      callId: alive.id,
+      conversationId,
+      status: alive.status,
+      mine: String(alive.callerId === me.id),
+    });
+    // Отдаём тело звонка: клиент сам решит — отменить свой зависший
+    // и позвонить заново, или показать чужой как входящий.
+    return NextResponse.json(
+      {
+        error: alive.callerId === me.id ? "Ваш предыдущий звонок ещё активен" : "Звонок уже идёт",
+        call: serializeCall(alive, aliveCaller),
+      },
+      { status: 409 },
+    );
+  }
 
   const [call] = await db
     .insert(calls)
