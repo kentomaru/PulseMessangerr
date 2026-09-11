@@ -86,15 +86,18 @@ Cannot find native binding
   }
   ```
 
-- в `railway.json` сборка идёт командой, которая не даёт их пропустить:
-
-  ```json
-  "buildCommand": "npm ci --include=optional && npm run build"
-  ```
+- Railway устанавливает зависимости на отдельной install-фазе из
+  `package-lock.json`, а `railway.json` запускает на build-фазе только
+  `npm run build`. Не вызывайте `npm ci` повторно в `buildCommand`: Railway
+  кэширует `node_modules/.cache`, и попытка npm удалить этот каталог во время
+  `npm ci` может завершиться ошибкой `EBUSY`.
+- `optionalDependencies` устанавливаются npm автоматически; явное указание
+  linux-бинарников в `package.json` сохраняет их в lock-файле и не даёт npm
+  потерять платформенные пакеты.
 
 Проверить локально: `rm -rf node_modules/lightningcss-linux-x64-gnu
-node_modules/@tailwindcss/oxide-linux-x64-gnu && npm run build` — до фикса
-сборка падала, после `npm ci --include=optional` проходит.
+node_modules/@tailwindcss/oxide-linux-x64-gnu && npm ci && npm run build` — после
+чистой установки native-пакеты и сборка проходят.
 
 ## Логи: «где что сломалось?»
 
