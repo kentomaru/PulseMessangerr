@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import {
+  Bookmark,
   Compass,
   Hash,
   Loader2,
@@ -17,6 +18,8 @@ import {
   UserPlus,
   Users,
   Video,
+  Volume2,
+  VolumeX,
 } from "lucide-react";
 import Avatar from "./Avatar";
 import StoriesRow from "./StoriesRow";
@@ -29,6 +32,8 @@ type Props = {
   conversations: ConversationListItem[];
   activeId: string | null;
   storyGroups: StoryGroup[];
+  /** Звук уведомлений о новых сообщениях. */
+  soundOn: boolean;
   onSelect: (id: string) => void;
   onOpenProfile: () => void;
   onOpenChat: (user: PublicUser) => void;
@@ -37,6 +42,10 @@ type Props = {
   onAddStory: () => void;
   onCreateGroup: (kind: "group" | "channel") => void;
   onDiscover: () => void;
+  /** Открыть «Избранное» (чат с самим собой). */
+  onOpenSaved: () => void;
+  /** Включить/выключить звук уведомлений. */
+  onToggleSound: () => void;
   /** Вход по ссылке-приглашению в группу/канал (#group=<token>). */
   onJoinByToken: (token: string) => void;
 };
@@ -64,6 +73,7 @@ export default function Sidebar({
   conversations,
   activeId,
   storyGroups,
+  soundOn,
   onSelect,
   onOpenProfile,
   onOpenChat,
@@ -72,6 +82,8 @@ export default function Sidebar({
   onAddStory,
   onCreateGroup,
   onDiscover,
+  onOpenSaved,
+  onToggleSound,
   onJoinByToken,
 }: Props) {
   const [query, setQuery] = useState("");
@@ -187,6 +199,22 @@ export default function Sidebar({
           </AnimatePresence>
         </div>
 
+        <button
+          onClick={onOpenSaved}
+          title="Избранное — сохранить сообщение можно через «Переслать»"
+          className="glass flex h-9 w-9 items-center justify-center rounded-xl text-white/50 transition-colors hover:text-amber-300"
+        >
+          <Bookmark className="h-4 w-4" />
+        </button>
+        <button
+          onClick={onToggleSound}
+          title={soundOn ? "Выключить звук уведомлений" : "Включить звук уведомлений"}
+          className={`glass flex h-9 w-9 items-center justify-center rounded-xl transition-colors ${
+            soundOn ? "text-white/50 hover:text-emerald-300" : "text-white/30 hover:text-white/70"
+          }`}
+        >
+          {soundOn ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}
+        </button>
         <button
           onClick={onLogout}
           title="Выйти"

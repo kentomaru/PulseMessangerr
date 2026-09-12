@@ -5,8 +5,10 @@ import { AnimatePresence, motion } from "framer-motion";
 import {
   ArrowLeft,
   Ban,
+  Bookmark,
   Check,
   CheckCheck,
+  ChevronLeft,
   ChevronRight,
   CornerUpLeft,
   Copy,
@@ -31,11 +33,15 @@ import {
   PhoneIncoming,
   PhoneMissed,
   PhoneOutgoing,
+  Pin,
+  PinOff,
   Play,
   Radio,
   Reply,
   RotateCcw,
+  Search,
   Send,
+  Smile,
   SmilePlus,
   Trash2,
   UserRound,
@@ -46,6 +52,8 @@ import {
 import Avatar from "./Avatar";
 import WallpaperModal from "./WallpaperModal";
 import { api, ApiError, copyToClipboard, uploadFile } from "@/lib/api";
+import { EMOJI_CATEGORIES } from "@/lib/emojis";
+import { renderRichText } from "@/lib/richText";
 import {
   callLogLabel,
   dayLabel,
@@ -93,6 +101,8 @@ type Props = {
   initialTitle: string;
   initialKind: ConversationKind;
   initialAvatar: string | null;
+  /** Непрочитанные на момент открытия (для разделителя «Непрочитанные»). */
+  initialUnread?: number;
   peer: Peer | null;
   onBack: () => void;
   onCall: (media: CallMedia) => void;
@@ -108,11 +118,24 @@ type Props = {
 
 type MessageLoad = {
   messages: ChatMessage[];
+  pinned: ChatMessage[];
   conversation: ConvMeta;
   members: ConversationMemberItem[];
   peer: Peer | null;
   activeCall: CallSummary | null;
   wallpaper: string | null;
+};
+
+/** Результат поиска по чату. */
+type SearchHit = {
+  id: string;
+  type: string;
+  content: string;
+  preview: string;
+  createdAt: string;
+  senderId: string;
+  senderName: string;
+  sender: PublicUser | null;
 };
 
 type DraftFile = {
@@ -152,6 +175,7 @@ export default function ChatView({
   initialTitle,
   initialKind,
   initialAvatar,
+  initialUnread,
   peer,
   onBack,
   onCall,
@@ -165,6 +189,8 @@ export default function ChatView({
   onUnauthorized,
 }: Props) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [pinned, setPinned] = useState<ChatMessage[]>([]);
+  const [pinnedIdx, setPinnedIdx] = useState(0);
   const [meta, setMeta] = useState<ConvMeta | null>(null);
   const [members, setMembers] = useState<ConversationMemberItem[]>([]);
   const [peerState, setPeerState] = useState<Peer | null>(peer);
@@ -187,6 +213,13 @@ export default function ChatView({
   const [noteRecorder, setNoteRecorder] = useState(false);
   const [voiceRecActive, setVoiceRecActive] = useState(false);
   const [recSecs, setRecSecs] = useState(0);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchHits, setSearchHits] = useState<SearchHit[] | null>(null);
+  const [searching, setSearching] = useState(false);
+  const [emojiOpen, setEmojiOpen] = useState(false);
+  /** id сообщения, перед которым рисуем разделитель «Непрочитанные». */
+  const [unreadBefore, setUnreadBefore] = useState<string | null>(null);
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
@@ -194,6 +227,8 @@ export default function ChatView({
   const lastTypingSent = useRef(0);
   const lastCount = useRef(0);
   const loadedRef = useRef(false);
+  /** Непрочитанные на момент открытия чата — замораживаем, чтобы опросы их не затирали. */
+  const initialUnreadRef = useRef(initialUnread ?? 0);
   const voiceRef = useRef<{ recorder: MediaRecorder; stream: MediaStream; chunks: Blob[]; startedAt: number } | null>(null);
   const draftId = useRef(0);
 
@@ -223,6 +258,7 @@ export default function ChatView({
     try {
       const d = await api<MessageLoad>(`/api/messages?conversationId=${conversationId}`);
       setMessages(d.messages);
+      setPinned(d.pinned ?? []);
       setMeta(d.conversation);
       setMembers(d.members);
       setActiveCall(d.activeCall);
@@ -231,6 +267,20 @@ export default function ChatView({
       if (!loadedRef.current) {
         loadedRef.current = true;
         setLoaded(true);
+        // разделитель «Непрочитанные»: перед N-м с конца чужим сообщением
+        // (initialUnreadRef — значение на момент открытия чата, дальше не меняется)
+        const target = initialUnreadRef.current;
+        if (target > 0) {
+          let c = target;
+          let idx = -1;
+          for (let i = d.messages.length - 1; i >= 0 && c > 0; i--) {
+            if (d.messages[i].senderId !== me.id) {
+              c--;
+              idx = i;
+            }
+          }
+          setUnreadBefore(idx >= 0 ? d.messages[idx].id : (d.messages[0]?.id ?? null));
+        }
         requestAnimationFrame(() => scrollToEnd());
       } else if (d.messages.length !== lastCount.current) {
         requestAnimationFrame(() => scrollToEnd(true));
@@ -241,7 +291,7 @@ export default function ChatView({
       /* иначе сеть моргнула — следующий опрос поправит */
     }
     // ВАЖНО: зависимость только от conversationId (см. комментарий в истории правок)
-  }, [conversationId, onUnauthorized, scrollToEnd]);
+  }, [conversationId, onUnauthorized, scrollToEnd, me.id]);
 
   useEffect(() => {
     loadedRef.current = false;
@@ -249,6 +299,12 @@ export default function ChatView({
     lastCount.current = 0;
     setReplyTo(null);
     setEditing(null);
+    setUnreadBefore(null);
+    setSearchOpen(false);
+    setSearchQuery("");
+    setSearchHits(null);
+    setPinnedIdx(0);
+    setEmojiOpen(false);
     void load();
     const t = setInterval(() => void load(), 2_500);
     return () => clearInterval(t);
@@ -271,6 +327,9 @@ export default function ChatView({
   const avatar = kind === "direct" ? (peerState?.avatarUrl ?? initialAvatar) : (meta?.avatarUrl ?? initialAvatar);
   const isSpace = kind !== "direct";
   const canPost = kind !== "channel" || meta?.myRole === "owner" || meta?.myRole === "admin";
+  /** «Избранное» — чат с самим собой: без звонков, подпись «сохранённые». */
+  const isSaved = kind === "direct" && (peerState?.id ?? peer?.id) === me.id;
+  const pinnedCurrent = pinned.length > 0 ? pinned[Math.min(pinnedIdx, pinned.length - 1)] : null;
 
   /* ─────────────────────────── отправка ─────────────────────────── */
 
@@ -514,6 +573,7 @@ export default function ChatView({
               : m,
         ),
       );
+      setPinned((ps) => ps.filter((p) => p.id !== id));
       refreshConversations();
     } catch (e) {
       notify(e instanceof Error ? e.message : "Не удалось удалить");
@@ -553,6 +613,91 @@ export default function ChatView({
     }
   };
 
+  /* ─────────────────────────── закреплённые сообщения ─────────────────────────── */
+
+  /** Можно ли закрепить сообщение: в ЛС — любой, в группе/канале — админы или автор. */
+  const canPinMessage = useCallback(
+    (m: ChatMessage) => {
+      if (!meta) return false;
+      if (kind === "direct") return true;
+      return meta.myRole === "owner" || meta.myRole === "admin" || m.senderId === me.id;
+    },
+    [meta, kind, me.id],
+  );
+
+  const togglePin = async (m: ChatMessage) => {
+    try {
+      const d = await api<{ pinned: boolean }>(`/api/messages/${m.id}/pin`, { method: "POST" });
+      setPinned((ps) => {
+        if (d.pinned) return [m, ...ps.filter((x) => x.id !== m.id)].slice(0, 10);
+        return ps.filter((x) => x.id !== m.id);
+      });
+      setPinnedIdx(0);
+      setMessages((ms) => ms.map((x) => (x.id === m.id ? { ...x, pinned: d.pinned } : x)));
+      notify(d.pinned ? "Сообщение закреплено" : "Сообщение откреплено");
+    } catch (e) {
+      notify(e instanceof Error ? e.message : "Не удалось закрепить");
+    }
+  };
+
+  /* ─────────────────────────── поиск по чату ─────────────────────────── */
+
+  useEffect(() => {
+    if (!searchOpen) return;
+    const q = searchQuery.trim();
+    if (q.length < 1) {
+      setSearchHits(null);
+      setSearching(false);
+      return;
+    }
+    setSearching(true);
+    const t = setTimeout(async () => {
+      try {
+        const d = await api<{ results: SearchHit[] }>(
+          `/api/messages/search?conversationId=${conversationId}&q=${encodeURIComponent(q)}`,
+        );
+        setSearchHits(d.results);
+      } catch {
+        setSearchHits([]);
+      } finally {
+        setSearching(false);
+      }
+    }, 300);
+    return () => clearTimeout(t);
+  }, [searchQuery, searchOpen, conversationId]);
+
+  /* ─────────────────────────── эмодзи-пикер ─────────────────────────── */
+
+  const insertEmoji = (emoji: string) => {
+    const el = inputRef.current;
+    if (!el) {
+      setText((t) => t + emoji);
+      return;
+    }
+    const start = el.selectionStart ?? text.length;
+    const end = el.selectionEnd ?? text.length;
+    const next = text.slice(0, start) + emoji + text.slice(end);
+    setText(next);
+    requestAnimationFrame(() => {
+      el.focus();
+      const pos = start + emoji.length;
+      el.setSelectionRange(pos, pos);
+    });
+  };
+
+  const emojiBtnRef = useRef<HTMLButtonElement | null>(null);
+  const emojiPickRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!emojiOpen) return;
+    const onDown = (e: PointerEvent) => {
+      const t = e.target as Node;
+      if (emojiBtnRef.current?.contains(t) || emojiPickRef.current?.contains(t)) return;
+      setEmojiOpen(false);
+    };
+    window.addEventListener("pointerdown", onDown);
+    return () => window.removeEventListener("pointerdown", onDown);
+  }, [emojiOpen]);
+
   const sendTyping = () => {
     const now = Date.now();
     if (now - lastTypingSent.current < 2_500) return;
@@ -566,7 +711,14 @@ export default function ChatView({
       notify("Это сообщение старше загруженной истории");
       return;
     }
-    el.scrollIntoView({ behavior: "smooth", block: "center" });
+    // scrollIntoView есть не везде (старые Safari/тестовые окружения) — страховка
+    if (typeof el.scrollIntoView === "function") {
+      try {
+        el.scrollIntoView({ behavior: "smooth", block: "center" });
+      } catch {
+        el.scrollTop = 0;
+      }
+    }
     setHighlight(id);
     setTimeout(() => setHighlight(null), 1400);
   };
@@ -653,6 +805,7 @@ export default function ChatView({
         accent: true,
       };
     }
+    if (isSaved) return { text: "сохранённые сообщения", accent: false };
     if (kind === "direct") {
       return { text: lastSeenLabel(peerState?.lastSeenAt ?? null, !!peerState?.online), accent: !!peerState?.online };
     }
@@ -697,6 +850,7 @@ export default function ChatView({
           <div className="min-w-0">
             <p className="flex items-center gap-1.5 truncate text-[15px] font-semibold">
               <span className="truncate">{title}</span>
+              {isSaved && <Bookmark className="h-3.5 w-3.5 shrink-0 text-amber-300" />}
               {isSpace && kind === "channel" && <Megaphone className="h-3.5 w-3.5 shrink-0 text-cyan-300" />}
               {isSpace && kind === "group" && <Hash className="h-3.5 w-3.5 shrink-0 text-violet-300" />}
               {isSpace && meta?.isPrivate && <Lock className="h-3 w-3 shrink-0 text-white/25" />}
@@ -720,21 +874,34 @@ export default function ChatView({
             </button>
           )}
           <button
-            onClick={() => onCall("audio")}
-            disabled={callBusy}
-            title="Аудиозвонок"
-            className="glass flex h-10 w-10 items-center justify-center rounded-xl text-white/75 transition-colors hover:text-white disabled:opacity-40"
+            onClick={() => setSearchOpen((v) => !v)}
+            title="Поиск по чату"
+            className={`glass flex h-10 w-10 items-center justify-center rounded-xl transition-colors hover:text-white ${
+              searchOpen ? "text-violet-300" : "text-white/75"
+            }`}
           >
-            <Phone className="h-4.5 w-4.5" />
+            <Search className="h-4.5 w-4.5" />
           </button>
-          <button
-            onClick={() => onCall("video")}
-            disabled={callBusy}
-            title="Видеозвонок"
-            className="glass flex h-10 w-10 items-center justify-center rounded-xl text-white/75 transition-colors hover:text-white sm:flex disabled:opacity-40"
-          >
-            <Video className="h-4.5 w-4.5" />
-          </button>
+          {!isSaved && (
+            <>
+              <button
+                onClick={() => onCall("audio")}
+                disabled={callBusy}
+                title="Аудиозвонок"
+                className="glass flex h-10 w-10 items-center justify-center rounded-xl text-white/75 transition-colors hover:text-white disabled:opacity-40"
+              >
+                <Phone className="h-4.5 w-4.5" />
+              </button>
+              <button
+                onClick={() => onCall("video")}
+                disabled={callBusy}
+                title="Видеозвонок"
+                className="glass flex h-10 w-10 items-center justify-center rounded-xl text-white/75 transition-colors hover:text-white sm:flex disabled:opacity-40"
+              >
+                <Video className="h-4.5 w-4.5" />
+              </button>
+            </>
+          )}
           <div className="relative">
             <button
               onClick={() => setMenuOpen((v) => !v)}
@@ -799,6 +966,124 @@ export default function ChatView({
           </div>
         </div>
       </div>
+
+      {/* Плашка закреплённого сообщения */}
+      <AnimatePresence>
+        {pinnedCurrent && (
+          <motion.div
+            key="pinned-bar"
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            className="relative z-20 overflow-hidden border-b border-white/8 bg-violet-500/8"
+          >
+            <div className="mx-auto flex max-w-2xl items-center gap-2 px-4 py-1.5">
+              <Pin className="h-3.5 w-3.5 shrink-0 text-violet-300" />
+              <button
+                onClick={() => jumpTo(pinnedCurrent.id)}
+                title="Перейти к сообщению"
+                className="min-w-0 flex-1 truncate text-left text-xs text-white/70"
+              >
+                <span className="font-semibold text-violet-300">
+                  {pinnedCurrent.senderId === me.id ? "Вы" : (pinnedCurrent.sender?.displayName ?? "")}:{" "}
+                </span>
+                {messagePreview(pinnedCurrent.type, pinnedCurrent.content)}
+              </button>
+              {pinned.length > 1 && (
+                <span className="flex shrink-0 items-center gap-0.5 text-[11px] text-white/40 tabular-nums">
+                  <button
+                    onClick={() => setPinnedIdx((i) => (i - 1 + pinned.length) % pinned.length)}
+                    className="rounded-full p-0.5 hover:text-white"
+                    title="Предыдущее закреплённое"
+                  >
+                    <ChevronLeft className="h-3.5 w-3.5" />
+                  </button>
+                  {Math.min(pinnedIdx, pinned.length - 1) + 1}/{pinned.length}
+                  <button
+                    onClick={() => setPinnedIdx((i) => (i + 1) % pinned.length)}
+                    className="rounded-full p-0.5 hover:text-white"
+                    title="Следующее закреплённое"
+                  >
+                    <ChevronRight className="h-3.5 w-3.5" />
+                  </button>
+                </span>
+              )}
+              {canPinMessage(pinnedCurrent) && (
+                <button
+                  onClick={() => void togglePin(pinnedCurrent)}
+                  title="Открепить"
+                  className="shrink-0 rounded-full p-1 text-white/40 transition-colors hover:text-rose-300"
+                >
+                  <PinOff className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Панель поиска по чату */}
+      <AnimatePresence>
+        {searchOpen && (
+          <motion.div
+            key="search-panel"
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            className="relative z-20 overflow-hidden border-b border-white/8 bg-[#0d0d18]/90"
+          >
+            <div className="mx-auto max-w-2xl px-4 py-2.5">
+              <div className="flex items-center gap-2.5">
+                <Search className="h-4 w-4 shrink-0 text-white/35" />
+                <input
+                  autoFocus
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Escape") setSearchOpen(false);
+                  }}
+                  placeholder="Поиск по чату…"
+                  maxLength={100}
+                  className="ring-focus w-full rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-sm transition-all placeholder:text-white/30"
+                />
+                {searching && <Loader2 className="h-4 w-4 shrink-0 animate-spin text-white/40" />}
+                <button
+                  onClick={() => setSearchOpen(false)}
+                  className="shrink-0 rounded-full p-1.5 text-white/50 transition-colors hover:text-white"
+                  title="Закрыть поиск"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+              {searchHits && searchHits.length > 0 && (
+                <div className="nice-scroll mt-2 max-h-64 space-y-0.5 overflow-y-auto">
+                  {searchHits.map((h) => (
+                    <button
+                      key={h.id}
+                      onClick={() => {
+                        jumpTo(h.id);
+                        setSearchOpen(false);
+                      }}
+                      className="flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left transition-colors hover:bg-white/8"
+                    >
+                      <Avatar name={h.senderName} src={h.sender?.avatarUrl ?? null} size={28} />
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-[13px] text-white/85">{h.preview}</span>
+                        <span className="block text-[11px] text-white/35">
+                          {h.senderName} · {dayLabel(h.createdAt)} {timeHHmm(h.createdAt)}
+                        </span>
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
+              {searchHits && searchHits.length === 0 && !searching && searchQuery.trim().length > 0 && (
+                <p className="px-2 pt-2 text-xs text-white/40">Ничего не найдено</p>
+              )}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Идёт звонок — приглашение присоединиться */}
       <AnimatePresence>
@@ -888,6 +1173,15 @@ export default function ChatView({
 
               return (
                 <div key={m.id} data-mid={m.id}>
+                  {unreadBefore === m.id && (
+                    <div className="flex items-center gap-3 py-2">
+                      <span className="h-px flex-1 bg-rose-400/30" />
+                      <span className="rounded-full bg-rose-500/15 px-3 py-1 text-[11px] font-semibold text-rose-300">
+                        Непрочитанные
+                      </span>
+                      <span className="h-px flex-1 bg-rose-400/30" />
+                    </div>
+                  )}
                   {showDay && (
                     <div className="flex justify-center py-4">
                       <span className="glass rounded-full px-3.5 py-1.5 text-[11px] font-medium text-white/50">
@@ -906,11 +1200,13 @@ export default function ChatView({
                       grouped={grouped}
                       read={own && new Date(m.createdAt).getTime() <= readUpTo}
                       canDelete={canDelete}
+                      canPin={canPinMessage(m)}
                       highlighted={highlight === m.id}
                       onOpenImage={setLightbox}
                       onDelete={() => void removeMessage(m.id)}
                       onReply={() => startReply(m)}
                       onEdit={() => startEdit(m)}
+                      onPin={() => void togglePin(m)}
                       onReact={(emoji) => void toggleReaction(m.id, emoji)}
                       onMenu={openContextMenu}
                       onJump={jumpTo}
@@ -1121,6 +1417,16 @@ export default function ChatView({
                 className="ring-focus nice-scroll max-h-32 min-h-11 flex-1 resize-none rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3 text-[15px] transition-all placeholder:text-white/30"
               />
               <button
+                ref={emojiBtnRef}
+                onClick={() => setEmojiOpen((v) => !v)}
+                title="Эмодзи"
+                className={`glass flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl transition-colors hover:text-white ${
+                  emojiOpen ? "text-amber-300" : "text-white/70"
+                }`}
+              >
+                <Smile className="h-4.5 w-4.5" />
+              </button>
+              <button
                 onClick={() => void send()}
                 disabled={(!canSendSomething && !editing) || sending || uploading}
                 title="Отправить"
@@ -1130,6 +1436,23 @@ export default function ChatView({
               </button>
             </div>
           )}
+
+          {/* Эмодзи-пикер */}
+          <AnimatePresence>
+            {emojiOpen && (
+              <motion.div
+                key="emoji-picker"
+                ref={emojiPickRef}
+                initial={{ opacity: 0, y: 8, scale: 0.98 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: 8, scale: 0.98 }}
+                transition={{ duration: 0.15 }}
+                className="absolute right-0 bottom-[calc(100%+8px)] z-30 w-[min(92vw,420px)]"
+              >
+                <EmojiPicker onPick={insertEmoji} onClose={() => setEmojiOpen(false)} />
+              </motion.div>
+            )}
+          </AnimatePresence>
         </div>
       </div>
 
@@ -1225,6 +1548,10 @@ export default function ChatView({
               startEdit(ctxMenu.message);
               setCtxMenu(null);
             }}
+            onPin={() => {
+              void togglePin(ctxMenu.message);
+              setCtxMenu(null);
+            }}
             onCopy={() => {
               void copyMessage(ctxMenu.message);
               setCtxMenu(null);
@@ -1290,6 +1617,7 @@ function MessageContextMenu({
   onReact,
   onReply,
   onEdit,
+  onPin,
   onCopy,
   onForward,
   onDelete,
@@ -1302,6 +1630,7 @@ function MessageContextMenu({
   onReact: (emoji: string) => void;
   onReply: () => void;
   onEdit: () => void;
+  onPin: () => void;
   onCopy: () => void;
   onForward: () => void;
   onDelete: () => void;
@@ -1312,10 +1641,11 @@ function MessageContextMenu({
   const isEditable = own && !m.deletedAt && (m.type === "text" || m.type === "image" || m.type === "file");
   const hasText = m.type === "text" ? !!m.content : !!(att?.caption || att?.url);
   const canDelete = own || (isSpace && (myRole === "owner" || myRole === "admin"));
+  const canPin = !isSpace || myRole === "owner" || myRole === "admin" || own;
 
   // чтобы меню не вылезало за край экрана
   const W = 236;
-  const H = 330;
+  const H = 372;
   const x = Math.min(Math.max(8, state.x), Math.max(8, window.innerWidth - W - 8));
   const y = Math.min(Math.max(8, state.y), Math.max(8, window.innerHeight - H - 8));
 
@@ -1346,6 +1676,19 @@ function MessageContextMenu({
         ))}
       </div>
       <ContextItem icon={<Reply className="h-4 w-4 text-violet-300" />} label="Ответить" onClick={onReply} />
+      {canPin && (
+        <ContextItem
+          icon={
+            m.pinned ? (
+              <PinOff className="h-4 w-4 text-rose-300" />
+            ) : (
+              <Pin className="h-4 w-4 text-emerald-300" />
+            )
+          }
+          label={m.pinned ? "Открепить" : "Закрепить"}
+          onClick={onPin}
+        />
+      )}
       {hasText && (
         <ContextItem icon={<Copy className="h-4 w-4 text-cyan-300" />} label="Копировать" onClick={onCopy} />
       )}
@@ -1475,9 +1818,12 @@ function ForwardModal({
                   size={40}
                 />
                 <span className="min-w-0 flex-1">
-                  <span className="block truncate text-sm font-medium">{c.title}</span>
+                  <span className="flex items-center gap-1.5 truncate text-sm font-medium">
+                    <span className="truncate">{c.title}</span>
+                    {c.saved && <Bookmark className="h-3 w-3 shrink-0 text-amber-300" />}
+                  </span>
                   <span className="block text-[11px] text-white/35">
-                    {c.kind === "direct" ? "личный чат" : c.kind === "channel" ? "канал" : "группа"}
+                    {c.saved ? "избранное" : c.kind === "direct" ? "личный чат" : c.kind === "channel" ? "канал" : "группа"}
                   </span>
                 </span>
                 {sendingTo === c.id && <Loader2 className="h-4 w-4 animate-spin text-white/50" />}
@@ -1760,11 +2106,13 @@ function MessageBubble({
   grouped,
   read,
   canDelete,
+  canPin,
   highlighted,
   onOpenImage,
   onDelete,
   onReply,
   onEdit,
+  onPin,
   onReact,
   onMenu,
   onJump,
@@ -1778,11 +2126,13 @@ function MessageBubble({
   grouped: boolean;
   read: boolean;
   canDelete: boolean;
+  canPin: boolean;
   highlighted: boolean;
   onOpenImage: (url: string) => void;
   onDelete: () => void;
   onReply: () => void;
   onEdit: () => void;
+  onPin: () => void;
   onReact: (emoji: string) => void;
   onMenu: (x: number, y: number, message: ChatMessage) => void;
   onJump: (id: string) => void;
@@ -1931,12 +2281,18 @@ function MessageBubble({
                   draggable={false}
                 />
               </button>
-              {att.caption && <p className="px-1 pt-2 pb-1 text-[15px] leading-relaxed break-words whitespace-pre-wrap">{att.caption}</p>}
+              {att.caption && (
+                <p className="px-1 pt-2 pb-1 text-[15px] leading-relaxed break-words whitespace-pre-wrap">
+                  {renderRichText(att.caption)}
+                </p>
+              )}
             </div>
           ) : isFile && att ? (
             <FileCard att={att} />
           ) : (
-            <p className="text-[15px] leading-relaxed break-words whitespace-pre-wrap">{message.content}</p>
+            <p className="text-[15px] leading-relaxed break-words whitespace-pre-wrap">
+              {renderRichText(message.content)}
+            </p>
           )}
         </div>
 
@@ -1963,6 +2319,11 @@ function MessageBubble({
 
         <div className={`mt-1 flex items-center gap-1 text-[10px] text-white/30 ${alignRight ? "justify-end" : ""}`}>
           <span>{timeHHmm(message.createdAt)}</span>
+          {message.pinned && (
+            <span title="Закреплено" className="flex items-center">
+              <Pin className="h-3 w-3 text-violet-300" />
+            </span>
+          )}
           {message.editedAt && <span className="italic">изменено</span>}
           {own &&
             (read ? <CheckCheck className="h-3.5 w-3.5 text-cyan-300" /> : <Check className="h-3.5 w-3.5" />)}
@@ -1983,6 +2344,15 @@ function MessageBubble({
         >
           <Reply className="h-3.5 w-3.5" />
         </button>
+        {canPin && (
+          <button
+            onClick={onPin}
+            title={message.pinned ? "Открепить" : "Закрепить"}
+            className={`rounded-full p-1 ${message.pinned ? "text-violet-300 hover:text-rose-300" : "text-white/30 hover:text-emerald-300"}`}
+          >
+            {message.pinned ? <PinOff className="h-3.5 w-3.5" /> : <Pin className="h-3.5 w-3.5" />}
+          </button>
+        )}
         <button
           onClick={(e) => {
             const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
@@ -2280,6 +2650,65 @@ function CallLogBubble({
           </button>
         )}
       </div>
+    </div>
+  );
+}
+
+/* ─────────────────────────── эмодзи-пикер ─────────────────────────── */
+
+function EmojiPicker({ onPick, onClose }: { onPick: (emoji: string) => void; onClose: () => void }) {
+  const [catIdx, setCatIdx] = useState(0);
+  const cats = EMOJI_CATEGORIES;
+  const cat = cats[Math.min(catIdx, cats.length - 1)];
+  const gridRef = useRef<HTMLDivElement | null>(null);
+
+  // при смене категории прокручиваем сетку наверх
+  useEffect(() => {
+    const el = gridRef.current;
+    if (!el) return;
+    if (typeof el.scrollTo === "function") el.scrollTo({ top: 0 });
+    else el.scrollTop = 0;
+  }, [catIdx]);
+
+  return (
+    <div className="glass-strong overflow-hidden rounded-[1.4rem] shadow-2xl">
+      {/* категории */}
+      <div className="flex items-center gap-0.5 border-b border-white/8 px-2.5 py-2">
+        {cats.map((c, i) => (
+          <button
+            key={c.name}
+            onClick={() => setCatIdx(i)}
+            title={c.name}
+            className={`flex h-8 flex-1 items-center justify-center rounded-xl text-base transition-colors ${
+              i === catIdx ? "bg-white/12" : "hover:bg-white/6 opacity-60 hover:opacity-100"
+            }`}
+          >
+            {c.emojis[0]}
+          </button>
+        ))}
+        <button
+          onClick={onClose}
+          title="Закрыть"
+          className="ml-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-xl text-white/40 transition-colors hover:text-white"
+        >
+          <X className="h-4 w-4" />
+        </button>
+      </div>
+      {/* сетка эмодзи */}
+      <div ref={gridRef} className="nice-scroll grid max-h-64 grid-cols-8 gap-0.5 overflow-y-auto p-2 max-sm:grid-cols-7">
+        {cat.emojis.map((e) => (
+          <button
+            key={e}
+            onClick={() => onPick(e)}
+            className="flex h-9 items-center justify-center rounded-xl text-xl transition-transform hover:scale-125 hover:bg-white/8 active:scale-95"
+          >
+            {e}
+          </button>
+        ))}
+      </div>
+      <p className="border-t border-white/8 px-3 py-1.5 text-[10px] text-white/30">
+        {cat.name} · нажмите, чтобы вставить
+      </p>
     </div>
   );
 }

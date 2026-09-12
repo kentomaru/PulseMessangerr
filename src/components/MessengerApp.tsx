@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { CheckCircle2 } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
+import { playNotifySound } from "@/lib/notify";
 import type { ConversationListItem, PublicUser, StoryGroup } from "@/lib/types";
 import { useCallController } from "@/lib/useCallController";
 import Sidebar from "./Sidebar";
@@ -39,8 +40,13 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
   const [discover, setDiscover] = useState(false);
   const [groupInfoId, setGroupInfoId] = useState<string | null>(null);
   const [toasts, setToasts] = useState<Toast[]>([]);
+  /** Звук уведомлений (localStorage, вкл по умолчанию). */
+  const [soundOn, setSoundOn] = useState(true);
   const toastId = useRef(0);
   const unauthorizedRef = useRef(false);
+  const activeIdRef = useRef<string | null>(null);
+  activeIdRef.current = activeId;
+  const soundOnRef = useRef(true);
 
   const notify = useCallback((msg: string) => {
     const id = ++toastId.current;
@@ -91,6 +97,50 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
     };
   }, [loadConversations, loadStories]);
 
+  // Звук уведомлений: настройка из localStorage
+  useEffect(() => {
+    setSoundOn(localStorage.getItem("pulse_sound") !== "off");
+  }, []);
+  useEffect(() => {
+    soundOnRef.current = soundOn;
+  }, [soundOn]);
+
+  const toggleSound = useCallback(() => {
+    setSoundOn((v) => {
+      const next = !v;
+      localStorage.setItem("pulse_sound", next ? "on" : "off");
+      return next;
+    });
+  }, []);
+
+  // Счётчик непрочитанных в заголовке вкладки
+  useEffect(() => {
+    const n = conversations.reduce((s, c) => s + c.unreadCount, 0);
+    document.title = n > 0 ? `(${n}) Pulse` : "Pulse";
+  }, [conversations]);
+
+  // Звук нового сообщения: сработать должен только для чужих сообщений
+  // в чатах, которые сейчас не открыты (или когда вкладка в фоне).
+  const lastMsgIdsRef = useRef<Map<string, string>>(new Map());
+  const firstConvLoadRef = useRef(true);
+  useEffect(() => {
+    const prev = lastMsgIdsRef.current;
+    let beep = false;
+    for (const c of conversations) {
+      const lm = c.lastMessage;
+      const old = prev.get(c.id);
+      const isNew = !!lm && !!old && lm.id !== old && lm.senderId !== me.id;
+      if (isNew && (c.id !== activeIdRef.current || document.hidden)) beep = true;
+      if (lm) prev.set(c.id, lm.id);
+    }
+    // первый опрос — просто запоминаем id, не пиликаем
+    if (firstConvLoadRef.current) {
+      firstConvLoadRef.current = false;
+      beep = false;
+    }
+    if (beep && soundOnRef.current) playNotifySound();
+  }, [conversations, me.id]);
+
   const activeConv = conversations.find((c) => c.id === activeId) ?? null;
 
   const openConversationWith = useCallback(
@@ -108,6 +158,25 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
     },
     [loadConversations, notify],
   );
+
+  /** Открыть «Избранное» — личный чат с самим собой (создаётся при первом открытии). */
+  const openSaved = useCallback(async () => {
+    const existing = conversations.find((c) => c.saved);
+    if (existing) {
+      setActiveId(existing.id);
+      return;
+    }
+    try {
+      const d = await api<{ conversation: { id: string } }>("/api/conversations", {
+        method: "POST",
+        body: JSON.stringify({ userId: me.id }),
+      });
+      setActiveId(d.conversation.id);
+      await loadConversations();
+    } catch (e) {
+      notify(e instanceof Error ? e.message : "Не удалось открыть «Избранное»");
+    }
+  }, [conversations, me.id, loadConversations, notify]);
 
   /** Вход по ссылке-приглашению в группу/канал. */
   const joinByToken = useCallback(
@@ -213,6 +282,8 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
           conversations={conversations}
           activeId={activeId}
           storyGroups={storyGroups}
+          soundOn={soundOn}
+          onToggleSound={toggleSound}
           onSelect={setActiveId}
           onOpenProfile={() => setShowProfile(true)}
           onOpenChat={openConversationWith}
@@ -221,6 +292,7 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
           onAddStory={() => setStoryComposer(true)}
           onCreateGroup={(kind) => setCreateKind(kind)}
           onDiscover={() => setDiscover(true)}
+          onOpenSaved={() => void openSaved()}
           onJoinByToken={(token) => void joinByToken(token)}
         />
       </div>
@@ -234,6 +306,7 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
             initialTitle={activeConv.title}
             initialKind={activeConv.kind}
             initialAvatar={activeConv.avatarUrl}
+            initialUnread={activeConv.unreadCount}
             peer={activeConv.kind === "direct" ? activeConv.peer : null}
             onBack={() => setActiveId(null)}
             onCall={(media) => callCtl.startCall(activeConv.id, media)}
@@ -360,6 +433,8 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
         incoming={callCtl.incoming}
         muted={callCtl.muted}
         cameraOn={callCtl.cameraOn}
+        screenSharing={callCtl.screenSharing}
+        screenStreamRef={callCtl.screenStreamRef}
         seconds={callCtl.seconds}
         starting={callCtl.starting}
         minimized={callCtl.minimized}
@@ -374,6 +449,7 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
         onEndForAll={() => callCtl.leave({ endForAll: true })}
         onToggleMute={callCtl.toggleMute}
         onToggleCamera={() => void callCtl.toggleCamera()}
+        onToggleScreenShare={() => void callCtl.toggleScreenShare()}
         onCopyLink={callCtl.getShareLink}
         onInvite={callCtl.inviteUsers}
         onViewUser={(u) => setViewUser(u)}

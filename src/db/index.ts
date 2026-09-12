@@ -229,6 +229,7 @@ export async function ensureSchema(): Promise<void> {
       last_seen_at timestamptz not null default now(),
       primary key (call_id, user_id)
     );
+    alter table call_participants add column if not exists screen_on boolean not null default false;
     create index if not exists call_participants_user_idx on call_participants(user_id);
 
     create table if not exists call_signals (
@@ -284,6 +285,7 @@ export async function ensureSchema(): Promise<void> {
     end $$;
     alter table messages add column if not exists reply_to_id uuid;
     alter table messages add column if not exists edited_at timestamptz;
+    alter table messages add column if not exists pinned_at timestamptz;
     create unique index if not exists messages_call_id_key on messages(call_id);
     create index if not exists messages_conversation_idx on messages(conversation_id, created_at);
     create index if not exists messages_reply_idx on messages(reply_to_id);

@@ -79,6 +79,8 @@ export type ConversationListItem = {
   } | null;
   unreadCount: number;
   activeCall: CallSummary | null;
+  /** «Избранное» — личный чат с самим собой (сохранённые сообщения). */
+  saved?: boolean;
 };
 
 export type ReplyPreview = {
@@ -125,6 +127,8 @@ export type ChatMessage = {
   deletedAt: string | null;
   /** Когда сообщение отредактировано. */
   editedAt: string | null;
+  /** Закреплено ли сообщение (плашка сверху чата). */
+  pinned: boolean;
   /** Кто отправил (для групп/каналов). */
   sender?: PublicUser;
   /** Сообщение, на которое отвечает. */
@@ -143,6 +147,8 @@ export type CallParticipantInfo = {
   sdp: string | null;
   videoOn: boolean;
   muted: boolean;
+  /** Демонстрирует ли участник экран (replaceTrack на видеодорожке). */
+  screenOn: boolean;
   guest: boolean;
   joinedAt: string;
   left: boolean;

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { db } from "@/db";
 import { conversationMembers, conversations, messageReactions, messages, users } from "@/db/schema";
-import { and, desc, eq, inArray, isNull } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, isNull } from "drizzle-orm";
 import { publicUser } from "@/lib/auth";
 import { isUuid, withApi } from "@/lib/api-helpers";
 import {
@@ -105,6 +105,7 @@ async function serializeMessages(list: MessageRow[], meId: string): Promise<Chat
       createdAt: new Date(m.createdAt).toISOString(),
       deletedAt: m.deletedAt ? new Date(m.deletedAt).toISOString() : null,
       editedAt: m.editedAt ? new Date(m.editedAt).toISOString() : null,
+      pinned: !!m.pinnedAt,
       sender: sender ? publicUser(sender) : undefined,
       replyTo: reply ? replyPreview(reply, senders) : null,
       reactions: aggregateReactions(reactionsByMessage.get(m.id) ?? [], meId),
@@ -158,11 +159,28 @@ export const GET = withApi("messages", async ({ req, me }) => {
   const memberRows = await listMembers(conversationId);
   const members: ConversationMemberItem[] = memberRows.map((r) => memberItem(r.member, r.user));
   const peerRow = memberRows.find((r) => r.user.id !== me.id);
+  // «Избранное» — личный чат с самим собой (единственный участник — я)
+  const isSaved = kind === "direct" && !peerRow && memberRows.length === 1;
 
   const active = await findActiveCall(conversationId);
 
+  // Закреплённые сообщения (плашка сверху чата)
+  const pinnedRows = await db
+    .select()
+    .from(messages)
+    .where(
+      and(
+        eq(messages.conversationId, conversationId),
+        isNull(messages.deletedAt),
+        isNotNull(messages.pinnedAt),
+      ),
+    )
+    .orderBy(desc(messages.pinnedAt))
+    .limit(10);
+
   return NextResponse.json({
     messages: await serializeMessages(list, me.id),
+    pinned: await serializeMessages(pinnedRows, me.id),
     conversation: {
       id: conv.id,
       kind,
@@ -175,7 +193,9 @@ export const GET = withApi("messages", async ({ req, me }) => {
       myRole: normalizeRole(membership.role),
       title:
         kind === "direct"
-          ? (peerRow?.user.displayName ?? "Чат")
+          ? isSaved
+            ? "Избранное"
+            : (peerRow?.user.displayName ?? "Чат")
           : (conv.name?.trim() || (kind === "channel" ? "Канал" : "Группа")),
     },
     members,
@@ -185,7 +205,13 @@ export const GET = withApi("messages", async ({ req, me }) => {
           lastReadAt: peerRow.member.lastReadAt,
           typingAt: peerRow.member.typingAt,
         }
-      : null,
+      : isSaved
+        ? {
+            ...publicUser(me),
+            lastReadAt: membership.lastReadAt,
+            typingAt: membership.typingAt,
+          }
+        : null,
     activeCall: active
       ? {
           id: active.id,

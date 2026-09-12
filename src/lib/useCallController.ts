@@ -137,6 +137,7 @@ export function useCallController(
   const [incoming, setIncoming] = useState<IncomingCall | null>(null);
   const [muted, setMuted] = useState(false);
   const [cameraOn, setCameraOn] = useState(false);
+  const [screenSharing, setScreenSharing] = useState(false);
   const [seconds, setSeconds] = useState(0);
   const [starting, setStarting] = useState(false);
   /** Уменьшенный звонок («динамический остров») — можно писать в чат. */
@@ -147,6 +148,8 @@ export function useCallController(
   const [streamTick, setStreamTick] = useState(0);
 
   const localStreamRef = useRef<MediaStream | null>(null);
+  /** Поток демонстрации экрана (getDisplayMedia). */
+  const screenStreamRef = useRef<MediaStream | null>(null);
   const linksRef = useRef<Map<string, PeerLink>>(new Map());
   const streamsRef = useRef<Map<string, MediaStream>>(new Map());
   const sessionRef = useRef<CallSession | null>(null);
@@ -204,6 +207,8 @@ export function useCallController(
     streamsRef.current.clear();
     localStreamRef.current?.getTracks().forEach((t) => t.stop());
     localStreamRef.current = null;
+    screenStreamRef.current?.getTracks().forEach((t) => t.stop());
+    screenStreamRef.current = null;
     ringtoneRef.current?.stop();
     ringtoneRef.current = null;
     sessionRef.current = null;
@@ -215,6 +220,7 @@ export function useCallController(
     setSeconds(0);
     setMuted(false);
     setCameraOn(false);
+    setScreenSharing(false);
     setMinimized(false);
     setStarting(false);
     setRemoteStreams({});
@@ -495,9 +501,17 @@ export function useCallController(
           });
           state = d.call;
         } else {
+          // ВАЖНО: передаём videoOn и при СОЗДАНИИ комнаты — раньше флаг не
+          // сохранялся, и у автора видеозвонка плитку камеры никто не рисовал
+          // («изображение не показывается»), хотя видео уже шло по сети.
           const d = await api<{ call: CallState }>("/api/calls", {
             method: "POST",
-            body: JSON.stringify({ conversationId: opts.conversationId, media: opts.media }),
+            body: JSON.stringify({
+              conversationId: opts.conversationId,
+              media: opts.media,
+              videoOn,
+              muted: false,
+            }),
           });
           state = d.call;
         }
@@ -748,12 +762,13 @@ export function useCallController(
 
   /**
    * Повторное согласование со всеми: нужно, когда изменился состав дорожек
-   * (включили камеру). Оффер шлёт та же сторона, что и при первом соединении;
-   * остальные участники просто получат новый оффер сигналом.
+   * (включили камеру/экран). Оффер может послать ЛЮБАЯ сторона: встречные
+   * офферы разруливаются правилами perfect negotiation (rollback в syncMesh),
+   * а раньше «большая» сторона не могла добавить камеру — её оффер никто
+   * не создавал, и собеседник не видел видео.
    */
   const renegotiateAll = useCallback(async () => {
     for (const [peerId, l] of Array.from(linksRef.current.entries())) {
-      if (!iShouldOffer(peerId)) continue;
       try {
         l.offering = true;
         l.offeringSince = Date.now();
@@ -766,7 +781,7 @@ export function useCallController(
         l.offeringSince = null;
       }
     }
-  }, [iShouldOffer, sendSignal]);
+  }, [sendSignal]);
 
   const toggleCamera = useCallback(async () => {
     const s = sessionRef.current;
@@ -804,6 +819,87 @@ export function useCallController(
     // Сообщаем остальным, что состав дорожек изменился
     void renegotiateAll();
   }, [cameraOn, renegotiateAll]);
+
+  /* ─────────────────────── демонстрация экрана ─────────────────────── */
+
+  /** Заменить видеодорожку у всех пиров (камера ↔ экран) без пересогласования. */
+  const stopScreenShare = useCallback(() => {
+    const s = sessionRef.current;
+    const stream = screenStreamRef.current;
+    screenStreamRef.current = null;
+    setScreenSharing(false);
+    setStreamTick((v) => v + 1);
+    stream?.getTracks().forEach((t) => t.stop());
+
+    // возвращаем камеру (если включена) или пустую дорожку
+    const cameraTrack = localStreamRef.current?.getVideoTracks()[0] ?? null;
+    for (const l of linksRef.current.values()) {
+      const sender = l.pc.getSenders().find((x) => x.track?.kind === "video");
+      if (sender) void sender.replaceTrack(cameraTrack).catch(() => {});
+    }
+    if (s)
+      void api(`/api/calls/${s.id}`, {
+        method: "POST",
+        body: JSON.stringify({ action: "state", screenOn: false }),
+      }).catch(() => {});
+  }, []);
+
+  const stopScreenShareRef = useRef(stopScreenShare);
+  stopScreenShareRef.current = stopScreenShare;
+
+  /**
+   * Демонстрация экрана (как в Discord): getDisplayMedia → видеодорожка
+   * экрана заменяет камеру у всех участников (sender.replaceTrack — без
+   * пересогласования, мгновенно). Если камеры не было вовсе — дорожка
+   * добавляется и делается renegotiate.
+   */
+  const toggleScreenShare = useCallback(async () => {
+    const s = sessionRef.current;
+    if (!s) return;
+    if (screenStreamRef.current) {
+      stopScreenShareRef.current();
+      return;
+    }
+    if (!navigator.mediaDevices?.getDisplayMedia) {
+      notifyRef.current("Демонстрация экрана не поддерживается этим браузером");
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+      const [track] = stream.getVideoTracks();
+      if (!track) {
+        stream.getTracks().forEach((t) => t.stop());
+        return;
+      }
+      screenStreamRef.current = stream;
+      // Пользователь нажал «Прекратить демонстрацию» в браузере
+      track.addEventListener("ended", () => stopScreenShareRef.current());
+
+      let needsRenegotiate = false;
+      for (const l of linksRef.current.values()) {
+        const sender = l.pc.getSenders().find((x) => x.track?.kind === "video");
+        if (sender) {
+          await sender.replaceTrack(track).catch(() => {});
+        } else {
+          const local = localStreamRef.current;
+          if (local) {
+            l.pc.addTrack(track, local);
+            needsRenegotiate = true;
+          }
+        }
+      }
+
+      setScreenSharing(true);
+      setStreamTick((v) => v + 1);
+      void api(`/api/calls/${s.id}`, {
+        method: "POST",
+        body: JSON.stringify({ action: "state", screenOn: true }),
+      }).catch(() => {});
+      if (needsRenegotiate) void renegotiateAll();
+    } catch {
+      notifyRef.current("Не удалось начать демонстрацию экрана");
+    }
+  }, [renegotiateAll]);
 
   /** Ссылка-приглашение в текущий звонок (её можно кинуть кому угодно). */
   const getShareLink = useCallback(async (): Promise<string | null> => {
@@ -845,6 +941,8 @@ export function useCallController(
     starting,
     muted,
     cameraOn,
+    screenSharing,
+    screenStreamRef,
     seconds,
     minimized,
     setMinimized,
@@ -861,6 +959,7 @@ export function useCallController(
     joinByToken,
     toggleMute,
     toggleCamera,
+    toggleScreenShare,
     getShareLink,
     inviteUsers,
   };

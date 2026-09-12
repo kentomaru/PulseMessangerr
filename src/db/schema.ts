@@ -150,6 +150,8 @@ export const callParticipants = pgTable(
     /** Включена ли камера (видно всем, чтобы рисовать плитку/аватар). */
     videoOn: boolean("video_on").notNull().default(false),
     muted: boolean("muted").notNull().default(false),
+    /** Демонстрирует ли участник свой экран (replaceTrack на видеодорожке). */
+    screenOn: boolean("screen_on").notNull().default(false),
     /** Присоединился по ссылке, не будучи участником чата. */
     guest: boolean("guest").notNull().default(false),
     joinedAt: timestamp("joined_at", { withTimezone: true }).notNull().defaultNow(),
@@ -234,6 +236,8 @@ export const messages = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
     editedAt: timestamp("edited_at", { withTimezone: true }),
+    /** Закреплено ли сообщение (показывается в плашке сверху чата). */
+    pinnedAt: timestamp("pinned_at", { withTimezone: true }),
     /** Ссылка на звонок, чтобы лог звонка не дублировался (unique-индекс ниже). */
     callId: uuid("call_id").references(() => calls.id, { onDelete: "cascade" }),
   },

@@ -59,6 +59,7 @@ function participantInfo(p: CallParticipant, u: User): CallParticipantInfo {
     sdp: p.sdp,
     videoOn: !!p.videoOn,
     muted: !!p.muted,
+    screenOn: !!p.screenOn,
     guest: !!p.guest,
     joinedAt: new Date(p.joinedAt).toISOString(),
     left: !!p.leftAt,

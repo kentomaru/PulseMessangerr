@@ -24,6 +24,8 @@ import {
   Mic,
   MicOff,
   Minimize2,
+  MonitorOff,
+  MonitorUp,
   Phone,
   PhoneOff,
   Shrink,
@@ -47,6 +49,10 @@ type Props = {
   incoming: IncomingCall | null;
   muted: boolean;
   cameraOn: boolean;
+  /** Демонстрирую ли я свой экран. */
+  screenSharing: boolean;
+  /** Поток демонстрации экрана (мой). */
+  screenStreamRef: React.RefObject<MediaStream | null>;
   seconds: number;
   starting: boolean;
   minimized: boolean;
@@ -61,6 +67,7 @@ type Props = {
   onEndForAll: () => void;
   onToggleMute: () => void;
   onToggleCamera: () => void;
+  onToggleScreenShare: () => void;
   onCopyLink: () => Promise<string | null>;
   onInvite: (userIds: string[]) => Promise<number>;
   onViewUser: (user: PublicUser) => void;
@@ -384,40 +391,78 @@ function LiveDot() {
 }
 
 /** Содержимое звонка: плитки с видео или список участников. */
-function CallBody({ session, meId, cameraOn, localStreamRef, onViewUser }: WindowProps) {
+function CallBody({
+  session,
+  meId,
+  cameraOn,
+  screenSharing,
+  screenStreamRef,
+  localStreamRef,
+  remoteStreams,
+  streamTick,
+  onViewUser,
+}: WindowProps) {
   const localVideoRef = useRef<HTMLVideoElement | null>(null);
 
   useEffect(() => {
-    if (localVideoRef.current) localVideoRef.current.srcObject = localStreamRef.current ?? null;
-  }, [localStreamRef, cameraOn, session?.id]);
+    if (localVideoRef.current)
+      localVideoRef.current.srcObject =
+        (screenSharing ? screenStreamRef.current : localStreamRef.current) ?? null;
+  }, [localStreamRef, screenStreamRef, screenSharing, cameraOn, streamTick, session?.id]);
 
   if (!session) return null;
 
   const people = session.participants;
   const userById: Record<string, PublicUser> = {};
   for (const p of people) userById[p.userId] = p.user;
-  const videoPeople = people.filter((p) => p.videoOn);
+
+  // У удалённого участника видео может прийти раньше, чем флаг videoOn (или флаг
+  // рассинхронизировался) — плитки рисуем и по факту наличия видеодорожек.
+  const hasRemoteVideo = (id: string) =>
+    !!remoteStreams[id]?.getVideoTracks().some((t) => t.readyState === "live");
+  const hasVideo = (p: CallParticipantInfo) =>
+    p.userId === meId ? cameraOn || screenSharing : p.videoOn || p.screenOn || hasRemoteVideo(p.userId);
+
+  const videoPeople = people.filter(hasVideo);
   const gridCols = videoPeople.length <= 1 ? 1 : videoPeople.length <= 4 ? 2 : 3;
+
+  // Демонстрации экрана — большими плитками над сеткой
+  const screenSharers = people.filter(
+    (p) => p.screenOn || (p.userId === meId && screenSharing),
+  );
 
   return (
     <div className="nice-scroll relative min-h-0 flex-1 overflow-y-auto p-3">
+      {screenSharers.map((p) => (
+        <ScreenTile
+          key={`screen-${p.userId}`}
+          participant={p}
+          isMe={p.userId === meId}
+          stream={p.userId === meId ? (screenStreamRef.current ?? null) : (remoteStreams[p.userId] ?? null)}
+          tick={streamTick}
+          onViewUser={onViewUser}
+        />
+      ))}
+
       {videoPeople.length > 0 ? (
         <div
-          className="grid gap-2.5"
+          className={`grid gap-2.5 ${screenSharers.length > 0 ? "mt-2.5" : ""}`}
           style={{ gridTemplateColumns: `repeat(${gridCols}, minmax(0, 1fr))` }}
         >
-          {videoPeople.map((p) => (
-            <Tile
-              key={p.userId}
-              participant={p}
-              isMe={p.userId === meId}
-              localStream={localStreamRef.current ?? null}
-              userById={userById}
-              onViewUser={onViewUser}
-            />
-          ))}
+          {videoPeople
+            .filter((p) => !screenSharers.some((s) => s.userId === p.userId))
+            .map((p) => (
+              <Tile
+                key={p.userId}
+                participant={p}
+                isMe={p.userId === meId}
+                localStream={localStreamRef.current ?? null}
+                userById={userById}
+                onViewUser={onViewUser}
+              />
+            ))}
         </div>
-      ) : (
+      ) : screenSharers.length === 0 ? (
         <div className="flex h-full flex-col items-center justify-center gap-4 text-center">
           <Avatar name={session.title} src={null} size={72} />
           <div>
@@ -450,13 +495,13 @@ function CallBody({ session, meId, cameraOn, localStreamRef, onViewUser }: Windo
             </div>
           )}
         </div>
-      )}
+      ) : null}
 
       {/* Подписи аудио-участников под видео-сеткой */}
-      {videoPeople.length > 0 && people.some((p) => !p.videoOn) && (
+      {videoPeople.length > 0 && people.some((p) => !hasVideo(p)) && (
         <div className="mt-2.5 flex flex-wrap gap-2">
           {people
-            .filter((p) => !p.videoOn)
+            .filter((p) => !hasVideo(p))
             .map((p) => (
               <span
                 key={p.userId}
@@ -470,7 +515,7 @@ function CallBody({ session, meId, cameraOn, localStreamRef, onViewUser }: Windo
         </div>
       )}
 
-      {cameraOn && (
+      {(cameraOn || screenSharing) && (
         <div className="glass-strong pointer-events-none absolute right-4 bottom-4 aspect-[3/4] w-24 overflow-hidden rounded-xl">
           <video ref={localVideoRef} autoPlay playsInline muted className="h-full w-full object-cover" />
         </div>
@@ -479,11 +524,54 @@ function CallBody({ session, meId, cameraOn, localStreamRef, onViewUser }: Windo
   );
 }
 
+/** Большая плитка демонстрации экрана. */
+function ScreenTile({
+  participant,
+  isMe,
+  stream,
+  tick,
+  onViewUser,
+}: {
+  participant: CallParticipantInfo;
+  isMe: boolean;
+  stream: MediaStream | null;
+  tick: number;
+  onViewUser: (u: PublicUser) => void;
+}) {
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  useEffect(() => {
+    if (videoRef.current) videoRef.current.srcObject = stream ?? null;
+  }, [stream, tick]);
+
+  return (
+    <div className="relative aspect-video min-w-0 overflow-hidden rounded-2xl bg-black/60 ring-1 ring-emerald-400/25">
+      <video
+        ref={videoRef}
+        autoPlay
+        playsInline
+        muted
+        className="h-full w-full object-contain"
+      />
+      <div className="absolute inset-x-0 bottom-0 flex items-center gap-2 bg-gradient-to-t from-black/80 to-transparent px-3 py-2">
+        <MonitorUp className="h-3.5 w-3.5 shrink-0 text-emerald-300" />
+        <button
+          onClick={() => !isMe && onViewUser(participant.user)}
+          className="min-w-0 truncate text-left text-xs font-medium"
+        >
+          {isMe ? "Вы демонстрируете экран" : `Экран · ${participant.user.displayName}`}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function Controls({
   muted,
   cameraOn,
+  screenSharing,
   onToggleMute,
   onToggleCamera,
+  onToggleScreenShare,
   onCopyLink,
   copied,
   onOpenInvite,
@@ -514,6 +602,18 @@ function Controls({
         title={cameraOn ? "Выключить камеру" : "Включить камеру"}
       >
         {cameraOn ? <Video className="h-4.5 w-4.5" /> : <VideoOff className="h-4.5 w-4.5" />}
+      </Control>
+      <Control
+        small={compact}
+        active={screenSharing}
+        onClick={onToggleScreenShare}
+        title={screenSharing ? "Прекратить демонстрацию экрана" : "Демонстрировать экран"}
+      >
+        {screenSharing ? (
+          <MonitorOff className="h-4.5 w-4.5" />
+        ) : (
+          <MonitorUp className="h-4.5 w-4.5" />
+        )}
       </Control>
       <Control
         small={compact}

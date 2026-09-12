@@ -91,10 +91,11 @@ export const POST = withApi<{ id: string }>("calls:action", async ({ req, params
       const sdp = typeof body.sdp === "string" && body.sdp.length > 0 ? body.sdp.slice(0, 20_000) : null;
       let updated = await joinRoom(call, me.id, { guest: access.guest, sdp });
 
-      // Сразу публикуем медиастатус вошедшего (камера/микрофон)
+      // Сразу публикуем медиастатус вошедшего (камера/микрофон/экран)
       const mediaPatch: Partial<typeof callParticipants.$inferInsert> = {};
       if (typeof body.videoOn === "boolean") mediaPatch.videoOn = body.videoOn;
       if (typeof body.muted === "boolean") mediaPatch.muted = body.muted;
+      if (typeof body.screenOn === "boolean") mediaPatch.screenOn = body.screenOn;
       if (Object.keys(mediaPatch).length > 0) {
         const [row] = await db
           .update(callParticipants)
@@ -177,11 +178,12 @@ export const POST = withApi<{ id: string }>("calls:action", async ({ req, params
       return NextResponse.json({ ok: true, delivered: valid.length });
     }
 
-    /* ── мой медиастатус (камера/микрофон) ── */
+    /* ── мой медиастатус (камера/микрофон/демонстрация экрана) ── */
     case "state": {
       const patch: Partial<typeof callParticipants.$inferInsert> = { lastSeenAt: new Date() };
       if (typeof body.videoOn === "boolean") patch.videoOn = body.videoOn;
       if (typeof body.muted === "boolean") patch.muted = body.muted;
+      if (typeof body.screenOn === "boolean") patch.screenOn = body.screenOn;
       const updated = await db
         .update(callParticipants)
         .set(patch)

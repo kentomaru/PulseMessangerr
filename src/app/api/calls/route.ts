@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { db } from "@/db";
-import { calls, conversationMembers, users } from "@/db/schema";
+import { callParticipants, calls, conversationMembers, users } from "@/db/schema";
 import { and, eq, ne } from "drizzle-orm";
 import { isUuid, withApi } from "@/lib/api-helpers";
 import { normalizeKind, requireMember } from "@/lib/conversations";
@@ -29,6 +29,13 @@ export const POST = withApi("calls:start", async ({ req, me, log }) => {
   if (!conversationId || !isUuid(conversationId))
     return NextResponse.json({ error: "Чат не найден" }, { status: 404 });
 
+  // Медиастатус создателя/входящего (камера/микрофон) — раньше флаг videoOn
+  // здесь НЕ сохранялся: у автора видеозвонка плитка камеры не показывалась,
+  // хотя дорожка видео уже шла собеседникам («изображение не показывается»).
+  const mediaPatch: Partial<typeof callParticipants.$inferInsert> = {};
+  if (typeof body.videoOn === "boolean") mediaPatch.videoOn = body.videoOn;
+  if (typeof body.muted === "boolean") mediaPatch.muted = body.muted;
+
   const access = await requireMember(conversationId, me.id);
   if (!access) return NextResponse.json({ error: "Нет доступа" }, { status: 403 });
 
@@ -38,7 +45,15 @@ export const POST = withApi("calls:start", async ({ req, me, log }) => {
   await sweepStaleCalls([conversationId]);
   const existing = await findActiveCall(conversationId);
   if (existing) {
-    const updated = await joinRoom(existing, me.id);
+    let updated = await joinRoom(existing, me.id);
+    if (Object.keys(mediaPatch).length > 0) {
+      await db
+        .update(callParticipants)
+        .set(mediaPatch)
+        .where(and(eq(callParticipants.callId, existing.id), eq(callParticipants.userId, me.id)));
+      const fresh = await db.select().from(calls).where(eq(calls.id, existing.id)).limit(1);
+      if (fresh[0]) updated = fresh[0];
+    }
     log.info("Подключение к существующему звонку", { callId: updated.id, userId: me.id });
     return NextResponse.json({
       call: await buildCallState(updated, me.id),
@@ -80,6 +95,13 @@ export const POST = withApi("calls:start", async ({ req, me, log }) => {
     .returning();
 
   await joinRoom(call, me.id);
+  // публикуем медиастатус создателя (videoOn/muted из тела запроса)
+  if (Object.keys(mediaPatch).length > 0) {
+    await db
+      .update(callParticipants)
+      .set(mediaPatch)
+      .where(and(eq(callParticipants.callId, call.id), eq(callParticipants.userId, me.id)));
+  }
   const fresh = await db.select().from(calls).where(eq(calls.id, call.id)).limit(1).then((r) => r[0]);
 
   log.info("Звонок начат", {

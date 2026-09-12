@@ -3,7 +3,7 @@ import { db } from "@/db";
 import { conversationMembers, conversations, messages, users } from "@/db/schema";
 import { and, desc, eq, gt, inArray, isNull, ne, sql } from "drizzle-orm";
 import { publicUser } from "@/lib/auth";
-import { withApi } from "@/lib/api-helpers";
+import { isUuid, withApi } from "@/lib/api-helpers";
 import {
   findUsersByIds,
   memberItem,
@@ -93,8 +93,11 @@ export const GET = withApi("conversations", async ({ me }) => {
     const rows = allMembers.filter((r) => r.member.conversationId === conv.id);
     const peerRow = rows.find((r) => r.user.id !== me.id);
 
+    // «Избранное» — личный чат с самим собой: я в нём единственный участник
+    const isSaved = kind === "direct" && !peerRow && rows.length === 1 && rows[0].user.id === me.id;
+
     // В личном чате без собеседника делать нечего (аккаунт удалён / вышел)
-    if (kind === "direct" && !peerRow) continue;
+    if (kind === "direct" && !peerRow && !isSaved) continue;
 
     const peer: Peer | null = peerRow
       ? {
@@ -104,7 +107,15 @@ export const GET = withApi("conversations", async ({ me }) => {
             : null,
           typingAt: peerRow.member.typingAt ? new Date(peerRow.member.typingAt).toISOString() : null,
         }
-      : null;
+      : isSaved
+        ? {
+            ...publicUser(me),
+            lastReadAt: rows[0].member.lastReadAt
+              ? new Date(rows[0].member.lastReadAt).toISOString()
+              : null,
+            typingAt: null,
+          }
+        : null;
     const lastMessage = lastMessageByConv.get(conv.id) ?? null;
 
     result.push({
@@ -115,7 +126,12 @@ export const GET = withApi("conversations", async ({ me }) => {
       isPrivate: !!conv.isPrivate,
       memberCount: countByConv.get(conv.id) ?? rows.length,
       myRole: myRoleById.get(conv.id) ?? "member",
-      title: kind === "direct" ? (peer?.displayName ?? "Чат") : (conv.name?.trim() || (kind === "channel" ? "Канал" : "Группа")),
+      title:
+        isSaved
+          ? "Избранное"
+          : kind === "direct"
+            ? (peer?.displayName ?? "Чат")
+            : (conv.name?.trim() || (kind === "channel" ? "Канал" : "Группа")),
       peer: (peer ?? ({ displayName: "—" } as Peer)),
       members: rows.map((r) => memberItem(r.member, r.user)),
       lastMessage: lastMessage
@@ -130,6 +146,7 @@ export const GET = withApi("conversations", async ({ me }) => {
         : null,
       unreadCount: unreadByConv.get(conv.id) ?? 0,
       activeCall: activeCalls.get(conv.id) ?? null,
+      saved: isSaved,
     });
   }
 
@@ -202,8 +219,44 @@ export const POST = withApi("conversations:create", async ({ req, me, log }) => 
 
   /* ── Личный чат ── */
   const userId = String(body.userId ?? "");
-  if (!userId || userId === me.id)
+  if (!userId || !isUuid(userId))
     return NextResponse.json({ error: "Некорректный пользователь" }, { status: 400 });
+
+  /* ── «Избранное»: личный чат с самим собой (для сохранения сообщений) ── */
+  if (userId === me.id) {
+    // ищем существующий чат, где я единственный участник
+    const selfRows = await db
+      .select({ id: conversations.id })
+      .from(conversations)
+      .innerJoin(
+        conversationMembers,
+        eq(conversationMembers.conversationId, conversations.id),
+      )
+      .where(
+        and(
+          eq(conversations.kind, "direct"),
+          eq(conversationMembers.userId, me.id),
+          sql`not exists (select 1 from conversation_members m2 where m2.conversation_id = ${conversations.id} and m2.user_id <> ${me.id})`,
+        ),
+      )
+      .limit(1);
+    if (selfRows[0]) {
+      return NextResponse.json({
+        conversation: { id: selfRows[0].id, peer: publicUser(me), kind: "direct" as const, saved: true },
+      });
+    }
+    const [saved] = await db
+      .insert(conversations)
+      .values({ kind: "direct", isGroup: false, isPrivate: true, ownerId: me.id })
+      .returning();
+    await db
+      .insert(conversationMembers)
+      .values({ conversationId: saved.id, userId: me.id, role: "member" });
+    log.info("Создано «Избранное»", { conversationId: saved.id, userId: me.id });
+    return NextResponse.json({
+      conversation: { id: saved.id, peer: publicUser(me), kind: "direct" as const, saved: true },
+    });
+  }
 
   const peerRows = await db.select().from(users).where(eq(users.id, userId)).limit(1);
   const peer = peerRows[0];
