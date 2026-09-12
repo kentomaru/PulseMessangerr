@@ -52,6 +52,7 @@ import {
 import Avatar from "./Avatar";
 import WallpaperModal from "./WallpaperModal";
 import { api, ApiError, copyToClipboard, uploadFile } from "@/lib/api";
+import { audioConstraints } from "@/lib/audioSettings";
 import { EMOJI_CATEGORIES } from "@/lib/emojis";
 import { renderRichText } from "@/lib/richText";
 import {
@@ -145,6 +146,47 @@ type DraftFile = {
   preview: string | null;
 };
 
+/**
+ * Черновики живут ВНЕ компонента: раньше при переключении чатов ChatView
+ * размонтировался и недописанный текст + прикреплённые файлы бесследно
+ * пропадали («сообщения удаляются при переходе в другой чат»). Теперь они
+ * дожидаются пользователя; текст дополнительно переживает перезагрузку
+ * страницы (localStorage).
+ */
+type SavedDraft = { text: string; files: DraftFile[] };
+const draftStore = new Map<string, SavedDraft>();
+const TEXT_DRAFTS_KEY = "pulse_text_drafts_v1";
+
+function readTextDrafts(): Record<string, string> {
+  try {
+    const raw = localStorage.getItem(TEXT_DRAFTS_KEY);
+    const parsed = raw ? (JSON.parse(raw) as unknown) : {};
+    return parsed && typeof parsed === "object" ? (parsed as Record<string, string>) : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeTextDraft(convId: string, text: string): void {
+  try {
+    const all = readTextDrafts();
+    if (text.trim()) all[convId] = text;
+    else delete all[convId];
+    localStorage.setItem(TEXT_DRAFTS_KEY, JSON.stringify(all));
+  } catch {
+    /* переполнение квоты не критично — черновик останется в памяти */
+  }
+}
+
+function getStoredDraft(convId: string): SavedDraft {
+  let d = draftStore.get(convId);
+  if (!d) {
+    d = { text: readTextDrafts()[convId] ?? "", files: [] };
+    draftStore.set(convId, d);
+  }
+  return d;
+}
+
 type ContextMenuState = {
   x: number;
   y: number;
@@ -196,7 +238,8 @@ export default function ChatView({
   const [peerState, setPeerState] = useState<Peer | null>(peer);
   const [activeCall, setActiveCall] = useState<CallSummary | null>(null);
   const [wallpaper, setWallpaper] = useState<string | null>(null);
-  const [text, setText] = useState("");
+  // Черновик восстанавливается из общего хранилища (не теряется при смене чата).
+  const [text, setText] = useState(() => getStoredDraft(conversationId).text);
   const [sending, setSending] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -206,10 +249,12 @@ export default function ChatView({
   const [replyTo, setReplyTo] = useState<ChatMessage | null>(null);
   const [editing, setEditing] = useState<ChatMessage | null>(null);
   const [highlight, setHighlight] = useState<string | null>(null);
-  const [draftFiles, setDraftFiles] = useState<DraftFile[]>([]);
+  const [draftFiles, setDraftFiles] = useState<DraftFile[]>(() => getStoredDraft(conversationId).files);
   const [dragOver, setDragOver] = useState(false);
   const [ctxMenu, setCtxMenu] = useState<ContextMenuState | null>(null);
   const [forwarding, setForwarding] = useState<ChatMessage | null>(null);
+  /** Сообщение, ожидающее подтверждения удаления (защита от случайных кликов). */
+  const [confirmDelete, setConfirmDelete] = useState<ChatMessage | null>(null);
   const [noteRecorder, setNoteRecorder] = useState(false);
   const [voiceRecActive, setVoiceRecActive] = useState(false);
   const [recSecs, setRecSecs] = useState(0);
@@ -254,11 +299,27 @@ export default function ChatView({
     el.scrollTop = top;
   }, []);
 
+  /** Отпечаток последнего ответа — не перерисовываем ленту, если всё то же
+      (опрос каждые 2.5 с иначе каждый раз гонял весь список сообщений). */
+  const msgFingerprintRef = useRef("");
+
   const load = useCallback(async () => {
     try {
       const d = await api<MessageLoad>(`/api/messages?conversationId=${conversationId}`);
-      setMessages(d.messages);
-      setPinned(d.pinned ?? []);
+      // Сравниваем с прошлым снимком: если ничего не поменялось, не трогаем
+      // state — это убирает лишние перерисовки и «подтормаживание» интерфейса.
+      let fp = "";
+      try {
+        fp = JSON.stringify(d.messages);
+      } catch {
+        fp = `n${d.messages.length}:${Date.now()}`;
+      }
+      const changed = fp !== msgFingerprintRef.current;
+      msgFingerprintRef.current = fp;
+      if (changed) {
+        setMessages(d.messages);
+        setPinned(d.pinned ?? []);
+      }
       setMeta(d.conversation);
       setMembers(d.members);
       setActiveCall(d.activeCall);
@@ -297,6 +358,7 @@ export default function ChatView({
     loadedRef.current = false;
     setLoaded(false);
     lastCount.current = 0;
+    msgFingerprintRef.current = "";
     setReplyTo(null);
     setEditing(null);
     setUnreadBefore(null);
@@ -310,13 +372,17 @@ export default function ChatView({
     return () => clearInterval(t);
   }, [load]);
 
-  // при уходе из чата — прибираем черновики и записи
+  // Черновик (текст + файлы) держим в общем хранилище, чтобы при переключении
+  // чатов он не пропадал. Синхронизируем на каждое изменение.
+  useEffect(() => {
+    draftStore.set(conversationId, { text, files: draftFiles });
+    writeTextDraft(conversationId, text);
+  }, [conversationId, text, draftFiles]);
+
+  // при уходе из чата — останавливаем запись голоса; черновики НЕ трогаем,
+  // они дождутся пользователя в draftStore.
   useEffect(() => {
     return () => {
-      setDraftFiles((ds) => {
-        for (const d of ds) if (d.preview) URL.revokeObjectURL(d.preview);
-        return [];
-      });
       voiceRef.current?.stream.getTracks().forEach((t) => t.stop());
       voiceRef.current = null;
     };
@@ -482,7 +548,8 @@ export default function ChatView({
             continue;
           }
           next.push({
-            id: `d${++draftId.current}`,
+            // уникальный даже после восстановления черновика из другого маунта
+            id: `d${Date.now().toString(36)}_${++draftId.current}`,
             file: f,
             preview: f.type.startsWith("image/") ? URL.createObjectURL(f) : null,
           });
@@ -511,7 +578,8 @@ export default function ChatView({
       return;
     }
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      // Учитываем настройки звука (шумоподавление/эхо/гейт), если пользователь их задавал
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints() });
       const mime = pickRecorderMime(["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg;codecs=opus"]);
       const recorder = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
       const chunks: Blob[] = [];
@@ -579,6 +647,11 @@ export default function ChatView({
       notify(e instanceof Error ? e.message : "Не удалось удалить");
     }
   };
+
+  /** Удаление — только после подтверждения (защита от случайных кликов). */
+  const requestDelete = useCallback((message: ChatMessage) => {
+    setConfirmDelete(message);
+  }, []);
 
   const toggleReaction = async (messageId: string, emoji: string) => {
     // оптимистично — опрос подтвердит
@@ -1203,7 +1276,7 @@ export default function ChatView({
                       canPin={canPinMessage(m)}
                       highlighted={highlight === m.id}
                       onOpenImage={setLightbox}
-                      onDelete={() => void removeMessage(m.id)}
+                      onDelete={() => requestDelete(m)}
                       onReply={() => startReply(m)}
                       onEdit={() => startEdit(m)}
                       onPin={() => void togglePin(m)}
@@ -1529,6 +1602,21 @@ export default function ChatView({
         )}
       </AnimatePresence>
 
+      {/* Подтверждение удаления сообщения */}
+      <AnimatePresence>
+        {confirmDelete && (
+          <ConfirmDeleteModal
+            key="confirm-delete"
+            message={confirmDelete}
+            onCancel={() => setConfirmDelete(null)}
+            onConfirm={() => {
+              void removeMessage(confirmDelete.id);
+              setConfirmDelete(null);
+            }}
+          />
+        )}
+      </AnimatePresence>
+
       {/* Контекстное меню сообщения (ПКМ / долгое нажатие) */}
       <AnimatePresence>
         {ctxMenu && (
@@ -1561,7 +1649,7 @@ export default function ChatView({
               setCtxMenu(null);
             }}
             onDelete={() => {
-              void removeMessage(ctxMenu.message.id);
+              requestDelete(ctxMenu.message);
               setCtxMenu(null);
             }}
           />
@@ -2651,6 +2739,74 @@ function CallLogBubble({
         )}
       </div>
     </div>
+  );
+}
+
+/* ─────────────────── подтверждение удаления сообщения ─────────────────── */
+
+function ConfirmDeleteModal({
+  message,
+  onConfirm,
+  onCancel,
+}: {
+  message: ChatMessage;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  const preview = (() => {
+    switch (message.type) {
+      case "image":
+        return "🖼 Фото";
+      case "file":
+        return "📎 Файл";
+      case "voice":
+        return "🎤 Голосовое сообщение";
+      case "video_note":
+        return "🎥 Видеосообщение";
+      default: {
+        const t = message.content.trim();
+        return t.length > 90 ? `${t.slice(0, 90)}…` : t;
+      }
+    }
+  })();
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      onClick={onCancel}
+      className="fixed inset-0 z-[85] grid place-items-center bg-black/70 p-4 backdrop-blur-sm"
+    >
+      <motion.div
+        initial={{ opacity: 0, scale: 0.94, y: 12 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        exit={{ opacity: 0, scale: 0.95, y: 8 }}
+        onClick={(e) => e.stopPropagation()}
+        className="glass-strong w-full max-w-sm rounded-3xl p-6 text-center shadow-2xl"
+      >
+        <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-rose-500/15">
+          <Trash2 className="h-5 w-5 text-rose-300" />
+        </div>
+        <h3 className="font-display text-lg font-bold">Удалить сообщение?</h3>
+        {preview && <p className="mx-auto mt-2 line-clamp-2 max-w-xs text-sm text-white/45">{preview}</p>}
+        <p className="mt-1.5 text-xs text-white/35">Это действие нельзя отменить</p>
+        <div className="mt-5 flex gap-2.5">
+          <button
+            onClick={onCancel}
+            className="glass flex-1 rounded-2xl py-3 text-sm font-medium text-white/80 transition-colors hover:bg-white/10"
+          >
+            Отмена
+          </button>
+          <button
+            onClick={onConfirm}
+            className="flex-1 rounded-2xl bg-rose-500 py-3 text-sm font-semibold text-white transition-transform hover:scale-[1.02] active:scale-95"
+          >
+            Удалить
+          </button>
+        </div>
+      </motion.div>
+    </motion.div>
   );
 }
 

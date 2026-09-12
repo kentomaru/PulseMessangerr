@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { CheckCircle2 } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
+import { messagePreview } from "@/lib/format";
 import { playNotifySound } from "@/lib/notify";
 import type { ConversationListItem, PublicUser, StoryGroup } from "@/lib/types";
 import { useCallController } from "@/lib/useCallController";
@@ -42,6 +43,16 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
   /** Звук уведомлений (localStorage, вкл по умолчанию). */
   const [soundOn, setSoundOn] = useState(true);
+  /** Ширина панели чатов — меняется перетаскиванием разделителя (десктоп). */
+  const [sidebarW, setSidebarW] = useState<number>(() => {
+    try {
+      const v = Number(localStorage.getItem("pulse_sidebar_w"));
+      return Number.isFinite(v) && v >= 280 && v <= 640 ? v : 380;
+    } catch {
+      return 380;
+    }
+  });
+  const resizingRef = useRef(false);
   const toastId = useRef(0);
   const unauthorizedRef = useRef(false);
   const activeIdRef = useRef<string | null>(null);
@@ -64,10 +75,22 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
   const handleUnauthorizedRef = useRef(handleUnauthorized);
   handleUnauthorizedRef.current = handleUnauthorized;
 
+  const convFpRef = useRef("");
   const loadConversations = useCallback(async () => {
     try {
       const d = await api<{ conversations: ConversationListItem[] }>("/api/conversations");
-      setConversations(d.conversations);
+      // Не перерисовываем список, если ничего не изменилось (опрос каждые 4 с):
+      // убирает «подтормаживание» интерфейса на ровном месте.
+      let fp = "";
+      try {
+        fp = JSON.stringify(d.conversations);
+      } catch {
+        fp = `n${d.conversations.length}:${Date.now()}`;
+      }
+      if (fp !== convFpRef.current) {
+        convFpRef.current = fp;
+        setConversations(d.conversations);
+      }
     } catch (e) {
       if (e instanceof ApiError && e.status === 401) handleUnauthorizedRef.current();
     }
@@ -97,9 +120,20 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
     };
   }, [loadConversations, loadStories]);
 
-  // Звук уведомлений: настройка из localStorage
+  /** Звук входящего звонка (рингтон). */
+  const [callSoundOn, setCallSoundOn] = useState(true);
+  /** Браузерные уведомления о новых сообщениях. */
+  const [notifyOn, setNotifyOn] = useState(false);
+
+  // Настройки уведомлений из localStorage
   useEffect(() => {
     setSoundOn(localStorage.getItem("pulse_sound") !== "off");
+    setCallSoundOn(localStorage.getItem("pulse_call_sound") !== "off");
+    setNotifyOn(
+      localStorage.getItem("pulse_notify") === "on" &&
+        typeof Notification !== "undefined" &&
+        Notification.permission === "granted",
+    );
   }, []);
   useEffect(() => {
     soundOnRef.current = soundOn;
@@ -111,6 +145,49 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
       localStorage.setItem("pulse_sound", next ? "on" : "off");
       return next;
     });
+  }, []);
+
+  const toggleCallSound = useCallback(() => {
+    setCallSoundOn((v) => {
+      const next = !v;
+      localStorage.setItem("pulse_call_sound", next ? "on" : "off");
+      return next;
+    });
+  }, []);
+
+  const toggleNotify = useCallback(() => {
+    setNotifyOn((v) => {
+      const next = !v;
+      if (next && typeof Notification !== "undefined" && Notification.permission === "default") {
+        // Просим разрешение у браузера; если откажут — не включаем.
+        void Notification.requestPermission().then((perm) => {
+          const ok = perm === "granted";
+          localStorage.setItem("pulse_notify", ok ? "on" : "off");
+          setNotifyOn(ok);
+          if (!ok) notify("Браузер не разрешил уведомления — проверьте настройки сайта");
+        });
+        return v; // фактическое включение — после ответа на запрос
+      }
+      localStorage.setItem("pulse_notify", next ? "on" : "off");
+      return next;
+    });
+  }, [notify]);
+
+  /** Браузерное уведомление (всплывает поверх других окон). */
+  const pushBrowserNotification = useCallback((title: string, body: string) => {
+    try {
+      if (typeof Notification === "undefined") return;
+      if (localStorage.getItem("pulse_notify") !== "on") return;
+      if (Notification.permission !== "granted") return;
+      const n = new Notification(title, { body, icon: "/icons/icon-192.png", tag: `pulse-${Date.now()}` });
+      n.onclick = () => {
+        window.focus();
+        n.close();
+      };
+      setTimeout(() => n.close(), 7_000);
+    } catch {
+      /* уведомления недоступны — тихо пропускаем */
+    }
   }, []);
 
   // Счётчик непрочитанных в заголовке вкладки
@@ -126,20 +203,36 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
   useEffect(() => {
     const prev = lastMsgIdsRef.current;
     let beep = false;
+    let notif: { title: string; body: string } | null = null;
     for (const c of conversations) {
       const lm = c.lastMessage;
       const old = prev.get(c.id);
-      const isNew = !!lm && !!old && lm.id !== old && lm.senderId !== me.id;
-      if (isNew && (c.id !== activeIdRef.current || document.hidden)) beep = true;
+      // Диалог мог появиться в списке впервые сразу с чужим сообщением
+      // (написал новый человек) — это тоже «новое сообщение», бип нужен.
+      // От первоначальной загрузки список защищает firstConvLoadRef ниже.
+      const isNew = !!lm && lm.id !== old && lm.senderId !== me.id;
+      if (isNew && (c.id !== activeIdRef.current || document.hidden)) {
+        beep = true;
+        // Для браузерного уведомления берём последнее новое сообщение
+        const sender = lm.senderId === me.id ? "Вы" : (lm.senderName ?? "Новое сообщение");
+        notif = {
+          title: c.kind === "direct" ? sender : `${sender} · ${c.title}`,
+          body: messagePreview(lm.type, lm.content),
+        };
+      }
       if (lm) prev.set(c.id, lm.id);
     }
     // первый опрос — просто запоминаем id, не пиликаем
     if (firstConvLoadRef.current) {
       firstConvLoadRef.current = false;
       beep = false;
+      notif = null;
     }
-    if (beep && soundOnRef.current) playNotifySound();
-  }, [conversations, me.id]);
+    if (beep) {
+      if (soundOnRef.current) playNotifySound();
+      if (notif) pushBrowserNotification(notif.title, notif.body);
+    }
+  }, [conversations, me.id, pushBrowserNotification]);
 
   const activeConv = conversations.find((c) => c.id === activeId) ?? null;
 
@@ -274,16 +367,54 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
     return Array.from(map.values()).slice(0, 60);
   }, [conversations, me.id]);
 
+  /** Перетаскивание разделителя: ширина панели чатов. */
+  const onResizeDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    resizingRef.current = true;
+    try {
+      (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    } catch {
+      /* ignore */
+    }
+  };
+  const onResizeMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!resizingRef.current) return;
+    setSidebarW(Math.min(640, Math.max(280, e.clientX)));
+  };
+  const onResizeUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!resizingRef.current) return;
+    resizingRef.current = false;
+    try {
+      (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
+    } catch {
+      /* ignore */
+    }
+    setSidebarW((w) => {
+      try {
+        localStorage.setItem("pulse_sidebar_w", String(w));
+      } catch {
+        /* ignore */
+      }
+      return w;
+    });
+  };
+
   return (
     <main className="relative z-10 flex h-dvh overflow-hidden">
-      <div className={`${activeId ? "hidden md:flex" : "flex"} w-full shrink-0 md:w-[380px]`}>
+      <div
+        className={`${activeId ? "hidden md:flex" : "flex"} w-full shrink-0 md:w-[var(--sbw,380px)]`}
+        style={{ "--sbw": `${sidebarW}px` } as React.CSSProperties}
+      >
         <Sidebar
           me={me}
           conversations={conversations}
           activeId={activeId}
           storyGroups={storyGroups}
           soundOn={soundOn}
+          callSoundOn={callSoundOn}
+          notifyOn={notifyOn}
           onToggleSound={toggleSound}
+          onToggleCallSound={toggleCallSound}
+          onToggleNotify={toggleNotify}
           onSelect={setActiveId}
           onOpenProfile={() => setShowProfile(true)}
           onOpenChat={openConversationWith}
@@ -295,6 +426,19 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
           onOpenSaved={() => void openSaved()}
           onJoinByToken={(token) => void joinByToken(token)}
         />
+      </div>
+
+      {/* Разделитель: перетащите, чтобы изменить ширину панели чатов (десктоп) */}
+      <div
+        onPointerDown={onResizeDown}
+        onPointerMove={onResizeMove}
+        onPointerUp={onResizeUp}
+        onPointerCancel={onResizeUp}
+        style={{ touchAction: "none" }}
+        className="group relative hidden w-2 shrink-0 cursor-col-resize md:block"
+        title="Потяните, чтобы изменить ширину панели"
+      >
+        <div className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-white/5 transition-colors group-hover:w-[3px] group-hover:bg-violet-400/50" />
       </div>
 
       <div className={`${activeId ? "flex" : "hidden md:flex"} min-w-0 flex-1`}>
@@ -454,6 +598,8 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
         onInvite={callCtl.inviteUsers}
         onViewUser={(u) => setViewUser(u)}
         notify={notify}
+        onApplyAudioSettings={(s) => void callCtl.applyAudioSettings(s)}
+        micLevelRef={callCtl.micLevelRef}
       />
 
       {/* toasts */}

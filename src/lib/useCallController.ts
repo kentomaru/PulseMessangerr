@@ -20,11 +20,20 @@
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiError } from "@/lib/api";
+import { ensureAudioUnlocked, getAudioContext } from "@/lib/notify";
+import {
+  audioConstraints,
+  loadAudioSettings,
+  saveAudioSettings,
+  type AudioSettings,
+} from "@/lib/audioSettings";
 import type {
   CallMedia,
+  CallParticipantInfo,
   CallState,
   IncomingCall,
   PublicUser,
+  SignalInfo,
 } from "@/lib/types";
 
 /**
@@ -84,12 +93,19 @@ export type CallSession = {
  */
 function startRingtone(): { stop: () => void } | null {
   try {
-    const Ctx =
-      window.AudioContext ??
-      (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-    if (!Ctx) return null;
-    const ctx = new Ctx();
-    void ctx.resume().catch(() => {});
+    // Рингтон можно выключить в настройках уведомлений (колокольчик в сайдбаре).
+    try {
+      if (localStorage.getItem("pulse_call_sound") === "off") return null;
+    } catch {
+      /* localStorage недоступен — играем как обычно */
+    }
+    // Используем ОБЩИЙ аудиоконтекст приложения (см. lib/notify): он один раз
+    // разблокируется жестом пользователя и не закрывается. Раньше рингтон
+    // создавал свой контекст, который без жеста висел в «suspended», и входящий
+    // звонок звонил молча.
+    ensureAudioUnlocked();
+    const ctx = getAudioContext();
+    if (!ctx) return null;
     let stopped = false;
 
     const beep = (freq: number, at: number, dur: number) => {
@@ -107,7 +123,12 @@ function startRingtone(): { stop: () => void } | null {
     };
 
     const cycle = () => {
-      if (stopped) return;
+      if (stopped || ctx.state === "closed") return;
+      // Вкладка могла долго висеть в фоне — пробуем разморозить перед циклом.
+      if (ctx.state === "suspended") {
+        void ctx.resume().catch(() => {});
+        return;
+      }
       const t0 = ctx.currentTime + 0.02;
       beep(880, t0, 0.35);
       beep(660, t0 + 0.42, 0.35);
@@ -119,7 +140,7 @@ function startRingtone(): { stop: () => void } | null {
       stop: () => {
         stopped = true;
         clearInterval(timer);
-        void ctx.close().catch(() => {});
+        // Общий контекст НЕ закрываем — он нужен уведомлениям.
       },
     };
   } catch {
@@ -158,6 +179,20 @@ export function useCallController(
   const busyRef = useRef(false);
   const ringtoneRef = useRef<{ stop: () => void } | null>(null);
   const syncingRef = useRef(false);
+  /**
+   * Очередь входящих сигналов (offer/answer/ice). Сервер помечает сигналы
+   * прочитанными в момент выдачи, поэтому их нельзя просто выбросить, если
+   * прошлый syncMesh ещё крутится: складываем сюда и обрабатываем в следующем
+   * проходе — без этого терялись answer/ICE и соединение могло не собраться.
+   */
+  const signalQueueRef = useRef<SignalInfo[]>([]);
+  /** Зеркало muted для VOX-гейта (чтобы ручной мьют имел приоритет). */
+  const mutedRef = useRef(false);
+  /** Текущий уровень микрофона (0–100) — индикатор в панели настроек звука. */
+  const micLevelRef = useRef(0);
+  /** rAF-цикл VOX/уровня и его аудио-узлы. */
+  const gateRafRef = useRef<number | null>(null);
+  const gateNodesRef = useRef<{ src: MediaStreamAudioSourceNode; analyser: AnalyserNode } | null>(null);
   const meIdRef = useRef(meId);
   const notifyRef = useRef(notify);
   const unauthorizedRef = useRef(onUnauthorized);
@@ -168,6 +203,7 @@ export function useCallController(
   endedRef.current = onCallEnded;
   sessionRef.current = session;
   incomingRef.current = incoming;
+  mutedRef.current = muted;
 
   /* ─────────────────────────── утилиты ─────────────────────────── */
 
@@ -196,6 +232,20 @@ export function useCallController(
   );
 
   const cleanup = useCallback(() => {
+    // Останавливаем VOX-гейт и индикатор уровня микрофона
+    if (gateRafRef.current !== null) {
+      cancelAnimationFrame(gateRafRef.current);
+      gateRafRef.current = null;
+    }
+    try {
+      gateNodesRef.current?.src.disconnect();
+      gateNodesRef.current?.analyser.disconnect();
+    } catch {
+      /* уже отключены */
+    }
+    gateNodesRef.current = null;
+    micLevelRef.current = 0;
+
     linksRef.current.forEach((l) => {
       try {
         l.pc.close();
@@ -215,6 +265,7 @@ export function useCallController(
     incomingRef.current = null;
     busyRef.current = false;
     syncingRef.current = false;
+    signalQueueRef.current = [];
     setSession(null);
     setIncoming(null);
     setSeconds(0);
@@ -258,8 +309,12 @@ export function useCallController(
       const remote = stream;
 
       pc.ontrack = (e) => {
-        const [track] = e.streams[0]?.getTracks() ?? [];
-        const t = track ?? e.track;
+        // ВАЖНО: берём именно e.track — дорожку ЭТОГО события. Раньше брали
+        // e.streams[0].getTracks()[0], но к моменту второго события (видео)
+        // в потоке уже лежит аудио, и оно всегда оказывалось «первым» —
+        // видеодорожка молча отбрасывалась. Итог: собеседник слышал звук,
+        // но не видел ни камеру, ни демонстрацию экрана.
+        const t = e.track;
         if (t && !remote.getTracks().some((x) => x.id === t.id)) remote.addTrack(t);
         publishStreams();
       };
@@ -304,6 +359,9 @@ export function useCallController(
     async (state: CallState) => {
       if (syncingRef.current) return;
       syncingRef.current = true;
+      // Сервер уже пометил выданные сигналы прочитанными — обрабатываем всё,
+      // что накопилось в очереди (включая недообработанное прошлым проходом).
+      const signals = signalQueueRef.current.splice(0, signalQueueRef.current.length);
       try {
         const me = meIdRef.current;
         const callId = state.call.id;
@@ -349,8 +407,8 @@ export function useCallController(
             }
           }
 
-          // 2) Входящие сигналы (answer / ice) от этого участника
-          for (const sig of state.signals.filter((s) => s.from === p.userId)) {
+          // 2) Входящие сигналы (answer / ice / offer) от этого участника
+          for (const sig of signals.filter((s) => s.from === p.userId)) {
             try {
               if (sig.kind === "answer" && typeof sig.payload?.sdp === "string") {
                 if (pc.signalingState === "have-local-offer") {
@@ -382,21 +440,34 @@ export function useCallController(
             }
           }
 
-          // 3) Моя очередь предлагать — создаём/обновляем оффер
-          if (iShouldOffer(p.userId)) {
-            // Ответ потерялся (сеть/вкладка спала) — откатываемся и пробуем снова,
-            // иначе соединение навсегда останется в have-local-offer без звука.
-            if (
-              link.offering &&
-              link.offeringSince !== null &&
-              Date.now() - link.offeringSince > OFFER_RETRY_MS &&
-              pc.signalingState === "have-local-offer"
-            ) {
-              await pc.setLocalDescription({ type: "rollback" }).catch(() => {});
+          // 3) Ответ на НАШ оффер потерялся (сеть моргнула, вкладка спала) —
+          // откатываемся и отправляем оффер заново. Проверяем для ОБЕИХ сторон:
+          // при ренеготиации (включили камеру/экран) оффер шлёт и «большая»
+          // сторона, и раньше она навсегда оставалась в have-local-offer.
+          if (
+            link.offering &&
+            link.offeringSince !== null &&
+            Date.now() - link.offeringSince > OFFER_RETRY_MS &&
+            pc.signalingState === "have-local-offer"
+          ) {
+            await pc.setLocalDescription({ type: "rollback" }).catch(() => {});
+            link.offering = false;
+            link.offeringSince = null;
+            // Сразу отправляем оффер заново — не дожидаясь следующего условия.
+            try {
+              link.offering = true;
+              link.offeringSince = Date.now();
+              const offer = await pc.createOffer();
+              await pc.setLocalDescription(offer);
+              await sendSignal(callId, p.userId, "offer", { type: offer.type, sdp: offer.sdp });
+            } catch {
               link.offering = false;
               link.offeringSince = null;
             }
+          }
 
+          // 4) Моя очередь предлагать — создаём/обновляем оффер
+          if (iShouldOffer(p.userId)) {
             const needOffer =
               !existing || (pc.signalingState === "stable" && !pc.remoteDescription);
             if (needOffer && !link.offering) {
@@ -449,6 +520,10 @@ export function useCallController(
       setSession(next);
       setIncoming(null);
       incomingRef.current = null;
+      // Сигналы сервер выдаёт ровно один раз (помечает прочитанными) —
+      // складываем их в очередь ДО запуска синхронизации, чтобы они не
+      // потерялись, даже если прошлый проход ещё занят.
+      if (state.signals.length > 0) signalQueueRef.current.push(...state.signals);
       void syncMesh(state);
     },
     [cleanup, syncMesh],
@@ -457,18 +532,27 @@ export function useCallController(
   /* ─────────────────────── вход в комнату ─────────────────────── */
 
   const acquireMedia = useCallback(async (media: CallMedia): Promise<MediaStream> => {
+    // Шумо-/эхоподавление и автоусиление — из настроек звука (пункты
+    // «шумоподавление», «порог активации голоса» включаются в панели звонка).
+    const audio = audioConstraints();
     try {
-      return await navigator.mediaDevices.getUserMedia({ audio: true, video: media === "video" });
+      return await navigator.mediaDevices.getUserMedia({ audio, video: media === "video" });
     } catch (err) {
       if (media === "video") {
         // Камеры может не быть — продолжаем хотя бы с аудио
         try {
-          const audioOnly = await navigator.mediaDevices.getUserMedia({ audio: true });
+          const audioOnly = await navigator.mediaDevices.getUserMedia({ audio });
           notifyRef.current("Камера недоступна — переключаемся на аудио");
           return audioOnly;
         } catch {
           /* упадём ниже */
         }
+      }
+      // Некоторые браузеры не знают отдельные ограничения — пробуем просто аудио
+      try {
+        return await navigator.mediaDevices.getUserMedia({ audio: true, video: media === "video" });
+      } catch {
+        /* упадём ниже */
       }
       throw err;
     }
@@ -492,6 +576,9 @@ export function useCallController(
         const videoOn = stream.getVideoTracks().some((t) => t.enabled);
         setCameraOn(videoOn);
         setMuted(false);
+        mutedRef.current = false;
+        // VOX-гейт и индикатор уровня микрофона
+        restartVoiceGate();
 
         let state: CallState;
         if (opts.callId) {
@@ -750,15 +837,36 @@ export function useCallController(
 
   /* ─────────────────────── медиа ─────────────────────── */
 
+  /**
+   * Оптимистично обновить МОЙ медиастатус в списке участников, не дожидаясь
+   * следующего опроса комнаты (1+ с). Иначе иконка «микрофон выкл/вкл»
+   * переключалась с заметной задержкой («статус долго обновляется»).
+   */
+  const patchMyMediaState = useCallback(
+    (patch: Partial<Pick<CallParticipantInfo, "muted" | "videoOn" | "screenOn">>) => {
+      const s = sessionRef.current;
+      if (!s) return;
+      const me = meIdRef.current;
+      const next: CallSession = {
+        ...s,
+        participants: s.participants.map((p) => (p.userId === me ? { ...p, ...patch } : p)),
+      };
+      sessionRef.current = next;
+      setSession(next);
+    },
+    [],
+  );
+
   const toggleMute = useCallback(() => {
     setMuted((m) => {
       const next = !m;
       localStreamRef.current?.getAudioTracks().forEach((t) => (t.enabled = !next));
+      patchMyMediaState({ muted: next });
       const s = sessionRef.current;
       if (s) void api(`/api/calls/${s.id}`, { method: "POST", body: JSON.stringify({ action: "state", muted: next }) }).catch(() => {});
       return next;
     });
-  }, []);
+  }, [patchMyMediaState]);
 
   /**
    * Повторное согласование со всеми: нужно, когда изменился состав дорожек
@@ -782,6 +890,137 @@ export function useCallController(
       }
     }
   }, [sendSignal]);
+
+  /* ─────────── порог активации голоса (VOX) + уровень микрофона ─────────── */
+
+  /**
+   * Запускает (перезапускает) анализатор микрофона:
+   *  — отдаёт текущий уровень (для индикатора в настройках);
+   *  — при пороге > 0 работает как VOX-гейт: пока тише порога, дорожка
+   *    «закрыта» (собеседники не слышат фон), голос открывается мгновенно.
+   * Ручной мьют всегда в приоритете.
+   */
+  const restartVoiceGate = useCallback(() => {
+    if (gateRafRef.current !== null) {
+      cancelAnimationFrame(gateRafRef.current);
+      gateRafRef.current = null;
+    }
+    try {
+      gateNodesRef.current?.src.disconnect();
+      gateNodesRef.current?.analyser.disconnect();
+    } catch {
+      /* уже отключены */
+    }
+    gateNodesRef.current = null;
+    micLevelRef.current = 0;
+
+    const track = localStreamRef.current?.getAudioTracks()[0];
+    if (!track) return;
+    const ctx = getAudioContext();
+    if (!ctx) return;
+    try {
+      const src = ctx.createMediaStreamSource(new MediaStream([track]));
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 1024;
+      src.connect(analyser);
+      gateNodesRef.current = { src, analyser };
+
+      const data = new Uint8Array(analyser.fftSize);
+      let belowSince = 0;
+      let open = true;
+
+      const loop = () => {
+        gateRafRef.current = requestAnimationFrame(loop);
+        analyser.getByteTimeDomainData(data);
+        let sum = 0;
+        for (let i = 0; i < data.length; i++) {
+          const v = (data[i] - 128) / 128;
+          sum += v * v;
+        }
+        const rms = Math.sqrt(sum / data.length); // 0..1
+        micLevelRef.current = Math.min(100, Math.round(rms * 400));
+
+        const gate = loadAudioSettings().voiceGate;
+        if (gate <= 0 || mutedRef.current) {
+          belowSince = 0;
+          // VOX выключен (или ручной мьют): не трогаем дорожку, кроме случая,
+          // когда гейт успел её закрыть до выключения.
+          if (gate <= 0 && !mutedRef.current && !track.enabled && !track.muted) {
+            track.enabled = true;
+          }
+          return;
+        }
+
+        const threshold = (gate / 100) * 0.06;
+        if (rms >= threshold * 1.15) {
+          // Голос появился — открываем сразу, чтобы не «съесть» начало фразы.
+          if (!open) {
+            open = true;
+            track.enabled = true;
+          }
+          belowSince = 0;
+        } else if (rms < threshold) {
+          if (belowSince === 0) belowSince = performance.now();
+          // Закрываем только после короткой паузы — чтобы не резать окончания слов.
+          if (open && performance.now() - belowSince > 350) {
+            open = false;
+            track.enabled = false;
+          }
+        }
+      };
+      gateRafRef.current = requestAnimationFrame(loop);
+    } catch {
+      /* нет WebAudio — звонок работает без VOX */
+    }
+  }, []);
+
+  /**
+   * Применить новые настройки звука прямо во время звонка: микрофон
+   * перезахватывается с новыми ограничениями (шумоподавление и т.д.), дорожка
+   * прозрачно подменяется у всех участников (replaceTrack) — звонок не рвётся.
+   */
+  const applyAudioSettings = useCallback(
+    async (next: AudioSettings) => {
+      saveAudioSettings(next);
+      const stream = localStreamRef.current;
+      if (!stream) return;
+      try {
+        const fresh = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            noiseSuppression: next.noiseSuppression,
+            echoCancellation: next.echoCancellation,
+            autoGainControl: next.autoGainControl,
+          },
+        });
+        const [newTrack] = fresh.getAudioTracks();
+        if (!newTrack) throw new Error("no audio track");
+        const oldTrack = stream.getAudioTracks()[0];
+        // Сохраняем текущее состояние мьюта на новой дорожке
+        newTrack.enabled = oldTrack ? oldTrack.enabled : !mutedRef.current;
+        if (oldTrack) {
+          stream.removeTrack(oldTrack);
+          oldTrack.stop();
+        }
+        stream.addTrack(newTrack);
+        let addedSomewhere = false;
+        for (const l of linksRef.current.values()) {
+          const sender = l.pc.getSenders().find((x) => x.track?.kind === "audio");
+          if (sender) {
+            void sender.replaceTrack(newTrack).catch(() => {});
+          } else {
+            l.pc.addTrack(newTrack, stream);
+            addedSomewhere = true;
+          }
+        }
+        if (addedSomewhere) void renegotiateAll();
+        setStreamTick((v) => v + 1);
+        restartVoiceGate();
+      } catch {
+        notifyRef.current("Не удалось применить настройки звука");
+      }
+    },
+    [renegotiateAll, restartVoiceGate],
+  );
 
   const toggleCamera = useCallback(async () => {
     const s = sessionRef.current;
@@ -809,6 +1048,8 @@ export function useCallController(
     setCameraOn((on) => {
       const next = !on;
       localStreamRef.current?.getVideoTracks().forEach((t) => (t.enabled = next));
+      // Мгновенно показываем новый статус в списке участников (сервер догонит опросом)
+      patchMyMediaState({ videoOn: next });
       void api(`/api/calls/${s.id}`, {
         method: "POST",
         body: JSON.stringify({ action: "state", videoOn: next }),
@@ -818,7 +1059,7 @@ export function useCallController(
 
     // Сообщаем остальным, что состав дорожек изменился
     void renegotiateAll();
-  }, [cameraOn, renegotiateAll]);
+  }, [cameraOn, renegotiateAll, patchMyMediaState]);
 
   /* ─────────────────────── демонстрация экрана ─────────────────────── */
 
@@ -830,6 +1071,8 @@ export function useCallController(
     setScreenSharing(false);
     setStreamTick((v) => v + 1);
     stream?.getTracks().forEach((t) => t.stop());
+    // Статус «демонстрация выключена» — сразу, без ожидания опроса сервера
+    patchMyMediaState({ screenOn: false });
 
     // возвращаем камеру (если включена) или пустую дорожку
     const cameraTrack = localStreamRef.current?.getVideoTracks()[0] ?? null;
@@ -842,7 +1085,7 @@ export function useCallController(
         method: "POST",
         body: JSON.stringify({ action: "state", screenOn: false }),
       }).catch(() => {});
-  }, []);
+  }, [patchMyMediaState]);
 
   const stopScreenShareRef = useRef(stopScreenShare);
   stopScreenShareRef.current = stopScreenShare;
@@ -891,6 +1134,8 @@ export function useCallController(
 
       setScreenSharing(true);
       setStreamTick((v) => v + 1);
+      // Статус «демонстрация включена» — сразу, без ожидания опроса сервера
+      patchMyMediaState({ screenOn: true });
       void api(`/api/calls/${s.id}`, {
         method: "POST",
         body: JSON.stringify({ action: "state", screenOn: true }),
@@ -899,7 +1144,7 @@ export function useCallController(
     } catch {
       notifyRef.current("Не удалось начать демонстрацию экрана");
     }
-  }, [renegotiateAll]);
+  }, [renegotiateAll, patchMyMediaState]);
 
   /** Ссылка-приглашение в текущий звонок (её можно кинуть кому угодно). */
   const getShareLink = useCallback(async (): Promise<string | null> => {
@@ -962,6 +1207,8 @@ export function useCallController(
     toggleScreenShare,
     getShareLink,
     inviteUsers,
+    applyAudioSettings,
+    micLevelRef,
   };
 }
 

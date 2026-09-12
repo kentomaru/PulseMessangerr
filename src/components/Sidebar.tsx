@@ -3,6 +3,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import {
+  Bell,
+  BellOff,
   Bookmark,
   Compass,
   Hash,
@@ -10,6 +12,8 @@ import {
   Lock,
   LogOut,
   Megaphone,
+  MonitorSmartphone,
+  Phone,
   Plus,
   Radio,
   Search,
@@ -34,6 +38,10 @@ type Props = {
   storyGroups: StoryGroup[];
   /** Звук уведомлений о новых сообщениях. */
   soundOn: boolean;
+  /** Звук входящего звонка (рингтон). */
+  callSoundOn: boolean;
+  /** Браузерные уведомления (всплывающие, когда вкладка не активна). */
+  notifyOn: boolean;
   onSelect: (id: string) => void;
   onOpenProfile: () => void;
   onOpenChat: (user: PublicUser) => void;
@@ -46,6 +54,10 @@ type Props = {
   onOpenSaved: () => void;
   /** Включить/выключить звук уведомлений. */
   onToggleSound: () => void;
+  /** Включить/выключить звук входящего звонка. */
+  onToggleCallSound: () => void;
+  /** Включить/выключить браузерные уведомления. */
+  onToggleNotify: () => void;
   /** Вход по ссылке-приглашению в группу/канал (#group=<token>). */
   onJoinByToken: (token: string) => void;
 };
@@ -74,6 +86,8 @@ export default function Sidebar({
   activeId,
   storyGroups,
   soundOn,
+  callSoundOn,
+  notifyOn,
   onSelect,
   onOpenProfile,
   onOpenChat,
@@ -84,9 +98,13 @@ export default function Sidebar({
   onDiscover,
   onOpenSaved,
   onToggleSound,
+  onToggleCallSound,
+  onToggleNotify,
   onJoinByToken,
 }: Props) {
   const [query, setQuery] = useState("");
+  const [notifyOpen, setNotifyOpen] = useState(false);
+  const notifyBoxRef = useRef<HTMLDivElement | null>(null);
   const [users, setUsers] = useState<PublicUser[]>([]);
   const [groups, setGroups] = useState<DiscoverItem[]>([]);
   const [searching, setSearching] = useState(false);
@@ -121,10 +139,12 @@ export default function Sidebar({
     return () => clearTimeout(t);
   }, [query]);
 
-  // Клик вне поиска / меню создания — закрыть
+  // Клик вне поиска / меню создания / панели уведомлений — закрыть
   useEffect(() => {
     const onClick = (e: MouseEvent) => {
       if (createRef.current && !createRef.current.contains(e.target as Node)) setCreateOpen(false);
+      if (notifyBoxRef.current && !notifyBoxRef.current.contains(e.target as Node))
+        setNotifyOpen(false);
     };
     document.addEventListener("mousedown", onClick);
     return () => document.removeEventListener("mousedown", onClick);
@@ -206,15 +226,57 @@ export default function Sidebar({
         >
           <Bookmark className="h-4 w-4" />
         </button>
-        <button
-          onClick={onToggleSound}
-          title={soundOn ? "Выключить звук уведомлений" : "Включить звук уведомлений"}
-          className={`glass flex h-9 w-9 items-center justify-center rounded-xl transition-colors ${
-            soundOn ? "text-white/50 hover:text-emerald-300" : "text-white/30 hover:text-white/70"
-          }`}
-        >
-          {soundOn ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}
-        </button>
+        {/* Настройки уведомлений: звук сообщений, рингтон, браузерные уведомления */}
+        <div ref={notifyBoxRef} className="relative">
+          <button
+            onClick={() => setNotifyOpen((v) => !v)}
+            title="Настройки уведомлений"
+            className={`glass flex h-9 w-9 items-center justify-center rounded-xl transition-colors ${
+              soundOn || notifyOn
+                ? "text-white/50 hover:text-emerald-300"
+                : "text-white/30 hover:text-white/70"
+            }`}
+          >
+            {soundOn || notifyOn ? <Bell className="h-4 w-4" /> : <BellOff className="h-4 w-4" />}
+          </button>
+
+          <AnimatePresence>
+            {notifyOpen && (
+              <motion.div
+                initial={{ opacity: 0, y: 6, scale: 0.97 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: 6, scale: 0.97 }}
+                transition={{ duration: 0.14 }}
+                className="glass-strong absolute top-11 right-0 z-50 w-64 rounded-2xl p-3 shadow-2xl"
+              >
+                <p className="px-1 pb-2 text-[10px] font-semibold tracking-wide text-white/40 uppercase">
+                  Уведомления
+                </p>
+                <NotifyRow
+                  icon={soundOn ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}
+                  label="Звук сообщений"
+                  hint="Короткий сигнал о новом сообщении"
+                  active={soundOn}
+                  onClick={onToggleSound}
+                />
+                <NotifyRow
+                  icon={<Phone className="h-4 w-4" />}
+                  label="Звук входящего звонка"
+                  hint="Рингтон, когда вам звонят"
+                  active={callSoundOn}
+                  onClick={onToggleCallSound}
+                />
+                <NotifyRow
+                  icon={<MonitorSmartphone className="h-4 w-4" />}
+                  label="Браузерные уведомления"
+                  hint="Всплывают, даже когда вкладка скрыта"
+                  active={notifyOn}
+                  onClick={onToggleNotify}
+                />
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
         <button
           onClick={onLogout}
           title="Выйти"
@@ -479,6 +541,51 @@ function CreateItem({
       <span className="min-w-0">
         <span className="block truncate text-sm font-medium">{title}</span>
         <span className="block truncate text-[11px] text-white/35">{hint}</span>
+      </span>
+    </button>
+  );
+}
+
+/** Строка настройки уведомлений: иконка + подпись + переключатель. */
+function NotifyRow({
+  icon,
+  label,
+  hint,
+  active,
+  onClick,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  hint: string;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className="flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left transition-colors hover:bg-white/8"
+    >
+      <span
+        className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${
+          active ? "bg-violet-500/20 text-violet-200" : "bg-white/6 text-white/35"
+        }`}
+      >
+        {icon}
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-[13px] font-medium">{label}</span>
+        <span className="block truncate text-[11px] text-white/35">{hint}</span>
+      </span>
+      <span
+        className={`relative h-5 w-9 shrink-0 rounded-full transition-colors ${
+          active ? "bg-violet-500" : "bg-white/15"
+        }`}
+      >
+        <span
+          className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition-all ${
+            active ? "left-[18px]" : "left-0.5"
+          }`}
+        />
       </span>
     </button>
   );

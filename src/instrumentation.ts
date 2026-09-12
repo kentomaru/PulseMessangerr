@@ -19,7 +19,7 @@ export async function register() {
   const log = createLogger("startup");
   log.info("Pulse запускается…", { node: process.version });
 
-  const { waitForDb, ensureSchema } = await import("./db");
+  const { waitForDb, ensureSchema, backfillFilesToDb } = await import("./db");
 
   // Фаза 1: ждём до 16 секунд (8 попыток × 2 с) — обычно БД на Railway готова за 2–4 с.
   const quick = await waitForDb(8);
@@ -28,6 +28,9 @@ export async function register() {
     try {
       await ensureSchema();
       log.info("Pulse готов к работе");
+      // Не блокируем старт: дублируем уже загруженные файлы в БД в фоне,
+      // чтобы они пережили следующий редеплой (эфемерная ФС контейнера).
+      void backfillFilesToDb().catch(() => {});
     } catch (err) {
       log.error("Не удалось применить схему БД — проверьте права доступа к базе", { err });
     }
@@ -49,6 +52,7 @@ export async function register() {
     try {
       await ensureSchema();
       log.info("База данных подключена — Pulse полностью готов");
+      void backfillFilesToDb().catch(() => {});
     } catch (err) {
       log.error("Не удалось применить схему БД — проверьте права доступа к базе", { err });
     }

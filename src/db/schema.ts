@@ -1,6 +1,8 @@
 import { sql } from "drizzle-orm";
 import {
+  bigint,
   boolean,
+  customType,
   index,
   integer,
   jsonb,
@@ -11,6 +13,13 @@ import {
   uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
+
+/** Колонка «сырые байты» (bytea).postgres.js отдаёт и принимает Buffer. */
+export const bytea = customType<{ data: Buffer; driverData: Buffer }>({
+  dataType() {
+    return "bytea";
+  },
+});
 
 /** Пользователи. Пароль хранится только в виде scrypt-хэша. */
 export const users = pgTable("users", {
@@ -301,6 +310,23 @@ export const storyViews = pgTable(
   },
   (t) => [primaryKey({ columns: [t.storyId, t.userId] })],
 );
+
+/**
+ * Загруженные файлы (аватары, баннеры, истории, вложения).
+ *
+ * Байты хранятся прямо в Postgres: на Railway/в контейнерах файловая система
+ * эфемерная — после каждого редеплоя/рестарта папка data/uploads очищалась,
+ * и ВСЕ загруженные картинки («истории, фото, баннеры») переставали грузиться
+ * (404). База — единственное надёжное хранилище в таком окружении.
+ * Диск остаётся быстрым кэшем (см. маршруты upload/files).
+ */
+export const files = pgTable("files", {
+  name: text("name").primaryKey(),
+  data: bytea("data").notNull(),
+  mime: text("mime").notNull().default("application/octet-stream"),
+  size: bigint("size", { mode: "number" }).notNull().default(0),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
 
 /**
  * Короткий уникальный токен для ссылок-приглашений.

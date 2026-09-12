@@ -9,6 +9,7 @@
  */
 import {
   createContext,
+  useCallback,
   useContext,
   useEffect,
   useMemo,
@@ -17,6 +18,7 @@ import {
 } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import {
+  AudioLines,
   Check,
   Copy,
   Expand,
@@ -40,6 +42,13 @@ import Avatar from "./Avatar";
 import PeoplePicker from "./PeoplePicker";
 import { copyToClipboard } from "@/lib/api";
 import { formatDuration } from "@/lib/format";
+import { getAudioContext } from "@/lib/notify";
+import {
+  loadAudioSettings,
+  loadUserVolumes,
+  saveUserVolume,
+  type AudioSettings,
+} from "@/lib/audioSettings";
 import type { CallSession, IncomingCall } from "@/lib/useCallController";
 import type { CallParticipantInfo, PublicUser } from "@/lib/types";
 
@@ -72,6 +81,10 @@ type Props = {
   onInvite: (userIds: string[]) => Promise<number>;
   onViewUser: (user: PublicUser) => void;
   notify: (msg: string) => void;
+  /** Применить новые настройки звука (шумоподавление, порог голоса) на лету. */
+  onApplyAudioSettings: (s: AudioSettings) => void;
+  /** Текущий уровень микрофона (0–100) для индикатора. */
+  micLevelRef: React.RefObject<number>;
 };
 
 const SIZES = {
@@ -92,10 +105,23 @@ function useRemoteStream(userId: string | null): { stream: MediaStream | null; t
   return { stream: userId ? (streams[userId] ?? null) : null, tick };
 }
 
+/** Индивидуальная громкость участников (0–150, хранится в localStorage). */
+const VolumesContext = createContext<{
+  volumes: Record<string, number>;
+  setVolume: (userId: string, v: number) => void;
+}>({ volumes: {}, setVolume: () => {} });
+
 export default function CallStage(props: Props) {
   const { session, incoming, minimized, setMinimized, onInvite, notify, meId, onCopyLink } = props;
   const [showInvite, setShowInvite] = useState(false);
   const [copied, setCopied] = useState(false);
+  /** Громкость каждого участника — переживает перезагрузку (пункт ТЗ №7). */
+  const [volumes, setVolumes] = useState<Record<string, number>>(() => loadUserVolumes());
+  const setVolume = useCallback((userId: string, v: number) => {
+    setVolumes((all) => ({ ...all, [userId]: v }));
+    saveUserVolume(userId, v);
+  }, []);
+  const volumesValue = useMemo(() => ({ volumes, setVolume }), [volumes, setVolume]);
 
   const streamsValue = useMemo(
     () => ({ streams: props.remoteStreams, tick: props.streamTick }),
@@ -122,6 +148,7 @@ export default function CallStage(props: Props) {
 
   return (
     <StreamsContext.Provider value={streamsValue}>
+      <VolumesContext.Provider value={volumesValue}>
       <AnimatePresence>
         {!session && incoming && <IncomingPrompt key="incoming" {...props} />}
       </AnimatePresence>
@@ -172,6 +199,7 @@ export default function CallStage(props: Props) {
           />
         )}
       </AnimatePresence>
+      </VolumesContext.Provider>
     </StreamsContext.Provider>
   );
 }
@@ -272,34 +300,99 @@ type WindowProps = Omit<Props, "onCopyLink"> & {
   onMinimize: () => void;
 };
 
+/** Позиция/размер окна звонка между сессиями (пункт ТЗ: «окно можно двигать»). */
+const CALL_WINDOW_PREFS_KEY = "pulse_call_window_v1";
+
+function loadCallWindowPrefs(): { pos: { x: number; y: number } | null; sizeKey: SizeKey } {
+  try {
+    const raw = localStorage.getItem(CALL_WINDOW_PREFS_KEY);
+    if (!raw) return { pos: null, sizeKey: "md" };
+    const p = JSON.parse(raw) as { pos?: { x: number; y: number }; sizeKey?: SizeKey };
+    const sizeKey: SizeKey = p.sizeKey === "sm" || p.sizeKey === "lg" ? p.sizeKey : "md";
+    const pos =
+      p.pos && Number.isFinite(p.pos.x) && Number.isFinite(p.pos.y)
+        ? { x: Math.max(8, p.pos.x), y: Math.max(8, p.pos.y) }
+        : null;
+    return { pos, sizeKey };
+  } catch {
+    return { pos: null, sizeKey: "md" };
+  }
+}
+
+function saveCallWindowPrefs(pos: { x: number; y: number } | null, sizeKey: SizeKey): void {
+  try {
+    localStorage.setItem(CALL_WINDOW_PREFS_KEY, JSON.stringify({ pos, sizeKey }));
+  } catch {
+    /* ignore */
+  }
+}
+
 function CallWindow(props: WindowProps) {
   const { session } = props;
-  const [sizeKey, setSizeKey] = useState<SizeKey>("md");
-  const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
-  const dragRef = useRef<{ dx: number; dy: number } | null>(null);
+  const prefs = useRef(loadCallWindowPrefs()).current;
+  const [sizeKey, setSizeKey] = useState<SizeKey>(prefs.sizeKey);
+  const [pos, setPos] = useState<{ x: number; y: number } | null>(prefs.pos);
+  const dragRef = useRef<{ dx: number; dy: number; pointerId: number } | null>(null);
+  const windowRef = useRef<HTMLDivElement | null>(null);
 
+  const size = SIZES[sizeKey];
+
+  const clampPos = useCallback(
+    (x: number, y: number) => {
+      const w = typeof window !== "undefined" ? window.innerWidth : 1280;
+      const h = typeof window !== "undefined" ? window.innerHeight : 800;
+      const width = SIZES[sizeKey].w;
+      const height = SIZES[sizeKey].h;
+      return {
+        x: Math.min(Math.max(8, x), Math.max(8, w - Math.min(width, w - 16) - 8)),
+        y: Math.min(Math.max(8, y), Math.max(8, h - 56)),
+      };
+    },
+    [sizeKey],
+  );
+
+  // Запоминаем позицию/размер — после перезагрузки окно останется там же.
   useEffect(() => {
-    const onMove = (e: PointerEvent) => {
-      const d = dragRef.current;
-      if (!d) return;
-      setPos({ x: Math.max(8, e.clientX - d.dx), y: Math.max(8, e.clientY - d.dy) });
-    };
-    const onUp = () => (dragRef.current = null);
-    window.addEventListener("pointermove", onMove);
-    window.addEventListener("pointerup", onUp);
-    return () => {
-      window.removeEventListener("pointermove", onMove);
-      window.removeEventListener("pointerup", onUp);
-    };
-  }, []);
+    saveCallWindowPrefs(pos, sizeKey);
+  }, [pos, sizeKey]);
 
   if (!session) return null;
-  const size = SIZES[sizeKey];
+
+  /** Захват перетаскивания: pointer capture, чтобы окно не «срывалось». */
+  const onHeaderPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    // Кнопки в шапке перетаскивание не начинают
+    if ((e.target as HTMLElement).closest("button")) return;
+    const rect = windowRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    dragRef.current = { dx: e.clientX - rect.left, dy: e.clientY - rect.top, pointerId: e.pointerId };
+    try {
+      (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    } catch {
+      /* не поддерживается — сработает и без захвата */
+    }
+  };
+  const onHeaderPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    const d = dragRef.current;
+    if (!d || d.pointerId !== e.pointerId) return;
+    setPos(clampPos(e.clientX - d.dx, e.clientY - d.dy));
+  };
+  const onHeaderPointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    const d = dragRef.current;
+    if (!d || d.pointerId !== e.pointerId) return;
+    dragRef.current = null;
+    try {
+      (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
+    } catch {
+      /* уже отпущен */
+    }
+  };
 
   return (
     <>
-      {/* Десктоп: плавающее окно, которое можно двигать и сворачивать */}
+      {/* Десктоп: отдельное плавающее окно звонка — двигается за шапку,
+          меняет размер, сворачивается; чат остаётся доступным под ним. */}
       <motion.div
+        ref={windowRef}
         initial={{ opacity: 0, scale: 0.96 }}
         animate={{ opacity: 1, scale: 1 }}
         exit={{ opacity: 0, scale: 0.95 }}
@@ -315,12 +408,12 @@ function CallWindow(props: WindowProps) {
         }}
       >
         <div
-          onPointerDown={(e) => {
-            const rect = (e.currentTarget.parentElement as HTMLElement)?.getBoundingClientRect();
-            if (!rect) return;
-            dragRef.current = { dx: e.clientX - rect.left, dy: e.clientY - rect.top };
-          }}
-          className="flex cursor-grab items-center gap-2 border-b border-white/8 px-4 py-2.5 active:cursor-grabbing"
+          onPointerDown={onHeaderPointerDown}
+          onPointerMove={onHeaderPointerMove}
+          onPointerUp={onHeaderPointerUp}
+          onPointerCancel={onHeaderPointerUp}
+          style={{ touchAction: "none" }}
+          className="flex cursor-grab items-center gap-2 border-b border-white/8 px-4 py-2.5 select-none active:cursor-grabbing"
         >
           <LiveDot />
           <p className="min-w-0 flex-1 truncate text-sm font-semibold">{session.title}</p>
@@ -350,6 +443,12 @@ function CallWindow(props: WindowProps) {
             </IconBtn>
           </div>
         </div>
+
+        {/* Состав комнаты в групповых звонках: кто в комнате, у кого выключен
+            микрофон, там же — индивидуальная громкость каждого. */}
+        {session.participants.length > 2 && (
+          <ParticipantsStrip session={session} meId={props.meId} />
+        )}
 
         <CallBody {...props} />
         <Controls {...props} compact />
@@ -560,6 +659,139 @@ function ScreenTile({
         >
           {isMe ? "Вы демонстрируете экран" : `Экран · ${participant.user.displayName}`}
         </button>
+        {!isMe && (
+          <span className="ml-auto shrink-0">
+            <VolumeControl userId={participant.userId} name={participant.user.displayName} />
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Панель настроек звука прямо во время звонка:
+ * шумоподавление / эхоподавление / автоусиление + порог активации голоса
+ * (чувствительность микрофона) с живым индикатором уровня.
+ * Изменения применяются на лету — без разрыва соединения.
+ */
+function AudioSettingsPanel({
+  micLevelRef,
+  onApply,
+  onClose,
+}: {
+  micLevelRef: React.RefObject<number>;
+  onApply: (s: AudioSettings) => void;
+  onClose: () => void;
+}) {
+  const [settings, setSettings] = useState<AudioSettings>(() => loadAudioSettings());
+  const [level, setLevel] = useState(0);
+  const applyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Индикатор уровня микрофона
+  useEffect(() => {
+    const t = setInterval(() => setLevel(micLevelRef.current ?? 0), 120);
+    return () => clearInterval(t);
+  }, [micLevelRef]);
+
+  useEffect(() => {
+    return () => {
+      if (applyTimer.current) clearTimeout(applyTimer.current);
+    };
+  }, []);
+
+  const update = (patch: Partial<AudioSettings>) => {
+    setSettings((s) => {
+      const next = { ...s, ...patch };
+      // Дебаунс: пересборка аудиодорожки — не на каждый пиксель ползунка.
+      if (applyTimer.current) clearTimeout(applyTimer.current);
+      applyTimer.current = setTimeout(() => onApply(next), 350);
+      return next;
+    });
+  };
+
+  return (
+    <div
+      className="glass-strong absolute bottom-full left-1/2 z-40 mb-3 w-72 -translate-x-1/2 rounded-2xl p-4 shadow-2xl"
+      onClick={(e) => e.stopPropagation()}
+    >
+      <div className="mb-3 flex items-center justify-between">
+        <p className="flex items-center gap-2 text-sm font-semibold">
+          <AudioLines className="h-4 w-4 text-violet-300" />
+          Настройки звука
+        </p>
+        <button
+          onClick={onClose}
+          className="rounded-full bg-white/10 p-1 text-white/70 transition-colors hover:bg-white/20"
+          title="Закрыть"
+        >
+          <X className="h-3.5 w-3.5" />
+        </button>
+      </div>
+
+      <div className="space-y-3">
+        {(
+          [
+            ["noiseSuppression", "Шумоподавление", "Убирает фоновый шум"],
+            ["echoCancellation", "Эхоподавление", "Гасит эхо из динамиков"],
+            ["autoGainControl", "Автоусиление", "Выравнивает громкость голоса"],
+          ] as const
+        ).map(([key, label, hint]) => (
+          <button
+            key={key}
+            onClick={() => update({ [key]: !settings[key] } as Partial<AudioSettings>)}
+            className="flex w-full items-center gap-2.5 text-left"
+          >
+            <span
+              className={`relative h-5 w-9 shrink-0 rounded-full transition-colors ${
+                settings[key] ? "bg-violet-500" : "bg-white/15"
+              }`}
+            >
+              <span
+                className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition-all ${
+                  settings[key] ? "left-[18px]" : "left-0.5"
+                }`}
+              />
+            </span>
+            <span className="min-w-0">
+              <span className="block text-xs font-medium">{label}</span>
+              <span className="block text-[10px] leading-tight text-white/35">{hint}</span>
+            </span>
+          </button>
+        ))}
+
+        <div>
+          <div className="mb-1 flex items-center justify-between text-xs">
+            <span className="font-medium">Порог активации голоса</span>
+            <span className="tabular-nums text-white/45">
+              {settings.voiceGate === 0 ? "выкл" : `${settings.voiceGate}%`}
+            </span>
+          </div>
+          <input
+            type="range"
+            min={0}
+            max={100}
+            step={5}
+            value={settings.voiceGate}
+            onChange={(e) => update({ voiceGate: Number(e.target.value) })}
+            className="w-full accent-violet-400"
+          />
+          <p className="mt-1 text-[10px] leading-tight text-white/35">
+            Микрофон открывается только для голоса громче порога — фон не попадает в звонок.
+            0 — выключено.
+          </p>
+        </div>
+
+        {/* Индикатор уровня микрофона */}
+        <div>
+          <p className="mb-1 text-[10px] uppercase tracking-wide text-white/35">Уровень микрофона</p>
+          <div className="h-2 overflow-hidden rounded-full bg-white/10">
+            <div
+              className="h-full rounded-full bg-gradient-to-r from-emerald-400 via-violet-400 to-fuchsia-400 transition-[width] duration-100"
+              style={{ width: `${Math.min(100, level)}%` }}
+            />
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -580,13 +812,24 @@ function Controls({
   session,
   meId,
   compact,
+  onApplyAudioSettings,
+  micLevelRef,
 }: WindowProps & { compact?: boolean }) {
+  const [audioPanel, setAudioPanel] = useState(false);
+
   return (
     <div
-      className={`flex flex-wrap items-center justify-center border-t border-white/8 ${
+      className={`relative flex flex-wrap items-center justify-center border-t border-white/8 ${
         compact ? "gap-2 px-3 py-2.5" : "gap-3 px-4 py-5"
       }`}
     >
+      {audioPanel && (
+        <AudioSettingsPanel
+          micLevelRef={micLevelRef}
+          onApply={onApplyAudioSettings}
+          onClose={() => setAudioPanel(false)}
+        />
+      )}
       <Control
         small={compact}
         active={muted}
@@ -625,6 +868,14 @@ function Controls({
       <Control small={compact} onClick={onOpenInvite} title="Добавить человека в звонок">
         <UserPlus className="h-4.5 w-4.5" />
       </Control>
+      <Control
+        small={compact}
+        active={audioPanel}
+        onClick={() => setAudioPanel((v) => !v)}
+        title="Настройки звука: шумоподавление, чувствительность микрофона"
+      >
+        <AudioLines className="h-4.5 w-4.5" />
+      </Control>
       <button
         onClick={onLeave}
         title="Выйти из звонка"
@@ -644,6 +895,68 @@ function Controls({
         </button>
       )}
     </div>
+  );
+}
+
+/** Лента участников группового звонка: аватары, статус микрофона, громкость. */
+function ParticipantsStrip({ session, meId }: { session: CallSession; meId: string }) {
+  return (
+    <div className="nice-scroll flex shrink-0 items-center gap-1.5 overflow-x-auto border-b border-white/6 px-3 py-2">
+      {session.participants.map((p) => {
+        const isMe = p.userId === meId;
+        return (
+          <span
+            key={p.userId}
+            className="glass flex shrink-0 items-center gap-1.5 rounded-full py-0.5 pr-1.5 pl-1 text-[11px] text-white/75"
+            title={p.user.displayName}
+          >
+            <Avatar name={p.user.displayName} src={p.user.avatarUrl} size={20} />
+            <span className="max-w-20 truncate">{isMe ? "Вы" : p.user.displayName.split(" ")[0]}</span>
+            {p.muted && <MicOff className="h-3 w-3 shrink-0 text-rose-300" />}
+            {p.videoOn && <Video className="h-3 w-3 shrink-0 text-emerald-300" />}
+            {p.screenOn && <MonitorUp className="h-3 w-3 shrink-0 text-emerald-300" />}
+            {!isMe && <VolumeControl userId={p.userId} name={p.user.displayName} />}
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
+/** Ползунок индивидуальной громкости участника (0–150%). */
+function VolumeControl({ userId, name }: { userId: string; name: string }) {
+  const { volumes, setVolume } = useContext(VolumesContext);
+  const volume = volumes[userId] ?? 100;
+  const [open, setOpen] = useState(false);
+
+  return (
+    <span className="relative flex items-center" onClick={(e) => e.stopPropagation()}>
+      <button
+        onClick={() => setOpen((v) => !v)}
+        title={`Громкость · ${name}`}
+        className={`flex h-6 w-6 items-center justify-center rounded-full transition-colors hover:bg-white/15 ${
+          volume === 0 ? "text-rose-300" : "text-white/70"
+        }`}
+      >
+        <Volume2 className="h-3.5 w-3.5" />
+      </button>
+      {open && (
+        <span className="glass-strong absolute bottom-8 right-0 z-30 flex w-40 items-center gap-2 rounded-xl px-2.5 py-2 shadow-xl">
+          <input
+            type="range"
+            min={0}
+            max={150}
+            step={5}
+            value={Math.min(150, Math.round(volume))}
+            onChange={(e) => setVolume(userId, Number(e.target.value))}
+            className="w-full accent-violet-400"
+          />
+          <span className="w-8 shrink-0 text-right text-[10px] tabular-nums text-white/60">
+            {Math.round(volume)}%
+          </span>
+        </span>
+      )}
+    </span>
   );
 }
 
@@ -697,6 +1010,12 @@ function Tile({
         {participant.guest && !isMe && (
           <span className="shrink-0 rounded-full bg-white/10 px-1.5 text-[10px] text-white/50">
             гость
+          </span>
+        )}
+        {/* Индивидуальная громкость — только для собеседников */}
+        {!isMe && (
+          <span className="ml-auto shrink-0">
+            <VolumeControl userId={participant.userId} name={participant.user.displayName} />
           </span>
         )}
       </div>
@@ -838,13 +1157,59 @@ function CallIsland({
 
 /* ─────────────── звук участника (живёт независимо от плиток) ─────────────── */
 
+/**
+ * Звук участника через WebAudio с индивидуальной громкостью (0–150%).
+ * Поток: MediaStreamSource → GainNode → динамики. Если WebAudio недоступен —
+ * обычный <audio> как фолбэк.
+ */
 function RemoteAudio({ userId }: { userId: string }) {
   const { stream, tick } = useRemoteStream(userId);
-  const ref = useRef<HTMLAudioElement | null>(null);
+  const { volumes } = useContext(VolumesContext);
+  const volume = volumes[userId] ?? 100;
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const graphRef = useRef<{ src: MediaStreamAudioSourceNode; gain: GainNode } | null>(null);
+
+  // Пересобираем граф при смене потока (первый трек/ренеготиация).
   useEffect(() => {
-    if (ref.current) ref.current.srcObject = stream ?? null;
+    const teardown = () => {
+      try {
+        graphRef.current?.src.disconnect();
+        graphRef.current?.gain.disconnect();
+      } catch {
+        /* уже отключены */
+      }
+      graphRef.current = null;
+    };
+    teardown();
+
+    const ctx = getAudioContext();
+    if (stream && ctx) {
+      try {
+        const src = ctx.createMediaStreamSource(stream);
+        const gain = ctx.createGain();
+        gain.gain.value = Math.max(0, volume) / 100;
+        src.connect(gain).connect(ctx.destination);
+        graphRef.current = { src, gain };
+        if (audioRef.current) audioRef.current.srcObject = null;
+        return teardown;
+      } catch {
+        /* WebAudio не завёлся — фолбэк ниже */
+      }
+    }
+    if (audioRef.current) audioRef.current.srcObject = stream ?? null;
+    return teardown;
+    // volume намеренно не в зависимостях — он меняется отдельным эффектом
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stream, tick]);
-  return <audio ref={ref} autoPlay playsInline className="hidden" />;
+
+  // Громкость меняется мгновенно, без пересборки графа.
+  useEffect(() => {
+    const g = graphRef.current;
+    if (g) g.gain.gain.value = Math.max(0, volume) / 100;
+    if (audioRef.current) audioRef.current.volume = Math.min(1, Math.max(0, volume / 100));
+  }, [volume]);
+
+  return <audio ref={audioRef} autoPlay playsInline className="hidden" />;
 }
 
 /* ─────────────────────────── мелочи ─────────────────────────── */

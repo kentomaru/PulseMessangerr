@@ -12,8 +12,10 @@
  *    делают повторный запрос через 2 секунды, а не роняют процесс.
  */
 import { drizzle } from "drizzle-orm/postgres-js";
+import { eq } from "drizzle-orm";
 import postgres from "postgres";
 import * as schema from "./schema";
+import { files } from "./schema";
 import { createLogger } from "@/lib/logger";
 
 const log = createLogger("db");
@@ -316,6 +318,76 @@ export async function ensureSchema(): Promise<void> {
       viewed_at timestamptz not null default now(),
       primary key (story_id, user_id)
     );
+
+    /* Загруженные файлы в самой базе: на эфемерной файловой системе контейнера
+       (Railway и т.п.) папка data/uploads переживает только текущий деплой —
+       после рестарта все истории/аватары/баннеры «переставали грузиться». */
+    create table if not exists files (
+      name text primary key,
+      data bytea not null,
+      mime text not null default 'application/octet-stream',
+      size bigint not null default 0,
+      created_at timestamptz not null default now()
+    );
   `);
   log.info("Схема базы данных проверена (ensureSchema: ok)");
+}
+
+/** Максимальный размер файла, который дублируем в БД (картинки/аудио). */
+export const DB_MIRROR_MAX_BYTES = 25 * 1024 * 1024;
+
+/**
+ * Разово переносит уже существующие на диске файлы в таблицу files.
+ * Нужно при старте после обновления: истории/баннеры, загруженные ДО того,
+ * как появилась копия в БД, иначе переживут только текущий деплой.
+ * Работает лениво и идемпотентно (пропускает то, что уже в базе).
+ */
+export async function backfillFilesToDb(): Promise<void> {
+  const { readFile, readdir, stat } = await import("fs/promises");
+  const path = await import("path");
+  const dir = path.join(process.cwd(), "data", "uploads");
+
+  let names: string[] = [];
+  try {
+    names = await readdir(dir);
+  } catch {
+    return; // папки ещё нет — нечего переносить
+  }
+
+  let copied = 0;
+  let skipped = 0;
+  for (const name of names.slice(0, 2000)) {
+    if (!/^[a-zA-Z0-9-]+\.[a-z0-9]{1,8}$/i.test(name)) continue;
+    const filePath = path.join(dir, name);
+    try {
+      const st = await stat(filePath);
+      if (!st.isFile() || st.size === 0 || st.size > DB_MIRROR_MAX_BYTES) {
+        skipped++;
+        continue;
+      }
+      const exists = await db
+        .select({ name: files.name })
+        .from(files)
+        .where(eq(files.name, name))
+        .limit(1);
+      if (exists.length > 0) continue;
+      const data = await readFile(filePath);
+      await db
+        .insert(files)
+        .values({ name, data, mime: "application/octet-stream", size: data.length })
+        .onConflictDoNothing();
+      copied++;
+    } catch (err) {
+      log.debug("backfill: пропуск файла", {
+        name,
+        err: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+  if (copied > 0 || skipped > 0) {
+    log.info("Файлы продублированы в БД (backfill)", {
+      copied: String(copied),
+      skippedLarge: String(skipped),
+    });
+  }
 }

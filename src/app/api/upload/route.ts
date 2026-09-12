@@ -2,16 +2,42 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSessionUser } from "@/lib/auth";
 import { createLogger } from "@/lib/logger";
 import { randomUUID } from "crypto";
-import { mkdir } from "fs/promises";
+import { mkdir, readFile } from "fs/promises";
 import { createWriteStream } from "fs";
 import { pipeline } from "stream/promises";
 import { Readable } from "stream";
 import path from "path";
+import { db } from "@/db";
+import { files } from "@/db/schema";
 
 const log = createLogger("api:upload");
 
 /** Лимит загрузки — 500 МБ (любые файлы: фото, видео, аудио, документы). */
 const MAX_UPLOAD_BYTES = 500 * 1024 * 1024;
+
+/**
+ * Файлы до этого размера дополнительно сохраняются в базу (надёжное хранилище).
+ * Файловая система контейнера на Railway эфемерная: без копии в БД после
+ * каждого редеплоя ВСЕ картинки (истории, баннеры, аватары) исчезали.
+ * Большие видео остаются только на диске — как раньше.
+ */
+const DB_MIRROR_MAX_BYTES = 25 * 1024 * 1024;
+
+async function mirrorToDb(name: string, data: Buffer, mime: string): Promise<void> {
+  if (data.length === 0 || data.length > DB_MIRROR_MAX_BYTES) return;
+  try {
+    await db
+      .insert(files)
+      .values({ name, data, mime: mime || "application/octet-stream", size: data.length })
+      .onConflictDoNothing();
+  } catch (err) {
+    // Копия в БД — страховка от потери файлов; сама загрузка не должна падать.
+    log.warn("Не удалось сохранить копию файла в БД", {
+      name,
+      err: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
 
 /** Расширения по MIME-типу (для красивых имён и корректной отдачи). */
 const EXT_BY_MIME: Record<string, string> = {
@@ -22,6 +48,10 @@ const EXT_BY_MIME: Record<string, string> = {
   "image/svg+xml": "svg",
   "image/bmp": "bmp",
   "image/avif": "avif",
+  "image/heic": "heic",
+  "image/heif": "heif",
+  "image/tiff": "tiff",
+  "image/jxl": "jxl",
   "audio/webm": "webm",
   "video/webm": "webm",
   "audio/ogg": "ogg",
@@ -31,10 +61,14 @@ const EXT_BY_MIME: Record<string, string> = {
   "audio/x-wav": "wav",
   "audio/aac": "aac",
   "audio/opus": "opus",
+  "audio/flac": "flac",
   "video/mp4": "mp4",
   "video/quicktime": "mov",
   "video/x-matroska": "mkv",
   "video/avi": "avi",
+  "video/3gpp": "3gp",
+  "video/3gpp2": "3g2",
+  "video/x-m4v": "m4v",
   "application/pdf": "pdf",
   "application/zip": "zip",
   "application/x-zip-compressed": "zip",
@@ -117,10 +151,23 @@ export async function POST(req: NextRequest) {
         );
       }
 
+      // Копия в БД — чтобы файл пережил редеплой/рестарт контейнера.
+      if (written <= DB_MIRROR_MAX_BYTES) {
+        try {
+          await mirrorToDb(fileName, await readFile(filePath), mime ?? "");
+        } catch (err) {
+          log.warn("Не удалось прочитать файл для копии в БД", {
+            name: fileName,
+            err: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
+
       log.info("Файл загружен (stream)", {
         userId: me.id,
         name: fileName,
         size: String(written),
+        db: String(written <= DB_MIRROR_MAX_BYTES),
         ms: String(Date.now() - started),
       });
       return NextResponse.json({ url: `/api/files/${fileName}`, size: written });
@@ -140,10 +187,14 @@ export async function POST(req: NextRequest) {
     const { writeFile } = await import("fs/promises");
     await writeFile(path.join(uploadsDir(), fileName), buffer);
 
+    // Копия в БД — чтобы файл пережил редеплой/рестарт контейнера.
+    await mirrorToDb(fileName, buffer, file.type ?? "");
+
     log.info("Файл загружен (form)", {
       userId: me.id,
       name: fileName,
       size: String(file.size),
+      db: String(buffer.length <= DB_MIRROR_MAX_BYTES),
       ms: String(Date.now() - started),
     });
     return NextResponse.json({ url: `/api/files/${fileName}`, size: file.size });
