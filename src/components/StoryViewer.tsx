@@ -171,7 +171,14 @@ export default function StoryViewer({
             className="flex min-w-0 flex-1 items-center gap-3 text-left"
             title="Открыть профиль"
           >
-            <Avatar name={group.user.displayName} src={group.user.avatarUrl} size={38} />
+            {/* key по пользователю: при переходе к истории ДРУГОГО человека
+                аватар пересоздаётся — старый не остаётся на экране. */}
+            <Avatar
+              key={group.user.id}
+              name={group.user.displayName}
+              src={group.user.avatarUrl}
+              size={38}
+            />
             <div className="min-w-0 flex-1">
               <p className="truncate text-sm font-semibold">
                 {isMine ? "Ваша история" : group.user.displayName}
@@ -270,7 +277,12 @@ export default function StoryViewer({
               onClick={() => onViewUser?.(group.user)}
               className="glass-strong pointer-events-auto flex min-w-0 items-center gap-2 rounded-full py-1.5 pr-3.5 pl-1.5"
             >
-              <Avatar name={group.user.displayName} src={group.user.avatarUrl} size={24} />
+              <Avatar
+                key={`chip-${group.user.id}`}
+                name={group.user.displayName}
+                src={group.user.avatarUrl}
+                size={24}
+              />
               <span className="max-w-40 truncate text-[11px] text-white/75">
                 выложил(а) {group.user.displayName}
               </span>

@@ -52,6 +52,7 @@ import {
 } from "lucide-react";
 import Avatar from "./Avatar";
 import PreviewLabel from "./PreviewLabel";
+import StatusEmoji from "./StatusEmoji";
 import WallpaperModal from "./WallpaperModal";
 import { api, ApiError, copyToClipboard, uploadFile } from "@/lib/api";
 import { audioConstraints } from "@/lib/audioSettings";
@@ -1064,6 +1065,10 @@ export default function ChatView({
           <div className="min-w-0">
             <p className="flex items-center gap-1.5 truncate text-[15px] font-semibold">
               <span className="truncate">{title}</span>
+              {/* Кастомный статус-эмодзи собеседника (эмодзи или анимированная гифка) */}
+              {kind === "direct" && peerState?.statusEmoji && (
+                <StatusEmoji value={peerState.statusEmoji} size={16} />
+              )}
               {isSaved && <Bookmark className="h-3.5 w-3.5 shrink-0 text-amber-300" />}
               {isSpace && kind === "channel" && <Megaphone className="h-3.5 w-3.5 shrink-0 text-cyan-300" />}
               {isSpace && kind === "group" && <Hash className="h-3.5 w-3.5 shrink-0 text-violet-300" />}

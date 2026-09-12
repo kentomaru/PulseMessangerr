@@ -79,6 +79,7 @@ export function publicUser(u: User) {
     avatarUrl: u.avatarUrl,
     bannerUrl: u.bannerUrl,
     bio: u.bio,
+    statusEmoji: u.statusEmoji,
     // Приватность: если статус скрыт — не раскрываем ни онлайн, ни время визита.
     lastSeenAt: u.showOnline ? new Date(u.lastSeenAt).toISOString() : null,
     createdAt: new Date(u.createdAt).toISOString(),

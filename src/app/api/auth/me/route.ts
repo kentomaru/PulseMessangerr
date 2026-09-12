@@ -32,6 +32,8 @@ export const PATCH = withApi("auth/me", async ({ req, me, log }) => {
     patch.displayName = dn;
   }
   if (typeof body.bio === "string") patch.bio = body.bio.trim().slice(0, 280);
+  // Кастомный статус-эмодзи: эмодзи или ссылка на анимированную гифку
+  if (typeof body.statusEmoji === "string") patch.statusEmoji = body.statusEmoji.trim().slice(0, 300);
   if (typeof body.avatarUrl === "string" || body.avatarUrl === null)
     patch.avatarUrl = body.avatarUrl || null;
   if (typeof body.bannerUrl === "string" || body.bannerUrl === null)

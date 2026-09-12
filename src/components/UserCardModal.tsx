@@ -3,7 +3,9 @@
 import { useEffect, useState } from "react";
 import { CalendarDays, MessageSquareLock, MessageSquareText, PhoneOff } from "lucide-react";
 import Avatar, { paletteFor } from "./Avatar";
+import StatusEmoji from "./StatusEmoji";
 import { ModalShell } from "./ProfileModal";
+import { bannerStyle, isFileBanner } from "@/lib/wallpapers";
 import type { PublicUser } from "@/lib/types";
 import { lastSeenLabel } from "@/lib/format";
 
@@ -21,15 +23,18 @@ export default function UserCardModal({ user, onClose, onMessage }: Props) {
     setBannerBroken(false);
   }, [user.bannerUrl]);
   const showBanner = !!user.bannerUrl && !bannerBroken;
+  // Живой/пресетный баннер рисуется CSS-фоном (анимация), файл — картинкой
+  const bannerIsFile = isFileBanner(user.bannerUrl);
 
   return (
     <ModalShell onClose={onClose}>
       <div
         className={`relative h-32 w-full overflow-hidden ${
-          showBanner ? "" : `bg-gradient-to-br ${paletteFor(user.username)}`
+          showBanner && !bannerIsFile ? "" : showBanner ? "bg-black/40" : `bg-gradient-to-br ${paletteFor(user.username)}`
         }`}
+        style={showBanner && !bannerIsFile ? bannerStyle(user.bannerUrl) : undefined}
       >
-        {showBanner && (
+        {showBanner && bannerIsFile && (
           // eslint-disable-next-line @next/next/no-img-element
           <img
             src={user.bannerUrl ?? undefined}
@@ -48,7 +53,11 @@ export default function UserCardModal({ user, onClose, onMessage }: Props) {
       </div>
 
       <div className="px-7 pt-3 pb-7 text-center">
-        <h3 className="font-display text-xl font-bold">{user.displayName}</h3>
+        <h3 className="flex items-center justify-center gap-2">
+          <span className="font-display text-xl font-bold">{user.displayName}</span>
+          {/* Кастомный статус-эмодзи: эмодзи или анимированная гифка */}
+          <StatusEmoji value={user.statusEmoji} size={22} />
+        </h3>
         <p className="mt-0.5 text-sm text-white/40">@{user.username}</p>
         <p className={`mt-1.5 text-xs font-medium ${user.online ? "text-emerald-400" : "text-white/35"}`}>
           {lastSeenLabel(user.lastSeenAt, user.online)}

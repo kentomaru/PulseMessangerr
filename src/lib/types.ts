@@ -5,6 +5,8 @@ export type PublicUser = {
   avatarUrl: string | null;
   bannerUrl: string | null;
   bio: string;
+  /** Кастомный статус-эмодзи: эмодзи или ссылка на анимированную гифку. */
+  statusEmoji: string;
   /** null, если пользователь скрыл статус (приватность). */
   lastSeenAt: string | null;
   createdAt: string;

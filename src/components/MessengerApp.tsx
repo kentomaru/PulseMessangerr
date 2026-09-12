@@ -196,6 +196,49 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
     document.title = n > 0 ? `(${n}) Pulse` : "Pulse";
   }, [conversations]);
 
+  /* ── Закреплённые и заглушённые чаты (хранятся локально) ── */
+  const PINNED_KEY = "pulse_pinned_v1";
+  const MUTED_KEY = "pulse_muted_v1";
+  const readIdSet = (key: string): Set<string> => {
+    try {
+      const raw = localStorage.getItem(key);
+      const arr = raw ? (JSON.parse(raw) as unknown) : [];
+      return new Set(Array.isArray(arr) ? arr.filter((x): x is string => typeof x === "string") : []);
+    } catch {
+      return new Set();
+    }
+  };
+  const [pinnedIds, setPinnedIds] = useState<Set<string>>(() => readIdSet(PINNED_KEY));
+  const [mutedIds, setMutedIds] = useState<Set<string>>(() => readIdSet(MUTED_KEY));
+  const mutedRef = useRef(mutedIds);
+  mutedRef.current = mutedIds;
+  const togglePinned = useCallback((id: string) => {
+    setPinnedIds((cur) => {
+      const next = new Set(cur);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      try {
+        localStorage.setItem(PINNED_KEY, JSON.stringify(Array.from(next)));
+      } catch {
+        /* ignore */
+      }
+      return next;
+    });
+  }, []);
+  const toggleMuted = useCallback((id: string) => {
+    setMutedIds((cur) => {
+      const next = new Set(cur);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      try {
+        localStorage.setItem(MUTED_KEY, JSON.stringify(Array.from(next)));
+      } catch {
+        /* ignore */
+      }
+      return next;
+    });
+  }, []);
+
   // Звук нового сообщения: сработать должен только для чужих сообщений
   // в чатах, которые сейчас не открыты (или когда вкладка в фоне).
   const lastMsgIdsRef = useRef<Map<string, string>>(new Map());
@@ -211,6 +254,8 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
       // (написал новый человек) — это тоже «новое сообщение», бип нужен.
       // От первоначальной загрузки список защищает firstConvLoadRef ниже.
       const isNew = !!lm && lm.id !== old && lm.senderId !== me.id;
+      // Заглушённый чат: ни звука, ни всплывающего уведомления
+      if (isNew && mutedRef.current.has(c.id)) continue;
       if (isNew && (c.id !== activeIdRef.current || document.hidden)) {
         beep = true;
         // Для браузерного уведомления берём последнее новое сообщение
@@ -326,11 +371,14 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
 
   const logout = useCallback(async () => {
     try {
+      // Если идёт звонок — завершаем его ДО выхода, чтобы он не «висел»
+      // у собеседника после разлогина (раньше звонок шёл дальше).
+      if (callCtl.session) await callCtl.leave({ endForAll: false }).catch(() => {});
       await api("/api/auth/logout", { method: "POST" });
     } finally {
       window.location.reload();
     }
-  }, []);
+  }, [callCtl]);
 
   // Переключаемся на чат, в который приходит звонок
   useEffect(() => {
@@ -410,6 +458,10 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
           activeId={activeId}
           storyGroups={storyGroups}
           soundOn={soundOn}
+          pinnedIds={pinnedIds}
+          mutedIds={mutedIds}
+          onTogglePin={togglePinned}
+          onToggleMute={toggleMuted}
           callSoundOn={callSoundOn}
           notifyOn={notifyOn}
           onToggleSound={toggleSound}

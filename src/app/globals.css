@@ -242,6 +242,16 @@ select:focus-visible,
 }
 
 /* «Живые» обои чата: градиент плавно дрейфует по экрану. */
+/* «Живой» баннер профиля: градиент бесконечно перетекает по горизонтали. */
+@keyframes banner-shift {
+  0% {
+    background-position: 0% 50%;
+  }
+  100% {
+    background-position: 300% 50%;
+  }
+}
+
 @keyframes wallpaper-drift {
   0% {
     background-position: 0% 0%;

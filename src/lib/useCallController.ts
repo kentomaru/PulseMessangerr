@@ -736,7 +736,9 @@ export function useCallController(
     setIncoming(null);
   }, []);
 
-  // Закрытие вкладки во время звонка — деликатно выходим из комнаты
+  // Закрытие вкладки во время звонка — деликатно выходим из комнаты.
+  // Слушаем И beforeunload, И pagehide: на мобильных и при сворачивании
+  // срабатывает только pagehide, а раньше звонок «шёл дальше».
   useEffect(() => {
     const onLeave = () => {
       const id = sessionRef.current?.id;
@@ -751,7 +753,11 @@ export function useCallController(
       }
     };
     window.addEventListener("beforeunload", onLeave);
-    return () => window.removeEventListener("beforeunload", onLeave);
+    window.addEventListener("pagehide", onLeave);
+    return () => {
+      window.removeEventListener("beforeunload", onLeave);
+      window.removeEventListener("pagehide", onLeave);
+    };
   }, []);
 
   /* ─────────────────────── опросы ─────────────────────── */
@@ -1035,10 +1041,26 @@ export function useCallController(
         const local = localStreamRef.current;
         if (local) {
           local.addTrack(track);
-          linksRef.current.forEach((l) => l.pc.addTrack(track, local));
+          // ВАЖНО: как и в демонстрации экрана — если у пира уже есть
+          // видео-сендер, ПОДМЕНЯЕМ дорожку (мгновенно, без пересогласования).
+          // Только если сендера нет вовсе — добавляем трек и ренеготиируем.
+          // Раньше всегда делали addTrack + offer, и при малейшем сбое
+          // пересогласования собеседник не видел камеру (а демку — видел,
+          // т.к. она шла через replaceTrack).
+          let needRenegotiate = false;
+          linksRef.current.forEach((l) => {
+            const sender = l.pc.getSenders().find((x) => x.track?.kind === "video");
+            if (sender) void sender.replaceTrack(track).catch(() => {});
+            else {
+              l.pc.addTrack(track, local);
+              needRenegotiate = true;
+            }
+          });
+          if (needRenegotiate) void renegotiateAll();
         } else {
           localStreamRef.current = video;
         }
+        setStreamTick((v) => v + 1);
       } catch {
         notifyRef.current("Камера недоступна");
         return;
@@ -1056,9 +1078,9 @@ export function useCallController(
       }).catch(() => {});
       return next;
     });
-
-    // Сообщаем остальным, что состав дорожек изменился
-    void renegotiateAll();
+    // Ренеготиация теперь делается ТОЛЬКО если добавляли новый трек
+    // (см. выше) — при подмене через replaceTrack она не нужна, а лишний
+    // оффер мог «перекричать» ответ собеседника и видео не доезжало.
   }, [cameraOn, renegotiateAll, patchMyMediaState]);
 
   /* ─────────────────────── демонстрация экрана ─────────────────────── */

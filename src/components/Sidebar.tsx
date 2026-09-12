@@ -5,6 +5,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import {
   Bell,
   BellOff,
+  BellRing,
   Bookmark,
   Compass,
   Hash,
@@ -14,6 +15,7 @@ import {
   Megaphone,
   MonitorSmartphone,
   Phone,
+  Pin,
   Plus,
   Radio,
   Search,
@@ -39,6 +41,12 @@ type Props = {
   storyGroups: StoryGroup[];
   /** Звук уведомлений о новых сообщениях. */
   soundOn: boolean;
+  /** Закреплённые чаты (показываются сверху, с булавкой). */
+  pinnedIds: Set<string>;
+  /** Заглушённые чаты (без звука и уведомлений). */
+  mutedIds: Set<string>;
+  onTogglePin: (id: string) => void;
+  onToggleMute: (id: string) => void;
   /** Звук входящего звонка (рингтон). */
   callSoundOn: boolean;
   /** Браузерные уведомления (всплывающие, когда вкладка не активна). */
@@ -92,6 +100,10 @@ export default function Sidebar({
   activeId,
   storyGroups,
   soundOn,
+  pinnedIds,
+  mutedIds,
+  onTogglePin,
+  onToggleMute,
   callSoundOn,
   notifyOn,
   onSelect,
@@ -158,6 +170,16 @@ export default function Sidebar({
 
   const spaces = useMemo(() => conversations.filter((c) => c.kind !== "direct"), [conversations]);
   const dms = useMemo(() => conversations.filter((c) => c.kind === "direct"), [conversations]);
+  // Закреплённые чаты выводим отдельной секцией сверху (и убираем из обычных)
+  const pinned = useMemo(
+    () => conversations.filter((c) => pinnedIds.has(c.id)),
+    [conversations, pinnedIds],
+  );
+  const unpinnedSpaces = useMemo(
+    () => spaces.filter((c) => !pinnedIds.has(c.id)),
+    [spaces, pinnedIds],
+  );
+  const unpinnedDms = useMemo(() => dms.filter((c) => !pinnedIds.has(c.id)), [dms, pinnedIds]);
 
   const linkToken = extractToken(query);
 
@@ -406,17 +428,48 @@ export default function Sidebar({
 
       {/* Список диалогов */}
       <div className="nice-scroll min-h-0 flex-1 overflow-y-auto px-3 pb-4">
-        {spaces.length > 0 && (
+        {/* Закреплённые чаты — всегда сверху, в одном списке */}
+        {pinned.length > 0 && (
+          <>
+            <SectionLabel>Закреплённые</SectionLabel>
+            <div className="space-y-1">
+              {pinned.map((conv) => (
+                <ConvRow
+                  key={conv.id}
+                  conv={conv}
+                  active={conv.id === activeId}
+                  meId={me.id}
+                  onSelect={onSelect}
+                  pinned
+                  muted={mutedIds.has(conv.id)}
+                  onTogglePin={onTogglePin}
+                  onToggleMute={onToggleMute}
+                />
+              ))}
+            </div>
+          </>
+        )}
+
+        {unpinnedSpaces.length > 0 && (
           <SectionLabel>Группы и каналы</SectionLabel>
         )}
         <div className="space-y-1">
-          {spaces.map((conv) => (
-            <ConvRow key={conv.id} conv={conv} active={conv.id === activeId} meId={me.id} onSelect={onSelect} />
+          {unpinnedSpaces.map((conv) => (
+            <ConvRow
+              key={conv.id}
+              conv={conv}
+              active={conv.id === activeId}
+              meId={me.id}
+              onSelect={onSelect}
+              muted={mutedIds.has(conv.id)}
+              onTogglePin={onTogglePin}
+              onToggleMute={onToggleMute}
+            />
           ))}
         </div>
 
         <SectionLabel>Личные чаты</SectionLabel>
-        {dms.length === 0 && spaces.length === 0 ? (
+        {unpinnedDms.length === 0 && unpinnedSpaces.length === 0 && pinned.length === 0 ? (
           <div className="mt-8 px-6 text-center">
             <div className="glass mx-auto flex h-14 w-14 items-center justify-center rounded-2xl">
               <Search className="h-6 w-6 text-white/30" />
@@ -427,8 +480,17 @@ export default function Sidebar({
           </div>
         ) : (
           <div className="space-y-1">
-            {dms.map((conv) => (
-              <ConvRow key={conv.id} conv={conv} active={conv.id === activeId} meId={me.id} onSelect={onSelect} />
+            {unpinnedDms.map((conv) => (
+              <ConvRow
+                key={conv.id}
+                conv={conv}
+                active={conv.id === activeId}
+                meId={me.id}
+                onSelect={onSelect}
+                muted={mutedIds.has(conv.id)}
+                onTogglePin={onTogglePin}
+                onToggleMute={onToggleMute}
+              />
             ))}
           </div>
         )}
@@ -458,20 +520,36 @@ function ConvRow({
   active,
   meId,
   onSelect,
+  pinned = false,
+  muted = false,
+  onTogglePin,
+  onToggleMute,
 }: {
   conv: ConversationListItem;
   active: boolean;
   meId: string;
   onSelect: (id: string) => void;
+  pinned?: boolean;
+  muted?: boolean;
+  onTogglePin?: (id: string) => void;
+  onToggleMute?: (id: string) => void;
 }) {
   const lm = conv.lastMessage;
   const call = conv.activeCall;
   const isSpace = conv.kind !== "direct";
 
   return (
-    <button
+    <div
+      role="button"
+      tabIndex={0}
       onClick={() => onSelect(conv.id)}
-      className={`relative flex w-full items-center gap-3 rounded-2xl px-3 py-3 text-left transition-colors ${
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onSelect(conv.id);
+        }
+      }}
+      className={`group/row relative flex w-full cursor-pointer items-center gap-3 rounded-2xl px-3 py-3 text-left transition-colors ${
         active
           ? "bg-gradient-to-r from-violet-500/20 via-violet-500/10 to-transparent"
           : "hover:bg-white/5"
@@ -504,8 +582,44 @@ function ConvRow({
           <p className="flex min-w-0 items-center gap-1.5 truncate text-[15px] font-semibold">
             <span className="truncate">{conv.title}</span>
             {conv.isPrivate && isSpace && <Lock className="h-3 w-3 shrink-0 text-white/25" />}
+            {muted && <BellOff className="h-3 w-3 shrink-0 text-white/25" />}
           </p>
-          {lm && <span className="shrink-0 text-[11px] text-white/30">{timeHHmm(lm.createdAt)}</span>}
+          {/* Наведение: быстрые действия (закрепить / заглушить) вместо времени */}
+          <span className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover/row:opacity-100">
+            {onToggleMute && (
+              <span
+                role="button"
+                title={muted ? "Включить уведомления" : "Заглушить чат"}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onToggleMute(conv.id);
+                }}
+                className="grid h-6 w-6 place-items-center rounded-lg text-white/35 hover:bg-white/10 hover:text-white/80"
+              >
+                {muted ? <BellRing className="h-3 w-3" /> : <BellOff className="h-3 w-3" />}
+              </span>
+            )}
+            {onTogglePin && (
+              <span
+                role="button"
+                title={pinned ? "Открепить" : "Закрепить чат"}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onTogglePin(conv.id);
+                }}
+                className={`grid h-6 w-6 place-items-center rounded-lg hover:bg-white/10 ${
+                  pinned ? "text-violet-300" : "text-white/35 hover:text-white/80"
+                }`}
+              >
+                <Pin className="h-3 w-3" />
+              </span>
+            )}
+          </span>
+          {!pinned && lm && (
+            <span className="hidden shrink-0 text-[11px] text-white/30 group-hover/row:hidden">
+              {timeHHmm(lm.createdAt)}
+            </span>
+          )}
         </div>
 
         <div className="mt-0.5 flex items-center justify-between gap-2">
@@ -529,7 +643,11 @@ function ConvRow({
           )}
         </div>
       </div>
-    </button>
+      {/* Булавка у закреплённого чата */}
+      {pinned && (
+        <Pin className="absolute top-2 right-2 h-3 w-3 rotate-45 text-violet-300/70" />
+      )}
+    </div>
   );
 }
 

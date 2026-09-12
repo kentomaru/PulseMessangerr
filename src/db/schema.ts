@@ -30,6 +30,9 @@ export const users = pgTable("users", {
   avatarUrl: text("avatar_url"),
   bannerUrl: text("banner_url"),
   bio: text("bio").notNull().default(""),
+  // Кастомный статус-эмодзи в профиле: обычный эмодзи («🔥») или ссылка
+  // на загруженную АНИМИРОВАННУЮ гифку (/api/files/…).
+  statusEmoji: text("status_emoji").notNull().default(""),
   lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).notNull().defaultNow(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   // Приватность
