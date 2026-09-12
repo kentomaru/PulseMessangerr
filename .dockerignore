@@ -1,0 +1,15 @@
+# В образ не должны попадать локальные артефакты:
+# node_modules на машине разработчика ломает установку зависимостей в сборке,
+# а .next — кэш прошлой сборки.
+node_modules
+.next
+out
+coverage
+data/uploads
+.env
+.env.*
+!.env.example
+*.log
+.DS_Store
+tsconfig.tsbuildinfo
+.git

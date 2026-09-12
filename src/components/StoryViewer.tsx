@@ -15,6 +15,8 @@ type Props = {
   onClose: () => void;
   onWatched: (storyId: string) => void;
   onDeleted: (storyId: string) => void;
+  /** Открыть карточку пользователя (автор истории или зритель). */
+  onViewUser?: (user: PublicUser) => void;
 };
 
 type Viewer = { user: PublicUser; viewedAt: string };
@@ -29,6 +31,7 @@ export default function StoryViewer({
   onClose,
   onWatched,
   onDeleted,
+  onViewUser,
 }: Props) {
   const [gi, setGi] = useState(startGroupIndex);
   const [si, setSi] = useState(0);
@@ -152,15 +155,23 @@ export default function StoryViewer({
           ))}
         </div>
 
-        {/* Шапка */}
+        {/* Шапка: кто выложил историю (клик — открыть профиль) */}
         <div className="flex items-center gap-3 px-4 py-3.5">
-          <Avatar name={group.user.displayName} src={group.user.avatarUrl} size={38} />
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-sm font-semibold">
-              {isMine ? "Ваша история" : group.user.displayName}
-            </p>
-            <p className="text-xs text-white/45">{timeAgo(story.createdAt)}</p>
-          </div>
+          <button
+            onClick={() => onViewUser?.(group.user)}
+            className="flex min-w-0 flex-1 items-center gap-3 text-left"
+            title="Открыть профиль"
+          >
+            <Avatar name={group.user.displayName} src={group.user.avatarUrl} size={38} />
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-sm font-semibold">
+                {isMine ? "Ваша история" : group.user.displayName}
+              </p>
+              <p className="truncate text-xs text-white/45">
+                выложил(а) {timeAgo(story.createdAt)} · @{group.user.username}
+              </p>
+            </div>
+          </button>
           {isMine && (
             <>
               <button
@@ -199,6 +210,28 @@ export default function StoryViewer({
                   {story.caption}
                 </p>
               </div>
+            )}
+          </div>
+
+          {/* Кто выложил + просмотры */}
+          <div className="pointer-events-none absolute inset-x-3 bottom-3 flex items-center gap-2">
+            <button
+              onClick={() => onViewUser?.(group.user)}
+              className="glass-strong pointer-events-auto flex min-w-0 items-center gap-2 rounded-full py-1.5 pr-3.5 pl-1.5"
+            >
+              <Avatar name={group.user.displayName} src={group.user.avatarUrl} size={24} />
+              <span className="max-w-40 truncate text-[11px] text-white/75">
+                выложил(а) {group.user.displayName}
+              </span>
+            </button>
+            {isMine && (
+              <button
+                onClick={() => void openViewers()}
+                className="glass-strong pointer-events-auto flex items-center gap-1.5 rounded-full px-3 py-2 text-[11px] text-white/75"
+              >
+                <Eye className="h-3.5 w-3.5" />
+                {story.viewCount}
+              </button>
             )}
           </div>
 
@@ -252,14 +285,19 @@ export default function StoryViewer({
             ) : (
               <div className="space-y-1">
                 {viewers.map((v) => (
-                  <div key={v.user.id} className="flex items-center gap-3 rounded-xl px-2 py-2">
+                  <button
+                    key={v.user.id}
+                    onClick={() => onViewUser?.(v.user)}
+                    className="flex w-full items-center gap-3 rounded-xl px-2 py-2 text-left transition-colors hover:bg-white/8"
+                    title="Открыть профиль"
+                  >
                     <Avatar name={v.user.displayName} src={v.user.avatarUrl} size={32} />
                     <div className="min-w-0">
                       <p className="truncate text-sm">{v.user.displayName}</p>
                       <p className="truncate text-xs text-white/35">@{v.user.username}</p>
                     </div>
                     <span className="ml-auto text-[11px] text-white/30">{timeAgo(v.viewedAt)}</span>
-                  </div>
+                  </button>
                 ))}
               </div>
             )}

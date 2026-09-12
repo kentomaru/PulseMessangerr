@@ -2,6 +2,7 @@ import { sql } from "drizzle-orm";
 import {
   boolean,
   index,
+  integer,
   jsonb,
   pgTable,
   primaryKey,
@@ -44,45 +45,38 @@ export const sessions = pgTable(
   (t) => [index("sessions_user_idx").on(t.userId)],
 );
 
-/** Диалоги (пока только личные чаты). */
-export const conversations = pgTable("conversations", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  isGroup: boolean("is_group").notNull().default(false),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-});
+/** Тип диалога: личный чат, группа (общаются все) или канал (пишут админы). */
+export type ConversationKind = "direct" | "group" | "channel";
+/** Роль участника в группе/канале. */
+export type MemberRole = "owner" | "admin" | "member";
 
 /**
- * Звонки (WebRTC). Сервер — только «сигнальный центр»:
- * хранит SDP-описания и ICE-кандидаты, пока стороны обмениваются ими,
- * а сам аудио/видео поток идёт напрямую между браузерами (P2P).
+ * Диалоги: личные чаты, группы и каналы (как в Discord/Telegram).
+ * isPrivate=true — «приватный»: его не видно в поиске/обнаружении,
+ * попасть внутрь можно только по приглашению или ссылке-инвайту.
  */
-export const calls = pgTable(
-  "calls",
+export const conversations = pgTable(
+  "conversations",
   {
     id: uuid("id").primaryKey().defaultRandom(),
-    conversationId: uuid("conversation_id")
-      .notNull()
-      .references(() => conversations.id, { onDelete: "cascade" }),
-    callerId: uuid("caller_id")
-      .notNull()
-      .references(() => users.id, { onDelete: "cascade" }),
-    calleeId: uuid("callee_id").references(() => users.id, { onDelete: "cascade" }),
-    media: text("media").notNull().default("audio"), // audio | video
-    status: text("status").notNull().default("ringing"), // ringing | active | ended | declined | missed
-    offerSdp: text("offer_sdp"),
-    answerSdp: text("answer_sdp"),
-    callerIce: jsonb("caller_ice").$type<RTCIceCandidateInit[]>().notNull().default(sql`'[]'::jsonb`),
-    calleeIce: jsonb("callee_ice").$type<RTCIceCandidateInit[]>().notNull().default(sql`'[]'::jsonb`),
+    kind: text("kind").notNull().default("direct"), // direct | group | channel
+    /** Оставлено для совместимости со старыми запросами/данными. */
+    isGroup: boolean("is_group").notNull().default(false),
+    name: text("name"),
+    avatarUrl: text("avatar_url"),
+    about: text("about").notNull().default(""),
+    isPrivate: boolean("is_private").notNull().default(true),
+    /** Токен постоянной ссылки-приглашения: /#group=<token>. */
+    inviteToken: text("invite_token").unique(),
+    ownerId: uuid("owner_id").references(() => users.id, { onDelete: "set null" }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-    answeredAt: timestamp("answered_at", { withTimezone: true }),
-    endedAt: timestamp("ended_at", { withTimezone: true }),
   },
-  (t) => [index("calls_callee_idx").on(t.calleeId, t.status)],
+  (t) => [index("conversations_kind_idx").on(t.kind, t.isPrivate)],
 );
 
-export type Call = typeof calls.$inferSelect;
+export type Conversation = typeof conversations.$inferSelect;
 
-/** Участник чата: прогресс прочтения, индикатор «печатает», личные обои чата. */
+/** Участник чата: роль, прогресс прочтения, «печатает», личные обои чата. */
 export const conversationMembers = pgTable(
   "conversation_members",
   {
@@ -92,11 +86,131 @@ export const conversationMembers = pgTable(
     userId: uuid("user_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
+    role: text("role").notNull().default("member"), // owner | admin | member
     lastReadAt: timestamp("last_read_at", { withTimezone: true }).notNull().defaultNow(),
     typingAt: timestamp("typing_at", { withTimezone: true }),
     wallpaper: text("wallpaper"),
+    joinedAt: timestamp("joined_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [primaryKey({ columns: [t.conversationId, t.userId] })],
+  (t) => [
+    primaryKey({ columns: [t.conversationId, t.userId] }),
+    index("conversation_members_user_idx").on(t.userId),
+  ],
+);
+
+export type ConversationMember = typeof conversationMembers.$inferSelect;
+
+/**
+ * Звонки. Одна строка = одна «комната» на диалог: в ней может быть
+ * сколько угодно участников (mesh-WebRTC, медиа идёт напрямую между браузерами).
+ * Сервер хранит только сигнальную информацию (SDP/ICE) и состав комнаты.
+ */
+export const calls = pgTable(
+  "calls",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    conversationId: uuid("conversation_id")
+      .notNull()
+      .references(() => conversations.id, { onDelete: "cascade" }),
+    /** Инициатор звонка (в логе сообщения — «кто звонил»). */
+    hostId: uuid("host_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    media: text("media").notNull().default("audio"), // audio | video
+    /** ringing — звонит одному человеку (ЛС), live — групповая комната. */
+    status: text("status").notNull().default("live"), // ringing | live | ended | declined | missed
+    /** Короткий токен публичной ссылки-приглашения: /#join=<token>. */
+    joinToken: text("join_token").notNull().unique(),
+    /** Сколько человек побывало в звонке (для красивого лога в чате). */
+    participantCount: integer("participant_count").notNull().default(0),
+    startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
+    answeredAt: timestamp("answered_at", { withTimezone: true }),
+    endedAt: timestamp("ended_at", { withTimezone: true }),
+  },
+  (t) => [
+    index("calls_conversation_idx").on(t.conversationId, t.status),
+    index("calls_join_token_idx").on(t.joinToken),
+  ],
+);
+
+export type Call = typeof calls.$inferSelect;
+
+/** Участник звонка + его сигнальное состояние (SDP, флаг видео, heartbeat). */
+export const callParticipants = pgTable(
+  "call_participants",
+  {
+    callId: uuid("call_id")
+      .notNull()
+      .references(() => calls.id, { onDelete: "cascade" }),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    /** SDP-оффер, который этот участник опубликовал для остальных. */
+    sdp: text("sdp"),
+    /** Включена ли камера (видно всем, чтобы рисовать плитку/аватар). */
+    videoOn: boolean("video_on").notNull().default(false),
+    muted: boolean("muted").notNull().default(false),
+    /** Присоединился по ссылке, не будучи участником чата. */
+    guest: boolean("guest").notNull().default(false),
+    joinedAt: timestamp("joined_at", { withTimezone: true }).notNull().defaultNow(),
+    leftAt: timestamp("left_at", { withTimezone: true }),
+    /** Последний опрос клиента: по нему сервер понимает, что звонок «умер». */
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.callId, t.userId] }),
+    index("call_participants_user_idx").on(t.userId),
+  ],
+);
+
+export type CallParticipant = typeof callParticipants.$inferSelect;
+
+/**
+ * Сигнальные сообщения между двумя участниками звонка
+ * (answer/offer/ice). Очередь на пару (call, from, to) — забирается опросом.
+ */
+export const callSignals = pgTable(
+  "call_signals",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    callId: uuid("call_id")
+      .notNull()
+      .references(() => calls.id, { onDelete: "cascade" }),
+    fromUserId: uuid("from_user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    toUserId: uuid("to_user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    kind: text("kind").notNull(), // offer | answer | ice
+    payload: jsonb("payload").notNull(),
+    readAt: timestamp("read_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("call_signals_to_idx").on(t.callId, t.toUserId, t.readAt)],
+);
+
+export type CallSignal = typeof callSignals.$inferSelect;
+
+/** Приглашения в звонок (ссылка «присоединиться» для конкретных людей). */
+export const callInvites = pgTable(
+  "call_invites",
+  {
+    callId: uuid("call_id")
+      .notNull()
+      .references(() => calls.id, { onDelete: "cascade" }),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    invitedBy: uuid("invited_by")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.callId, t.userId] }),
+    index("call_invites_user_idx").on(t.userId),
+  ],
 );
 
 /** Сообщения: text | image (content = url) | call (content = JSON-лог звонка). */
@@ -112,6 +226,8 @@ export const messages = pgTable(
       .references(() => users.id, { onDelete: "cascade" }),
     type: text("type").notNull().default("text"),
     content: text("content").notNull(),
+    /** Ответ на другое сообщение (reply/quote). */
+    replyToId: uuid("reply_to_id"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
     /** Ссылка на звонок, чтобы лог звонка не дублировался (unique-индекс ниже). */
@@ -119,9 +235,12 @@ export const messages = pgTable(
   },
   (t) => [
     index("messages_conversation_idx").on(t.conversationId, t.createdAt),
+    index("messages_reply_idx").on(t.replyToId),
     uniqueIndex("messages_call_id_key").on(t.callId),
   ],
 );
+
+export type Message = typeof messages.$inferSelect;
 
 /** Истории (как в Telegram): фото + подпись, исчезают через 24 часа. */
 export const stories = pgTable(
@@ -153,3 +272,14 @@ export const storyViews = pgTable(
   },
   (t) => [primaryKey({ columns: [t.storyId, t.userId] })],
 );
+
+/**
+ * Короткий уникальный токен для ссылок-приглашений.
+ * Используется Web Crypto API — он есть и в Node, и в edge-рантайме,
+ * поэтому файл схемы остаётся безопасным для любой сборки.
+ */
+export function newJoinToken(): string {
+  const bytes = new Uint8Array(12);
+  globalThis.crypto.getRandomValues(bytes);
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("").slice(0, 16);
+}
