@@ -86,5 +86,6 @@ export function publicUser(u: User) {
     showOnline: u.showOnline,
     allowCalls: u.allowCalls,
     allowMessages: u.allowMessages,
+    allowGroupInvites: u.allowGroupInvites,
   };
 }

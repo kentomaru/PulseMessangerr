@@ -19,9 +19,9 @@ const MAX_UPLOAD_BYTES = 500 * 1024 * 1024;
  * Файлы до этого размера дополнительно сохраняются в базу (надёжное хранилище).
  * Файловая система контейнера на Railway эфемерная: без копии в БД после
  * каждого редеплоя ВСЕ картинки (истории, баннеры, аватары) исчезали.
- * Большие видео остаются только на диске — как раньше.
+ * 100 МБ покрывает все истории (фото/видео до 100 МБ) и обычные вложения.
  */
-const DB_MIRROR_MAX_BYTES = 25 * 1024 * 1024;
+const DB_MIRROR_MAX_BYTES = 100 * 1024 * 1024;
 
 async function mirrorToDb(name: string, data: Buffer, mime: string): Promise<void> {
   if (data.length === 0 || data.length > DB_MIRROR_MAX_BYTES) return;

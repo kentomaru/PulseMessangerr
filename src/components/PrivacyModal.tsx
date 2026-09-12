@@ -9,6 +9,7 @@ import {
   MessageSquareLock,
   PhoneOff,
   Shield,
+  UsersRound,
   X,
 } from "lucide-react";
 import { ModalShell, Toggle } from "./ProfileModal";
@@ -39,13 +40,15 @@ export function PrivacySettings({
   const [showOnline, setShowOnline] = useState(me.showOnline);
   const [allowCalls, setAllowCalls] = useState(me.allowCalls);
   const [allowMessages, setAllowMessages] = useState(me.allowMessages);
+  const [allowGroupInvites, setAllowGroupInvites] = useState(me.allowGroupInvites);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
   const dirty =
     showOnline !== me.showOnline ||
     allowCalls !== me.allowCalls ||
-    allowMessages !== me.allowMessages;
+    allowMessages !== me.allowMessages ||
+    allowGroupInvites !== me.allowGroupInvites;
 
   const save = async () => {
     setSaving(true);
@@ -53,7 +56,7 @@ export function PrivacySettings({
     try {
       const d = await api<{ user: PublicUser }>("/api/auth/me", {
         method: "PATCH",
-        body: JSON.stringify({ showOnline, allowCalls, allowMessages }),
+        body: JSON.stringify({ showOnline, allowCalls, allowMessages, allowGroupInvites }),
       });
       onSaved(d.user);
       onDone?.();
@@ -92,6 +95,13 @@ export function PrivacySettings({
           icon={<MessageSquareLock className="h-4 w-4 text-white/50" />}
           label="Новые личные чаты"
           hint="Если выключить — незнакомцы не смогут начать с вами переписку"
+        />
+        <Toggle
+          checked={allowGroupInvites}
+          onChange={setAllowGroupInvites}
+          icon={<UsersRound className="h-4 w-4 text-white/50" />}
+          label="Добавление в группы"
+          hint="Если выключить — никто не сможет добавить вас в группу или канал"
         />
 
         {error && (

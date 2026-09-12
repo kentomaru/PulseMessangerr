@@ -40,6 +40,7 @@ export const PATCH = withApi("auth/me", async ({ req, me, log }) => {
   if (typeof body.showOnline === "boolean") patch.showOnline = body.showOnline;
   if (typeof body.allowCalls === "boolean") patch.allowCalls = body.allowCalls;
   if (typeof body.allowMessages === "boolean") patch.allowMessages = body.allowMessages;
+  if (typeof body.allowGroupInvites === "boolean") patch.allowGroupInvites = body.allowGroupInvites;
 
   if (Object.keys(patch).length === 0)
     return NextResponse.json({ error: "Нечего обновлять" }, { status: 400 });

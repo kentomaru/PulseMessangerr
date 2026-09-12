@@ -692,21 +692,34 @@ export default function ChatView({
     setConfirmDelete(message);
   }, []);
 
-  /** Загрузить свой стикер (гифку/картинку) и отправить его в чат. */
-  const [stickerBusy, setStickerBusy] = useState(false);
-  const sendStickerFile = useCallback(
-    async (file: File) => {
-      if (!file.type.startsWith("image/")) {
-        notify("Стикер — это картинка или гифка");
-        return;
-      }
-      if (file.size > 8 * 1024 * 1024) {
-        notify("Стикер — до 8 МБ");
-        return;
-      }
-      setStickerBusy(true);
+  /** Недавно загруженные стикеры (гифки) — переживают перезагрузку. */
+  const RECENT_STICKERS_KEY = "pulse_recent_stickers_v1";
+  const [recentStickers, setRecentStickers] = useState<string[]>(() => {
+    try {
+      const raw = localStorage.getItem(RECENT_STICKERS_KEY);
+      const arr = raw ? (JSON.parse(raw) as unknown) : [];
+      return Array.isArray(arr) ? arr.filter((x): x is string => typeof x === "string") : [];
+    } catch {
+      return [];
+    }
+  });
+  const rememberSticker = useCallback((url: string) => {
+    setRecentStickers((prev) => {
+      const next = [url, ...prev.filter((u) => u !== url)].slice(0, 24);
       try {
-        const url = await uploadFile(file);
+        localStorage.setItem(RECENT_STICKERS_KEY, JSON.stringify(next));
+      } catch {
+        /* ignore */
+      }
+      return next;
+    });
+  }, []);
+
+  /** Отправить картинку-стикер по готовой ссылке. */
+  const sendStickerUrl = useCallback(
+    async (url: string) => {
+      if (!canPost) return;
+      try {
         await api("/api/messages", {
           method: "POST",
           body: JSON.stringify({
@@ -720,11 +733,39 @@ export default function ChatView({
         refreshConversations();
       } catch (e) {
         notify(e instanceof Error ? e.message : "Не удалось отправить стикер");
+      }
+    },
+    [canPost, conversationId, load, refreshConversations, notify],
+  );
+
+  /** Загрузить свой стикер (гифку/картинку ЛЮБОГО расширения) и отправить его. */
+  const [stickerBusy, setStickerBusy] = useState(false);
+  const sendStickerFile = useCallback(
+    async (file: File) => {
+      // Гифку/вебм/пнг/джипег принимаем даже если браузер не определил MIME
+      // («гифка любого расширения»): смотрим и тип, и имя файла.
+      const okType = file.type.startsWith("image/");
+      const okName = /\.(gif|webp|png|jpe?g)$/i.test(file.name);
+      if (!okType && !okName) {
+        notify("Стикер — это картинка или гифка (gif, webp, png, jpg)");
+        return;
+      }
+      if (file.size > 8 * 1024 * 1024) {
+        notify("Стикер — до 8 МБ");
+        return;
+      }
+      setStickerBusy(true);
+      try {
+        const url = await uploadFile(file);
+        rememberSticker(url);
+        await sendStickerUrl(url);
+      } catch (e) {
+        notify(e instanceof Error ? e.message : "Не удалось отправить стикер");
       } finally {
         setStickerBusy(false);
       }
     },
-    [conversationId, load, refreshConversations, notify],
+    [rememberSticker, sendStickerUrl, notify],
   );
 
   /** Удалить чат (личный — у себя или для всех; группа — выйти/удалить). */
@@ -987,8 +1028,15 @@ export default function ChatView({
 
   return (
     <div className="relative flex h-full min-w-0 flex-1 flex-col">
-      {/* Обои */}
-      <div className="pointer-events-none absolute inset-0" style={wallpaperStyle(wallpaper)} aria-hidden />
+      {/* Обои: key по значению — при смене пресета элемент пересоздаётся,
+          и CSS-анимация «живых» обоев гарантированно перезапускается
+          (раньше второй живой пресет не играл до перезагрузки страницы). */}
+      <div
+        key={wallpaper ?? "default"}
+        className="pointer-events-none absolute inset-0"
+        style={wallpaperStyle(wallpaper)}
+        aria-hidden
+      />
       {wallpaper?.startsWith("/api/files/") && (
         <div className="pointer-events-none absolute inset-0 bg-[#0a0a14]/70" aria-hidden />
       )}
@@ -1631,6 +1679,11 @@ export default function ChatView({
                   onSendSticker={(s) => {
                     setEmojiOpen(false);
                     void send(s);
+                  }}
+                  recentStickers={recentStickers}
+                  onSendStickerUrl={(u) => {
+                    setEmojiOpen(false);
+                    void sendStickerUrl(u);
                   }}
                   onUploadSticker={(f) => {
                     setEmojiOpen(false);
@@ -2378,7 +2431,9 @@ function MessageBubble({
 }) {
   const sender = message.sender;
   const alignRight = own && !space;
-  const canEdit = own && (message.type === "text" || message.type === "image" || message.type === "file");
+  // Редактируется только текст: у картинок/файлов/гифок-стикеров содержимое —
+  // JSON-вложение, правка «как текста» ломала его (баг «изменено, но пусто»).
+  const canEdit = own && message.type === "text";
 
   // долгое нажатие на телефоне = контекстное меню
   const longPress = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -3094,6 +3149,8 @@ function ConfirmDeleteModal({
 function EmojiPicker({
   onPick,
   onSendSticker,
+  recentStickers,
+  onSendStickerUrl,
   onUploadSticker,
   stickerBusy,
   onClose,
@@ -3101,6 +3158,10 @@ function EmojiPicker({
   onPick: (emoji: string) => void;
   /** Отправить стикер отдельным сообщением. */
   onSendSticker: (sticker: string) => void;
+  /** Недавно загруженные пользователем гифки-стикеры. */
+  recentStickers: string[];
+  /** Отправить загруженный ранее стикер по ссылке. */
+  onSendStickerUrl: (url: string) => void;
   /** Загрузить свой стикер (гифку/картинку) и отправить его. */
   onUploadSticker: (file: File) => void;
   stickerBusy?: boolean;
@@ -3159,6 +3220,18 @@ function EmojiPicker({
         /* Стикеры: нажатие сразу отправляет их в чат крупным сообщением */
         <>
           <div className="nice-scroll grid max-h-64 grid-cols-6 gap-1 overflow-y-auto p-2.5 max-sm:grid-cols-5">
+            {/* Недавние: загруженные вами гифки-стикеры сохраняются между сессиями */}
+            {recentStickers.map((u) => (
+              <button
+                key={u}
+                onClick={() => onSendStickerUrl(u)}
+                title="Отправить недавний стикер"
+                className="flex h-14 items-center justify-center overflow-hidden rounded-2xl transition-transform hover:scale-110 hover:bg-white/8 active:scale-95"
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={u} alt="" className="h-full w-full object-contain" draggable={false} />
+              </button>
+            ))}
             {STICKERS.map((s) => (
               <button
                 key={s}

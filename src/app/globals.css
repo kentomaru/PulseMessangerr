@@ -27,15 +27,43 @@ body {
   color: rgb(255 255 255 / 0.92);
   font-size: 15px;
   line-height: 1.45;
-  /* Глубокий чернично-графитовый фон: темнее и «дороже», с мягкими
-     цветовыми акцентами — интерфейс не выглядит плоским и не давит. */
-  background-color: #090911;
+  /* «Аврора»: глубокий космический фон из трёх цветных туманностей —
+     фиолетовая сверху-слева, бирюзовая справа и розовая снизу.
+     Смотрится как дорогой современный мессенджер, не плоский. */
+  background-color: #08070f;
   background-image:
-    radial-gradient(55rem 55rem at 12% -12%, rgb(109 40 217 / 0.22), transparent 60%),
-    radial-gradient(48rem 48rem at 108% 12%, rgb(14 165 233 / 0.12), transparent 58%),
-    radial-gradient(46rem 46rem at 50% 118%, rgb(236 72 153 / 0.1), transparent 60%);
+    radial-gradient(60rem 60rem at 10% -14%, rgb(124 58 237 / 0.30), transparent 62%),
+    radial-gradient(52rem 52rem at 110% 8%, rgb(34 211 238 / 0.16), transparent 60%),
+    radial-gradient(50rem 50rem at 46% 122%, rgb(236 72 153 / 0.16), transparent 62%),
+    radial-gradient(30rem 30rem at 85% 90%, rgb(59 130 246 / 0.12), transparent 60%);
   background-attachment: fixed;
   -webkit-font-smoothing: antialiased;
+}
+
+/* Живое свечение: две мягких «туманности» медленно дрейфуют по экрану.
+   Чистый CSS, transform-анимации — почти бесплатно для батареи. */
+body::after {
+  content: "";
+  position: fixed;
+  inset: -20%;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(26rem 26rem at 22% 30%, rgb(139 92 246 / 0.13), transparent 70%),
+    radial-gradient(30rem 30rem at 78% 72%, rgb(14 165 233 / 0.10), transparent 70%);
+  animation: aurora-drift 48s ease-in-out infinite alternate;
+}
+
+@keyframes aurora-drift {
+  0% {
+    transform: translate3d(-3%, -2%, 0) scale(1);
+  }
+  50% {
+    transform: translate3d(2.5%, 3%, 0) scale(1.06);
+  }
+  100% {
+    transform: translate3d(3.5%, -2.5%, 0) scale(1.02);
+  }
 }
 
 /* Лёгкое «зерно» поверх фона — делает тёмные поверхности глубже. */

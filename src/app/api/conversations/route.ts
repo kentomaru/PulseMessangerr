@@ -185,6 +185,17 @@ export const POST = withApi("conversations:create", async ({ req, me, log }) => 
     const invited = (await findUsersByIds(memberIds)).filter((u) => u.id !== me.id);
     if (invited.length > 200)
       return NextResponse.json({ error: "Слишком много участников" }, { status: 400 });
+    // Приватность: пользователи, запретившие добавление в группы, не приглашаются.
+    const blocked = invited.filter((u) => !u.allowGroupInvites);
+    if (blocked.length > 0) {
+      const names = blocked.map((u) => `@${u.username}`).join(", ");
+      return NextResponse.json(
+        {
+          error: `Нельзя добавить: ${names} запретили добавление в группы в настройках приватности`,
+        },
+        { status: 403 },
+      );
+    }
 
     const [conv] = await db
       .insert(conversations)

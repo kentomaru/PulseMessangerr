@@ -210,7 +210,9 @@ export default function StoryViewer({
 
         {/* Изображение или видео */}
         <div className="relative min-h-0 flex-1 px-3 pb-4">
-          <div className="relative h-full overflow-hidden rounded-3xl bg-black/40">
+          {/* key по истории: при переходе к чужой истории медиа пересоздаётся,
+              иначе браузер мог на мгновение показать КАДР И АВАТАР предыдущей. */}
+          <div key={story.id} className="relative h-full overflow-hidden rounded-3xl bg-black/40">
             {/* Подложка: то же фото, растянутое и размытое — кадр заполняет
                 экран целиком и не выглядит «маленькой картинкой в пустоте». */}
             {!storyIsVideo && !mediaBroken && (

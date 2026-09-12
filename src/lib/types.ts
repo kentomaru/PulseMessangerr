@@ -12,6 +12,7 @@ export type PublicUser = {
   showOnline: boolean;
   allowCalls: boolean;
   allowMessages: boolean;
+  allowGroupInvites: boolean;
 };
 
 export type Peer = PublicUser & { lastReadAt?: string | null; typingAt?: string | null };

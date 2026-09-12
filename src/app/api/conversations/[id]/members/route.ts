@@ -62,10 +62,22 @@ export const POST = withApi<{ id: string }>("conversations:members:add", async (
   const existingIds = new Set(existing.map((e) => e.userId));
 
   const added: typeof users.$inferSelect[] = [];
+  const blocked: string[] = [];
   for (const u of targets) {
     if (existingIds.has(u.id)) continue;
+    // Приватность: кто запретил добавление в группы — пропускаем с пояснением.
+    if (!u.allowGroupInvites) {
+      blocked.push(`@${u.username}`);
+      continue;
+    }
     await ensureMember(id, u.id, "member");
     added.push(u);
+  }
+  if (added.length === 0 && blocked.length > 0) {
+    return NextResponse.json(
+      { error: `Никого не добавили: ${blocked.join(", ")} запретили добавление в группы в настройках приватности` },
+      { status: 403 },
+    );
   }
 
   log.info("Добавлены участники", {
