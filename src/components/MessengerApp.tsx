@@ -675,6 +675,7 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
         onToggleCamera={() => void callCtl.toggleCamera()}
         onToggleScreenShare={() => void callCtl.toggleScreenShare()}
         onReconnectMedia={() => void callCtl.reconnectMedia()}
+        audioWatchdog={callCtl.audioWatchdog}
         onCopyLink={callCtl.getShareLink}
         onInvite={callCtl.inviteUsers}
         onViewUser={(u) => setViewUser(u)}

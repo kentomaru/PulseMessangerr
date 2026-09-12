@@ -27,6 +27,7 @@ import {
   Mic,
   MicOff,
   Minimize,
+  Activity,
   Minimize2,
   MonitorOff,
   MonitorUp,
@@ -91,6 +92,8 @@ type Props = {
   onApplyAudioSettings: (s: AudioSettings) => void;
   /** Текущий уровень микрофона (0–100) для индикатора. */
   micLevelRef: React.RefObject<number>;
+  /** Живая статистика звука по каждому участнику (для панели «Диагностика»). */
+  audioWatchdog?: Record<string, { conn: string; sentKB: number; recvKB: number }>;
   /** Уровень связи с каждым участником: 0–3 «палочки». */
   connQuality?: Record<string, number>;
 };
@@ -980,8 +983,10 @@ function Controls({
   onShareLink,
   notify,
   micLevelRef,
+  audioWatchdog,
 }: WindowProps & { compact?: boolean }) {
   const [audioPanel, setAudioPanel] = useState(false);
+  const [diagOpen, setDiagOpen] = useState(false);
 
   return (
     <div
@@ -1006,6 +1011,42 @@ function Controls({
       </Control>
       {/* Живой уровень микрофона — сразу видно, ловится ли голос */}
       {!compact && <MicMeter micLevelRef={micLevelRef} />}
+      {!compact && (
+        <Control
+          small={compact}
+          active={diagOpen}
+          onClick={() => setDiagOpen((v) => !v)}
+          title="Диагностика связи: сколько звука уходит и приходит"
+        >
+          <Activity className="h-4.5 w-4.5" />
+        </Control>
+      )}
+      {!compact && diagOpen && (
+        <div className="absolute bottom-full left-1/2 mb-3 w-72 -translate-x-1/2 rounded-xl border border-white/10 bg-[#0a1120]/95 p-3 text-left backdrop-blur-xl">
+          <p className="mb-2 text-[11px] font-semibold text-white/70">
+            Диагностика звука
+          </p>
+          <div className="space-y-1.5">
+            {Object.keys(audioWatchdog ?? {}).length === 0 && (
+              <p className="text-[11px] text-white/40">Пока нет соединений…</p>
+            )}
+            {Object.entries(audioWatchdog ?? {}).map(([uid, d]) => (
+              <div key={uid} className="flex items-center justify-between text-[11px]">
+                <span className={d.conn === "connected" ? "text-emerald-300" : "text-amber-300"}>
+                  {d.conn || "…"}
+                </span>
+                <span className="text-white/60">
+                  ↑ {d.sentKB} КБ · ↓ {d.recvKB} КБ
+                </span>
+              </div>
+            ))}
+          </div>
+          <p className="mt-2 text-[10px] leading-relaxed text-white/35">
+            Если при разговоре ↑ растёт, а ↓ не растёт (или наоборот) — напишите
+            об этом разработчику вместе с цифрами.
+          </p>
+        </div>
+      )}
       <Control
         small={compact}
         active={!cameraOn}

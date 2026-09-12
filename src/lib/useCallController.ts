@@ -327,16 +327,26 @@ export function useCallController(
       }
       const remote = stream;
 
-      pc.ontrack = (e) => {
-        // ВАЖНО: берём именно e.track — дорожку ЭТОГО события. Раньше брали
-        // e.streams[0].getTracks()[0], но к моменту второго события (видео)
-        // в потоке уже лежит аудио, и оно всегда оказывалось «первым» —
-        // видеодорожка молча отбрасывалась. Итог: собеседник слышал звук,
-        // но не видел ни камеру, ни демонстрацию экрана.
-        const t = e.track;
-        if (t && !remote.getTracks().some((x) => x.id === t.id)) remote.addTrack(t);
+    pc.ontrack = (e) => {
+      // ВАЖНО: берём именно e.track — дорожку ЭТОГО события. Раньше брали
+      // e.streams[0].getTracks()[0], но к моменту второго события (видео)
+      // в потоке уже лежит аудио, и оно всегда оказывалось «первым» —
+      // видеодорожка молча отбрасивалась. Итог: собеседник слышал звук,
+      // но не видел ни камеру, ни демонстрацию экрана.
+      const t = e.track;
+      if (t && !remote.getTracks().some((x) => x.id === t.id)) remote.addTrack(t);
+      publishStreams();
+      // Дорожка закончилась (собеседник выключил демку/камеру целиком) —
+      // мгновенно убираем её из потока, чтобы плитка не висела чёрной.
+      t.onended = () => {
+        try {
+          remote.removeTrack(t);
+        } catch {
+          /* уже убрана */
+        }
         publishStreams();
       };
+    };
       pc.onicecandidate = (e) => {
         if (e.candidate && callId) void sendSignal(callId, peerId, "ice", e.candidate.toJSON());
       };
@@ -535,6 +545,132 @@ export function useCallController(
     },
     [createLink, dropPeer, flushIce, iShouldOffer, sendSignal],
   );
+
+  /**
+   * СТОРОЖ ЗВУКА. Каждые 3 секунды читаем реальную статистику соединений
+   * (сколько байт звука отправлено/получено). Если связь установлена, но
+   * звук не течёт >10 секунд — чиним сами: свежий захват микрофона +
+   * пересогласование. Плюс отдаём цифры на экран («Диагностика»), чтобы
+   * всегда было видно, где именно тишина.
+   */
+  const [audioWatchdog, setAudioWatchdog] = useState<
+    Record<string, { conn: string; sentKB: number; recvKB: number }>
+  >({});
+  const watchdogRef = useRef<
+    Record<string, { sent: number; recv: number; stuck: number }>
+  >({});
+  const lastHealRef = useRef(0);
+
+  const healAudioNow = useCallback(async () => {
+    const now = Date.now();
+    if (now - lastHealRef.current < 15_000) return;
+    lastHealRef.current = now;
+    try {
+      const fresh = await navigator.mediaDevices.getUserMedia({
+        audio: audioConstraints(),
+      });
+      const nt = fresh.getAudioTracks()[0];
+      if (!nt) return;
+      const stream = localStreamRef.current;
+      const wasMuted = mutedRef.current;
+      if (stream) {
+        stream.getAudioTracks().forEach((t) => {
+          stream.removeTrack(t);
+          t.stop();
+        });
+        stream.addTrack(nt);
+        localStreamRef.current = stream;
+      }
+      nt.enabled = !wasMuted;
+      let added = false;
+      for (const l of linksRef.current.values()) {
+        const snd = l.pc.getSenders().find((x) => x.track?.kind === "audio");
+        if (snd) await snd.replaceTrack(nt).catch(() => {});
+        else {
+          l.pc.addTrack(nt, localStreamRef.current!);
+          added = true;
+        }
+      }
+      if (added) {
+        await renegotiateAllRef.current();
+      } else {
+        // Пересогласование с ICE-рестартом для каждого пира — перестраиваем
+        // маршрут звука начисто (то же самое, что «чинило» демку, но само).
+        const s2 = sessionRef.current;
+        if (s2) {
+          for (const [peerId, l] of linksRef.current) {
+            try {
+              l.offering = true;
+              l.offeringSince = Date.now();
+              const offer = await l.pc.createOffer({ iceRestart: true });
+              await l.pc.setLocalDescription(offer);
+              await sendSignal(s2.id, peerId, "offer", {
+                type: offer.type,
+                sdp: offer.sdp,
+              });
+            } catch {
+              l.offering = false;
+              l.offeringSince = null;
+            }
+          }
+        }
+      }
+      setStreamTick((v) => v + 1);
+      restartVoiceGateRef.current();
+    } catch {
+      /* микрофон занят — попробуем в следующий раз */
+    }
+  }, []);
+
+  useEffect(() => {
+    const s = session;
+    if (!s || s.status !== "live") return;
+    const t = setInterval(() => {
+      (async () => {
+        const diag: Record<string, { conn: string; sentKB: number; recvKB: number }> = {};
+        let anyStuck = false;
+        for (const [peerId, l] of linksRef.current) {
+          let sent = 0;
+          let recv = 0;
+          try {
+            const stats = await l.pc.getStats();
+            stats.forEach((r) => {
+              if (r.type === "outbound-rtp" && r.kind === "audio")
+                sent = (r as RTCOutboundRtpStreamStats).bytesSent ?? sent;
+              if (r.type === "inbound-rtp" && r.kind === "audio")
+                recv = (r as RTCInboundRtpStreamStats).bytesReceived ?? recv;
+            });
+          } catch {
+            continue;
+          }
+          const prev = watchdogRef.current[peerId] ?? { sent: -1, recv: -1, stuck: 0 };
+          if (prev.sent >= 0) {
+            // Байты должны РАСТИ каждый интервал, пока соединение живое.
+            if (sent <= prev.sent && recv <= prev.recv) prev.stuck += 1;
+            else prev.stuck = 0;
+            if (prev.stuck >= 4) {
+              anyStuck = true;
+              prev.stuck = 0;
+            }
+          }
+          prev.sent = sent;
+          prev.recv = recv;
+          watchdogRef.current[peerId] = prev;
+          diag[peerId] = {
+            conn: l.pc.connectionState,
+            sentKB: Math.round(sent / 1024),
+            recvKB: Math.round(recv / 1024),
+          };
+        }
+        setAudioWatchdog(diag);
+        if (anyStuck) void healAudioNow();
+      })();
+    }, 3_000);
+    return () => {
+      clearInterval(t);
+      watchdogRef.current = {};
+    };
+  }, [session, healAudioNow]);
 
   /** Применить состояние комнаты к локальному состоянию + синхронизировать mesh. */
   const applyState = useCallback(
@@ -1279,18 +1415,35 @@ export function useCallController(
     // Статус «демонстрация выключена» — сразу, без ожидания опроса сервера
     patchMyMediaState({ screenOn: false });
 
-    // возвращаем камеру (если включена) или пустую дорожку
+    // ЧТО ВИДИТ СОБЕСЕДНИК: либо живую камеру, либо НИЧЕГО.
+    // Раньше мы подставляли на место демки выключенную/пустую дорожку — и
+    // у второго участника висела ЧЁРНАЯ плитка. Теперь: рабочая камера
+    // включена → подменяем на неё; иначе → ПОЛНОСТЬЮ убираем видеодорожку
+    // и делаем пересогласование: у собеседника дорожка реально «заканчивается»
+    // и чёрная плитка исчезает.
     const cameraTrack = localStreamRef.current?.getVideoTracks()[0] ?? null;
+    const cameraUsable =
+      !!cameraTrack && cameraTrack.readyState === "live" && cameraTrack.enabled;
+    let needsRenegotiate = false;
     for (const l of linksRef.current.values()) {
-      const sender = l.pc.getSenders().find((x) => x.track?.kind === "video");
-      if (sender) void sender.replaceTrack(cameraTrack).catch(() => {});
+      const sender = l.pc.getSenders().find(
+        (x) => x.track?.kind === "video" || x.track === null,
+      );
+      if (!sender) continue;
+      if (cameraUsable) {
+        void sender.replaceTrack(cameraTrack).catch(() => {});
+      } else {
+        l.pc.removeTrack(sender);
+        needsRenegotiate = true;
+      }
     }
+    if (needsRenegotiate) void renegotiateAll();
     if (s)
       void api(`/api/calls/${s.id}`, {
         method: "POST",
         body: JSON.stringify({ action: "state", screenOn: false }),
       }).catch(() => {});
-  }, [patchMyMediaState]);
+  }, [patchMyMediaState, renegotiateAll]);
 
   const stopScreenShareRef = useRef(stopScreenShare);
   stopScreenShareRef.current = stopScreenShare;
@@ -1396,6 +1549,7 @@ export function useCallController(
     seconds,
     connQuality,
     reconnectMedia,
+    audioWatchdog,
     minimized,
     setMinimized,
     streamTick,
