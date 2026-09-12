@@ -1,0 +1,8 @@
+[{
+      "relation": ["delegate_permission/common.handle_all_urls"],
+      "target": {
+        "namespace": "android_app",
+        "package_name": "app.railway.up.pulsemessangerr_production.twa",
+        "sha256_cert_fingerprints": ["AC:94:0F:E6:A9:26:1A:A1:15:E7:C5:27:1C:DF:F7:D1:90:5F:6C:24:14:C4:1A:30:7B:F7:36:63:D8:88:D5:8C"]
+      }
+    }]
