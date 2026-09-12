@@ -61,6 +61,18 @@ export default function ProfileModal({ me, onClose, onSaved, onDeletedAccount }:
       const url = await uploadFile(file);
       if (kind === "avatar") setAvatarUrl(url);
       else setBannerUrl(url);
+      // ВАЖНО: применяем СРАЗУ после загрузки, не дожидаясь «Сохранить».
+      // Раньше пользователь выбирал фото, закрывал окно — и оставалось
+      // старое («фотку сменить нельзя»).
+      try {
+        const d = await api<{ user: PublicUser }>("/api/auth/me", {
+          method: "PATCH",
+          body: JSON.stringify(kind === "avatar" ? { avatarUrl: url } : { bannerUrl: url }),
+        });
+        onSaved(d.user);
+      } catch {
+        /* сохранится вместе с кнопкой «Сохранить» */
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Ошибка загрузки");
     } finally {
@@ -287,7 +299,7 @@ export default function ProfileModal({ me, onClose, onSaved, onDeletedAccount }:
           {/* Имя видно сразу при редактировании профиля + статус-эмодзи рядом */}
           <p className="flex items-center justify-center gap-2">
             <span className="font-display text-lg font-bold">{displayName || me.username}</span>
-            <StatusEmoji value={statusEmoji} size={20} />
+            <StatusEmoji value={statusEmoji} size={28} />
           </p>
           <p className="text-xs text-white/35">@{me.username}</p>
         </div>
@@ -327,7 +339,7 @@ export default function ProfileModal({ me, onClose, onSaved, onDeletedAccount }:
           <div className="flex items-center gap-3 rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3">
             <div className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-white/[0.06]">
               {statusEmoji ? (
-                <StatusEmoji value={statusEmoji} size={22} />
+                <StatusEmoji value={statusEmoji} size={30} />
               ) : (
                 <span className="text-[11px] text-white/25">нет</span>
               )}

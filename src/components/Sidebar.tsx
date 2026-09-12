@@ -202,7 +202,7 @@ export default function Sidebar({
             title="Открыть профиль"
           >
             <span className="truncate">@{me.username}</span>
-            {me.statusEmoji && <StatusEmoji value={me.statusEmoji} size={13} />}
+            {me.statusEmoji && <StatusEmoji value={me.statusEmoji} size={16} />}
           </button>
         </div>
 

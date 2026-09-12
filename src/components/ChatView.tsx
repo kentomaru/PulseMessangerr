@@ -1046,7 +1046,7 @@ export default function ChatView({
 
       {/* Шапка — z-30: выпадающее меню «⋮» должно быть НАД областью сообщений
           (раньше оба блока были z-10, сообщения перекрывали меню — клики «не работали») */}
-      <div className="glass-strong relative z-30 flex items-center gap-3 border-b border-white/8 px-4 py-3">
+      <div className="glass-strong chrome-line relative z-30 flex items-center gap-3 border-b border-white/8 px-4 py-3">
         <button
           onClick={onBack}
           className="glass flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-white/70 md:hidden"
@@ -1069,7 +1069,7 @@ export default function ChatView({
               <span className="truncate">{title}</span>
               {/* Кастомный статус-эмодзи собеседника (эмодзи или анимированная гифка) */}
               {kind === "direct" && peerState?.statusEmoji && (
-                <StatusEmoji value={peerState.statusEmoji} size={16} />
+                <StatusEmoji value={peerState.statusEmoji} size={24} />
               )}
               {isSaved && <Bookmark className="h-3.5 w-3.5 shrink-0 text-amber-300" />}
               {isSpace && kind === "channel" && <Megaphone className="h-3.5 w-3.5 shrink-0 text-cyan-300" />}

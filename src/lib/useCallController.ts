@@ -45,7 +45,22 @@ import type {
  *   NEXT_PUBLIC_TURN_CREDENTIAL=secret
  */
 const ICE_SERVERS: RTCIceServer[] = [
-  { urls: ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"] },
+  // Несколько STUN + открытый TURN-релей: если сеть режет UDP (прокси,
+  // корпоративные ограничения), медиа всё равно пройдёт через TURN.
+  // Раньше был только один STUN — в «плохих» сетях звук/видео могли не
+  // идти вовсе, пока включение демки не перезапускало соединение.
+  {
+    urls: [
+      "stun:stun.l.google.com:19302",
+      "stun:stun1.l.google.com:19302",
+      "stun:stun2.l.google.com:19302",
+    ],
+  },
+  {
+    urls: ["turn:openrelay.metered.ca:80", "turn:openrelay.metered.ca:443", "turns:openrelay.metered.ca:443"],
+    username: "openrelayproject",
+    credential: "openrelayproject",
+  },
   ...(process.env.NEXT_PUBLIC_TURN_URL
     ? [
         {

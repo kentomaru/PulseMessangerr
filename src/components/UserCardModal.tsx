@@ -17,14 +17,22 @@ type Props = {
 
 export default function UserCardModal({ user, onClose, onMessage }: Props) {
   // Баннер мог не дожить до текущего запуска (битый файл) — тогда градиент
-  // вместо «сломанной картинки».
+  // вместо «сломанной картинки». При ошибке сети делаем ОДНУ повторную
+  // попытку с новым параметром — «баннеры хуёво грузят» чаще всего именно
+  // временный сбой/кэш.
   const [bannerBroken, setBannerBroken] = useState(false);
+  const [bannerRetried, setBannerRetried] = useState(false);
   useEffect(() => {
     setBannerBroken(false);
+    setBannerRetried(false);
   }, [user.bannerUrl]);
   const showBanner = !!user.bannerUrl && !bannerBroken;
   // Живой/пресетный баннер рисуется CSS-фоном (анимация), файл — картинкой
   const bannerIsFile = isFileBanner(user.bannerUrl);
+  const bannerSrc =
+    user.bannerUrl && bannerRetried
+      ? `${user.bannerUrl}${user.bannerUrl.includes("?") ? "&" : "?"}r=1`
+      : user.bannerUrl ?? undefined;
 
   return (
     <ModalShell onClose={onClose}>
@@ -37,10 +45,14 @@ export default function UserCardModal({ user, onClose, onMessage }: Props) {
         {showBanner && bannerIsFile && (
           // eslint-disable-next-line @next/next/no-img-element
           <img
-            src={user.bannerUrl ?? undefined}
+            src={bannerSrc}
             alt="Баннер"
+            loading="eager"
             className="h-full w-full object-cover"
-            onError={() => setBannerBroken(true)}
+            onError={() => {
+              if (!bannerRetried) setBannerRetried(true);
+              else setBannerBroken(true);
+            }}
           />
         )}
         <div className="absolute inset-0 bg-gradient-to-t from-black/55 to-transparent" />
@@ -56,7 +68,7 @@ export default function UserCardModal({ user, onClose, onMessage }: Props) {
         <h3 className="flex items-center justify-center gap-2">
           <span className="font-display text-xl font-bold">{user.displayName}</span>
           {/* Кастомный статус-эмодзи: эмодзи или анимированная гифка */}
-          <StatusEmoji value={user.statusEmoji} size={22} />
+          <StatusEmoji value={user.statusEmoji} size={30} />
         </h3>
         <p className="mt-0.5 text-sm text-white/40">@{user.username}</p>
         <p className={`mt-1.5 text-xs font-medium ${user.online ? "text-emerald-400" : "text-white/35"}`}>

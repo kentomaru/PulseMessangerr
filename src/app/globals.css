@@ -27,43 +27,18 @@ body {
   color: rgb(255 255 255 / 0.92);
   font-size: 15px;
   line-height: 1.45;
-  /* «Аврора»: глубокий космический фон из трёх цветных туманностей —
-     фиолетовая сверху-слева, бирюзовая справа и розовая снизу.
-     Смотрится как дорогой современный мессенджер, не плоский. */
-  background-color: #08070f;
+  /* Фон мессенджера: глубокий сапфирово-фиолетовый градиент с мягкими
+     статичными свечениями. Никаких «плавающих» пятен — спокойный,
+     дорогой и ровный фон, на котором интерфейс читается идеально. */
+  background-color: #0a0915;
   background-image:
-    radial-gradient(60rem 60rem at 10% -14%, rgb(124 58 237 / 0.30), transparent 62%),
-    radial-gradient(52rem 52rem at 110% 8%, rgb(34 211 238 / 0.16), transparent 60%),
-    radial-gradient(50rem 50rem at 46% 122%, rgb(236 72 153 / 0.16), transparent 62%),
-    radial-gradient(30rem 30rem at 85% 90%, rgb(59 130 246 / 0.12), transparent 60%);
+    linear-gradient(168deg, #131029 0%, #0a0915 48%, #0b0d1d 100%),
+    radial-gradient(52rem 34rem at 8% -8%, rgb(109 40 217 / 0.20), transparent 65%),
+    radial-gradient(44rem 30rem at 100% 0%, rgb(37 99 235 / 0.14), transparent 62%),
+    radial-gradient(48rem 32rem at 50% 112%, rgb(168 85 247 / 0.12), transparent 65%);
+  background-blend-mode: normal, screen, screen, screen;
   background-attachment: fixed;
   -webkit-font-smoothing: antialiased;
-}
-
-/* Живое свечение: две мягких «туманности» медленно дрейфуют по экрану.
-   Чистый CSS, transform-анимации — почти бесплатно для батареи. */
-body::after {
-  content: "";
-  position: fixed;
-  inset: -20%;
-  z-index: 0;
-  pointer-events: none;
-  background:
-    radial-gradient(26rem 26rem at 22% 30%, rgb(139 92 246 / 0.13), transparent 70%),
-    radial-gradient(30rem 30rem at 78% 72%, rgb(14 165 233 / 0.10), transparent 70%);
-  animation: aurora-drift 48s ease-in-out infinite alternate;
-}
-
-@keyframes aurora-drift {
-  0% {
-    transform: translate3d(-3%, -2%, 0) scale(1);
-  }
-  50% {
-    transform: translate3d(2.5%, 3%, 0) scale(1.06);
-  }
-  100% {
-    transform: translate3d(3.5%, -2.5%, 0) scale(1.02);
-  }
 }
 
 /* Лёгкое «зерно» поверх фона — делает тёмные поверхности глубже. */
@@ -175,8 +150,26 @@ select:focus-visible,
 }
 
 .nice-scroll::-webkit-scrollbar-thumb {
-  background: rgb(255 255 255 / 0.14);
+  background: linear-gradient(180deg, rgb(139 92 246 / 0.4), rgb(217 70 239 / 0.28));
   border-radius: 999px;
+}
+
+.nice-scroll::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, rgb(139 92 246 / 0.6), rgb(217 70 239 / 0.45));
+}
+
+/* Градиентная «линия света» под шапкой чата и над полем ввода */
+.chrome-line {
+  position: relative;
+}
+.chrome-line::after {
+  content: "";
+  position: absolute;
+  inset-inline: 0;
+  bottom: -1px;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgb(139 92 246 / 0.45), rgb(34 211 238 / 0.3), transparent);
+  pointer-events: none;
 }
 
 .nice-scroll::-webkit-scrollbar-track {

@@ -1234,7 +1234,15 @@ function RemoteAudio({ userId }: { userId: string }) {
       if (el && el.srcObject !== stream) {
         el.srcObject = stream ?? null;
         void el.play().catch(() => {
-          /* автоплей добьётся после первого жеста */
+          // Автоплей заблокирован до первого жеста — доиграем по первому
+          // клику/касанию, чтобы звонок не оставался немым.
+          const retry = () => {
+            void el.play().catch(() => {});
+            window.removeEventListener("pointerdown", retry, true);
+            window.removeEventListener("keydown", retry, true);
+          };
+          window.addEventListener("pointerdown", retry, true);
+          window.addEventListener("keydown", retry, true);
         });
       }
     };
