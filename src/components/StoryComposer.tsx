@@ -1,9 +1,10 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { ImagePlus, Loader2, Send, X } from "lucide-react";
+import { Film, ImagePlus, Loader2, Send, X } from "lucide-react";
 import { ModalShell } from "./ProfileModal";
 import { api, uploadFile } from "@/lib/api";
+import { formatBytes } from "@/lib/format";
 import type { StoryItem } from "@/lib/types";
 
 type Props = {
@@ -12,7 +13,9 @@ type Props = {
   notify: (msg: string) => void;
 };
 
-/** Создание истории: фото + подпись, живёт 24 часа. */
+const MAX_STORY_BYTES = 500 * 1024 * 1024;
+
+/** Создание истории: фото или видео + подпись, живёт 24 часа. */
 export default function StoryComposer({ onClose, onPublished, notify }: Props) {
   const [file, setFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
@@ -21,19 +24,27 @@ export default function StoryComposer({ onClose, onPublished, notify }: Props) {
   const [error, setError] = useState("");
   const inputRef = useRef<HTMLInputElement | null>(null);
 
+  const isVideo = !!file && file.type.startsWith("video/");
+
   const pick = (f: File | null) => {
     setError("");
     if (!f) return;
-    if (!f.type.startsWith("image/")) {
-      setError("Нужна картинка (PNG, JPG, WebP, GIF)");
+    if (!f.type.startsWith("image/") && !f.type.startsWith("video/")) {
+      setError("Нужна картинка или видео (PNG, JPG, WebP, GIF, MP4, WebM)");
       return;
     }
-    if (f.size > 10 * 1024 * 1024) {
-      setError("Файл больше 10 МБ");
+    if (f.size > MAX_STORY_BYTES) {
+      setError(`Файл больше 500 МБ (${formatBytes(f.size)})`);
       return;
     }
     setFile(f);
     setPreviewUrl(URL.createObjectURL(f));
+  };
+
+  const reset = () => {
+    if (previewUrl) URL.revokeObjectURL(previewUrl);
+    setFile(null);
+    setPreviewUrl(null);
   };
 
   const publish = async () => {
@@ -70,7 +81,7 @@ export default function StoryComposer({ onClose, onPublished, notify }: Props) {
         <input
           ref={inputRef}
           type="file"
-          accept="image/png,image/jpeg,image/webp,image/gif"
+          accept="image/png,image/jpeg,image/webp,image/gif,video/mp4,video/webm,video/quicktime"
           className="hidden"
           onChange={(e) => {
             pick(e.target.files?.[0] ?? null);
@@ -79,18 +90,23 @@ export default function StoryComposer({ onClose, onPublished, notify }: Props) {
         />
 
         {previewUrl ? (
-          <div className="relative overflow-hidden rounded-2xl">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={previewUrl} alt="Превью истории" className="max-h-80 w-full object-cover" />
+          <div className="relative overflow-hidden rounded-2xl bg-black/40">
+            {isVideo ? (
+              <video src={previewUrl} controls playsInline className="max-h-80 w-full object-contain" />
+            ) : (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={previewUrl} alt="Превью истории" className="max-h-80 w-full object-cover" />
+            )}
             <button
-              onClick={() => {
-                setFile(null);
-                setPreviewUrl(null);
-              }}
+              onClick={reset}
               className="absolute top-3 right-3 rounded-full bg-black/60 p-2 text-white/90 backdrop-blur transition-colors hover:bg-black/80"
             >
               <X className="h-4 w-4" />
             </button>
+            <p className="absolute bottom-3 left-3 rounded-full bg-black/70 px-3 py-1 text-[11px] text-white/80">
+              {isVideo ? <Film className="mr-1 inline h-3 w-3" /> : null}
+              {file?.name} · {formatBytes(file?.size)}
+            </p>
           </div>
         ) : (
           <button
@@ -98,7 +114,7 @@ export default function StoryComposer({ onClose, onPublished, notify }: Props) {
             className="flex h-48 w-full flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-white/15 bg-white/[0.03] text-white/40 transition-colors hover:border-violet-400/40 hover:text-white/70"
           >
             <ImagePlus className="h-8 w-8" />
-            <span className="text-sm">Выбрать изображение</span>
+            <span className="text-sm">Фото или видео (до 500 МБ)</span>
           </button>
         )}
 

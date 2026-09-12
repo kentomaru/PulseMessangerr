@@ -1,9 +1,11 @@
 import { NextResponse } from "next/server";
 import { db } from "@/db";
 import {
+  callInvites,
+  callParticipants,
   calls,
+  callSignals,
   conversationMembers,
-  conversations,
   messages,
   sessions,
   stories,
@@ -55,15 +57,24 @@ export const PATCH = withApi("auth/me", async ({ req, me, log }) => {
 export const DELETE = withApi("auth/me:delete", async ({ me, log }) => {
   log.warn("Удаление аккаунта", { userId: me.id, username: me.username });
 
-  await db.delete(calls).where(or(eq(calls.callerId, me.id), eq(calls.calleeId, me.id)));
-  await db.delete(messages).where(eq(messages.senderId, me.id));
+  // Порядок важен: сначала то, что ссылается на звонки и сообщения,
+  // потом сами звонки/сообщения, затем диалоги и аккаунт.
+  await db.delete(sessions).where(eq(sessions.userId, me.id));
   await db.delete(stories).where(eq(stories.userId, me.id));
+  await db.delete(callInvites).where(
+    or(eq(callInvites.userId, me.id), eq(callInvites.invitedBy, me.id)),
+  );
+  await db.delete(callSignals).where(
+    or(eq(callSignals.fromUserId, me.id), eq(callSignals.toUserId, me.id)),
+  );
+  await db.delete(callParticipants).where(eq(callParticipants.userId, me.id));
+  await db.delete(calls).where(eq(calls.hostId, me.id));
+  await db.delete(messages).where(eq(messages.senderId, me.id));
   await db.delete(conversationMembers).where(eq(conversationMembers.userId, me.id));
   // Диалоги, в которых не осталось участников
   await db.execute(
     sql`delete from conversations c where not exists (select 1 from conversation_members m where m.conversation_id = c.id)`,
   );
-  await db.delete(sessions).where(eq(sessions.userId, me.id));
   await db.delete(users).where(eq(users.id, me.id));
 
   const store = await cookies();

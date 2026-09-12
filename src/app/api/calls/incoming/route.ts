@@ -1,36 +1,43 @@
 import { NextResponse } from "next/server";
 import { db } from "@/db";
-import { calls } from "@/db/schema";
-import { and, desc, eq, gt } from "drizzle-orm";
-import { withApi } from "@/lib/api-helpers";
-import { expireIfStale, getCallCaller, serializeCall } from "@/lib/calls";
+import { calls, chatMembers, users } from "@/db/schema";
+import { and, desc, eq, inArray, ne } from "drizzle-orm";
+import { getSessionUser } from "@/lib/server";
+import { callPeerFrom, expireIfStale } from "@/lib/calls-server";
 
-/**
- * GET /api/calls/incoming — входящие звонки (status = ringing) для меня.
- * Клиент опрашивает этот роут раз в 3 секунды. Заодно звонки, которые
- * никто не принял за 40 секунд, помечаются пропущенными.
- */
-export const GET = withApi("calls:incoming", async ({ me }) => {
+export async function GET() {
+  const me = await getSessionUser();
+  if (!me) return NextResponse.json({ error: "Не авторизован" }, { status: 401 });
+
+  const myChats = await db
+    .select({ chatId: chatMembers.chatId })
+    .from(chatMembers)
+    .where(eq(chatMembers.userId, me.id));
+
+  if (myChats.length === 0) return NextResponse.json({ call: null });
+  const ids = myChats.map((c) => c.chatId);
+
   const ringing = await db
-    .select()
+    .select({ call: calls, caller: users })
     .from(calls)
+    .innerJoin(users, eq(calls.callerId, users.id))
     .where(
       and(
-        eq(calls.calleeId, me.id),
+        inArray(calls.chatId, ids),
         eq(calls.status, "ringing"),
-        gt(calls.createdAt, new Date(Date.now() - 60_000)),
+        ne(calls.callerId, me.id),
       ),
     )
     .orderBy(desc(calls.createdAt))
-    .limit(3);
+    .limit(5);
 
-  const result = [];
   for (const row of ringing) {
-    const fresh = await expireIfStale(row);
-    if (fresh.status !== "ringing") continue; // только что истёк — пропускаем
-    const caller = await getCallCaller(fresh);
-    result.push(serializeCall(fresh, caller));
+    const fresh = await expireIfStale(row.call);
+    if (fresh.status === "ringing") {
+      return NextResponse.json({
+        call: { ...fresh, caller: callPeerFrom(row.caller) },
+      });
+    }
   }
-
-  return NextResponse.json({ calls: result });
-});
+  return NextResponse.json({ call: null });
+}

@@ -1,116 +1,119 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/db";
-import { calls } from "@/db/schema";
-import { eq, sql } from "drizzle-orm";
-import { isUuid, withApi } from "@/lib/api-helpers";
-import { expireIfStale, getCallCaller, insertCallLog, serializeCall } from "@/lib/calls";
+import { calls, users } from "@/db/schema";
+import { eq } from "drizzle-orm";
+import { getSessionUser, assertMembership } from "@/lib/server";
+import { callPeerFrom, expireIfStale, insertCallLog } from "@/lib/calls-server";
 
-/**
- * GET /api/calls/[id] — состояние звонка (обе стороны опрашивают раз в ~1 с):
- * статус, SDP-ответ и ICE-кандидаты второй стороны.
- *
- * POST /api/calls/[id] — действия:
- *   { action: "answer", answerSdp }  — принять (только вызываемый)
- *   { action: "decline" }            — отклонить (только вызываемый)
- *   { action: "hangup" }             — завершить (любая сторона)
- *   { action: "ice", candidate }     — добавить свой ICE-кандидат
- */
-export const GET = withApi<{ id: string }>("calls:get", async ({ params, me }) => {
-  const { id } = params;
-  if (!isUuid(id)) return NextResponse.json({ error: "Звонок не найден" }, { status: 404 });
-  const rows = await db.select().from(calls).where(eq(calls.id, id)).limit(1);
-  let call = rows[0];
-  if (!call) return NextResponse.json({ error: "Звонок не найден" }, { status: 404 });
-  if (call.callerId !== me.id && call.calleeId !== me.id)
-    return NextResponse.json({ error: "Нет доступа" }, { status: 403 });
+async function loadForUser(callId: number, userId: number) {
+  const rows = await db
+    .select({ call: calls, caller: users })
+    .from(calls)
+    .innerJoin(users, eq(calls.callerId, users.id))
+    .where(eq(calls.id, callId))
+    .limit(1);
+  const row = rows[0];
+  if (!row) return null;
+  const isMember = await assertMembership(row.call.chatId, userId);
+  if (!isMember) return null;
+  return row;
+}
 
-  call = await expireIfStale(call);
-  const caller = await getCallCaller(call);
-  return NextResponse.json({ call: serializeCall(call, caller) });
-});
+export async function GET(
+  _req: NextRequest,
+  ctx: { params: Promise<{ id: string }> },
+) {
+  const me = await getSessionUser();
+  if (!me) return NextResponse.json({ error: "Не авторизован" }, { status: 401 });
+  const id = Number((await ctx.params).id);
 
-export const POST = withApi<{ id: string }>("calls:action", async ({ req, params, me, log }) => {
-  const { id } = params;
-  const body = await req.json().catch(() => ({}));
+  const row = await loadForUser(id, me.id);
+  if (!row) return NextResponse.json({ error: "Не найден" }, { status: 404 });
+
+  const fresh = await expireIfStale(row.call);
+  return NextResponse.json({
+    call: { ...fresh, caller: callPeerFrom(row.caller), selfId: me.id },
+  });
+}
+
+export async function POST(
+  req: NextRequest,
+  ctx: { params: Promise<{ id: string }> },
+) {
+  const me = await getSessionUser();
+  if (!me) return NextResponse.json({ error: "Не авторизован" }, { status: 401 });
+  const id = Number((await ctx.params).id);
+
+  const row = await loadForUser(id, me.id);
+  if (!row) return NextResponse.json({ error: "Не найден" }, { status: 404 });
+  const call = row.call;
+
+  const body = await req.json();
   const action = String(body.action ?? "");
-
-  const rows = await db.select().from(calls).where(eq(calls.id, id)).limit(1);
-  const call = rows[0];
-  if (!call) return NextResponse.json({ error: "Звонок не найден" }, { status: 404 });
-  if (call.callerId !== me.id && call.calleeId !== me.id)
-    return NextResponse.json({ error: "Нет доступа" }, { status: 403 });
-
   const isCaller = call.callerId === me.id;
 
-  switch (action) {
-    case "answer": {
-      if (isCaller) return NextResponse.json({ error: "Ответить может только вызываемый" }, { status: 400 });
-      if (call.status !== "ringing")
-        return NextResponse.json({ error: "Звонок уже не звонит" }, { status: 409 });
-      const answerSdp = String(body.answerSdp ?? "");
-      if (!answerSdp) return NextResponse.json({ error: "answerSdp обязателен" }, { status: 400 });
-
-      const [updated] = await db
-        .update(calls)
-        .set({ status: "active", answeredAt: new Date(), answerSdp })
-        .where(eq(calls.id, id))
-        .returning();
-      log.info("Звонок принят", { callId: id });
-      return NextResponse.json({ call: serializeCall(updated) });
-    }
-
-    case "decline": {
-      if (isCaller) return NextResponse.json({ error: "Отклонить может только вызываемый" }, { status: 400 });
-      if (call.status !== "ringing")
-        return NextResponse.json({ error: "Звонок уже не звонит" }, { status: 409 });
-
-      const [updated] = await db
-        .update(calls)
-        .set({ status: "declined", endedAt: new Date() })
-        .where(eq(calls.id, id))
-        .returning();
-      await insertCallLog(call, "declined", 0);
-      log.info("Звонок отклонён", { callId: id });
-      return NextResponse.json({ call: serializeCall(updated) });
-    }
-
-    case "hangup": {
-      if (call.status !== "ringing" && call.status !== "active")
-        return NextResponse.json({ error: "Звонок уже завершён" }, { status: 409 });
-
-      const durationSec =
-        call.answeredAt && call.status === "active"
-          ? Math.max(0, Math.round((Date.now() - new Date(call.answeredAt).getTime()) / 1000))
-          : 0;
-      // Если звонящий сбросил, пока гудело — «отменённый», иначе «завершённый»
-      const logStatus = call.status === "ringing" ? "cancelled" : "ended";
-
-      const [updated] = await db
-        .update(calls)
-        .set({ status: "ended", endedAt: new Date() })
-        .where(eq(calls.id, id))
-        .returning();
-      await insertCallLog(call, logStatus, durationSec);
-      log.info("Звонок завершён", { callId: id, durationSec: String(durationSec), reason: logStatus });
-      return NextResponse.json({ call: serializeCall(updated) });
-    }
-
-    case "ice": {
-      const candidate = body.candidate;
-      if (!candidate || typeof candidate !== "object")
-        return NextResponse.json({ error: "candidate обязателен" }, { status: 400 });
-
-      const column = isCaller ? calls.callerIce : calls.calleeIce;
-      await db
-        .update(calls)
-        .set({
-          [isCaller ? "callerIce" : "calleeIce"]: sql`${column} || ${JSON.stringify([candidate])}::jsonb`,
-        })
-        .where(eq(calls.id, id));
-      return NextResponse.json({ ok: true });
-    }
-
-    default:
-      return NextResponse.json({ error: "Неизвестное действие" }, { status: 400 });
+  if (action === "offer") {
+    if (!isCaller || call.status !== "ringing")
+      return NextResponse.json({ error: "Недопустимо" }, { status: 400 });
+    await db
+      .update(calls)
+      .set({ offerSdp: String(body.sdp ?? "") })
+      .where(eq(calls.id, id));
+    return NextResponse.json({ ok: true });
   }
-});
+
+  if (action === "answer") {
+    if (isCaller || call.status !== "ringing")
+      return NextResponse.json({ error: "Недопустимо" }, { status: 400 });
+    const [updated] = await db
+      .update(calls)
+      .set({
+        answerSdp: String(body.sdp ?? ""),
+        status: "active",
+        answeredAt: new Date(),
+      })
+      .where(eq(calls.id, id))
+      .returning();
+    return NextResponse.json({ call: updated });
+  }
+
+  if (action === "decline") {
+    if (isCaller || call.status !== "ringing")
+      return NextResponse.json({ error: "Недопустимо" }, { status: 400 });
+    const [updated] = await db
+      .update(calls)
+      .set({ status: "declined", endedAt: new Date() })
+      .where(eq(calls.id, id))
+      .returning();
+    await insertCallLog(call, "declined", 0);
+    return NextResponse.json({ call: updated });
+  }
+
+  if (action === "end") {
+    if (call.status === "ended" || call.status === "declined" || call.status === "missed")
+      return NextResponse.json({ call });
+    const now = new Date();
+    if (call.status === "ringing") {
+      const status = isCaller ? "missed" : "declined";
+      const [updated] = await db
+        .update(calls)
+        .set({ status, endedAt: now })
+        .where(eq(calls.id, id))
+        .returning();
+      await insertCallLog(call, status, 0);
+      return NextResponse.json({ call: updated });
+    }
+    const durationSec = call.answeredAt
+      ? Math.max(0, Math.round((now.getTime() - new Date(call.answeredAt).getTime()) / 1000))
+      : 0;
+    const [updated] = await db
+      .update(calls)
+      .set({ status: "ended", endedAt: now })
+      .where(eq(calls.id, id))
+      .returning();
+    await insertCallLog(call, "ended", durationSec);
+    return NextResponse.json({ call: updated });
+  }
+
+  return NextResponse.json({ error: "Неизвестное действие" }, { status: 400 });
+}

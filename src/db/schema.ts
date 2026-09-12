@@ -1,155 +1,232 @@
-import { sql } from "drizzle-orm";
 import {
-  boolean,
-  index,
-  jsonb,
   pgTable,
-  primaryKey,
+  serial,
   text,
+  integer,
   timestamp,
+  jsonb,
+  index,
   uniqueIndex,
-  uuid,
+  primaryKey,
+  boolean,
 } from "drizzle-orm/pg-core";
 
-/** Пользователи. Пароль хранится только в виде scrypt-хэша. */
-export const users = pgTable("users", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  username: text("username").notNull().unique(),
-  displayName: text("display_name").notNull(),
-  passwordHash: text("password_hash").notNull(),
-  avatarUrl: text("avatar_url"),
-  bannerUrl: text("banner_url"),
-  bio: text("bio").notNull().default(""),
-  lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).notNull().defaultNow(),
+export const users = pgTable(
+  "users",
+  {
+    id: serial("id").primaryKey(),
+    name: text("name").notNull(),
+    handle: text("handle").notNull(),
+    about: text("about").notNull().default(""),
+    accent: text("accent").notNull().default("violet"),
+    emoji: text("emoji").notNull().default("⚡"),
+    avatarFileId: integer("avatar_file_id"),
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("users_handle_idx").on(t.handle)],
+);
+
+export const files = pgTable("files", {
+  id: serial("id").primaryKey(),
+  kind: text("kind").notNull(), // image | video | file | audio
+  name: text("name").notNull(),
+  mime: text("mime").notNull(),
+  size: integer("size").notNull().default(0),
+  data: text("data").notNull(), // base64 payload
+  width: integer("width"),
+  height: integer("height"),
+  duration: integer("duration"),
+  uploadedBy: integer("uploaded_by"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-  // Приватность
-  showOnline: boolean("show_online").notNull().default(true),
-  allowCalls: boolean("allow_calls").notNull().default(true),
-  allowMessages: boolean("allow_messages").notNull().default(true),
 });
 
-export type User = typeof users.$inferSelect;
+export const chats = pgTable("chats", {
+  id: serial("id").primaryKey(),
+  kind: text("kind").notNull().default("direct"), // direct | group
+  title: text("title"),
+  emoji: text("emoji").notNull().default("💬"),
+  accent: text("accent").notNull().default("violet"),
+  avatarFileId: integer("avatar_file_id"),
+  ownerId: integer("owner_id"),
+  wallpaper: text("wallpaper"), // json string, default for everyone
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
 
-/** Сессии (cookie pulse_session → пользователь). */
-export const sessions = pgTable(
-  "sessions",
+export const chatMembers = pgTable(
+  "chat_members",
   {
-    token: text("token").primaryKey(),
-    userId: uuid("user_id")
+    id: serial("id").primaryKey(),
+    chatId: integer("chat_id")
+      .notNull()
+      .references(() => chats.id, { onDelete: "cascade" }),
+    userId: integer("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    role: text("role").notNull().default("member"),
+    wallpaper: text("wallpaper"), // json string, personal override
+    muted: boolean("muted").notNull().default(false),
+    pinned: boolean("pinned").notNull().default(false),
+    archived: boolean("archived").notNull().default(false),
+    lastReadMessageId: integer("last_read_message_id").notNull().default(0),
+    joinedAt: timestamp("joined_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("chat_members_unique_idx").on(t.chatId, t.userId),
+    index("chat_members_user_idx").on(t.userId),
+  ],
+);
+
+export const messages = pgTable(
+  "messages",
+  {
+    id: serial("id").primaryKey(),
+    chatId: integer("chat_id")
+      .notNull()
+      .references(() => chats.id, { onDelete: "cascade" }),
+    senderId: integer("sender_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    body: text("body").notNull().default(""),
+    kind: text("kind").notNull().default("text"), // text | system
+    replyToId: integer("reply_to_id"),
+    deletedForAllAt: timestamp("deleted_for_all_at", { withTimezone: true }),
+    editedAt: timestamp("edited_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("messages_chat_idx").on(t.chatId, t.id),
+    index("messages_updated_idx").on(t.chatId, t.updatedAt),
+  ],
+);
+
+export const attachments = pgTable(
+  "attachments",
+  {
+    id: serial("id").primaryKey(),
+    messageId: integer("message_id")
+      .notNull()
+      .references(() => messages.id, { onDelete: "cascade" }),
+    fileId: integer("file_id")
+      .notNull()
+      .references(() => files.id, { onDelete: "cascade" }),
+    sortOrder: integer("sort_order").notNull().default(0),
+  },
+  (t) => [index("attachments_message_idx").on(t.messageId)],
+);
+
+export const reactions = pgTable(
+  "reactions",
+  {
+    messageId: integer("message_id")
+      .notNull()
+      .references(() => messages.id, { onDelete: "cascade" }),
+    userId: integer("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    emoji: text("emoji").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.messageId, t.userId, t.emoji] })],
+);
+
+export const hiddenMessages = pgTable(
+  "hidden_messages",
+  {
+    messageId: integer("message_id")
+      .notNull()
+      .references(() => messages.id, { onDelete: "cascade" }),
+    userId: integer("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+  },
+  (t) => [primaryKey({ columns: [t.messageId, t.userId] })],
+);
+
+export const blocks = pgTable(
+  "blocks",
+  {
+    blockerId: integer("blocker_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    blockedId: integer("blocked_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
   },
-  (t) => [index("sessions_user_idx").on(t.userId)],
+  (t) => [primaryKey({ columns: [t.blockerId, t.blockedId] })],
 );
 
-/** Диалоги (пока только личные чаты). */
-export const conversations = pgTable("conversations", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  isGroup: boolean("is_group").notNull().default(false),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-});
+export const typingEvents = pgTable(
+  "typing_events",
+  {
+    chatId: integer("chat_id")
+      .notNull()
+      .references(() => chats.id, { onDelete: "cascade" }),
+    userId: integer("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.chatId, t.userId] })],
+);
 
-/**
- * Звонки (WebRTC). Сервер — только «сигнальный центр»:
- * хранит SDP-описания и ICE-кандидаты, пока стороны обмениваются ими,
- * а сам аудио/видео поток идёт напрямую между браузерами (P2P).
- */
+export const userSettings = pgTable(
+  "user_settings",
+  {
+    userId: integer("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" })
+      .primaryKey(),
+    theme: text("theme").notNull().default("midnight"),
+    accent: text("accent").notNull().default("violet"),
+    wallpaper: text("wallpaper").notNull().default('{"preset":"aurora"}'),
+    bubbleStyle: text("bubble_style").notNull().default("glass"),
+    fontSize: text("font_size").notNull().default("md"),
+    density: text("density").notNull().default("comfy"),
+    enterToSend: boolean("enter_to_send").notNull().default(true),
+    sounds: boolean("sounds").notNull().default(true),
+    notifications: boolean("notifications").notNull().default(true),
+    messagePreview: boolean("message_preview").notNull().default(true),
+    readReceipts: boolean("read_receipts").notNull().default(true),
+    typingStatus: boolean("typing_status").notNull().default(true),
+    lastSeenPrivacy: text("last_seen_privacy").notNull().default("everyone"),
+    autoDownload: text("auto_download").notNull().default("always"),
+    language: text("language").notNull().default("ru"),
+    animations: boolean("animations").notNull().default(true),
+    largeEmoji: boolean("large_emoji").notNull().default(true),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+);
+
+export type User = typeof users.$inferSelect;
+export type Chat = typeof chats.$inferSelect;
+export type ChatMember = typeof chatMembers.$inferSelect;
+export type Message = typeof messages.$inferSelect;
+export type FileRow = typeof files.$inferSelect;
+export type Settings = typeof userSettings.$inferSelect;
+
 export const calls = pgTable(
   "calls",
   {
-    id: uuid("id").primaryKey().defaultRandom(),
-    conversationId: uuid("conversation_id")
+    id: serial("id").primaryKey(),
+    chatId: integer("chat_id")
       .notNull()
-      .references(() => conversations.id, { onDelete: "cascade" }),
-    callerId: uuid("caller_id")
+      .references(() => chats.id, { onDelete: "cascade" }),
+    callerId: integer("caller_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
-    calleeId: uuid("callee_id").references(() => users.id, { onDelete: "cascade" }),
-    media: text("media").notNull().default("audio"), // audio | video
     status: text("status").notNull().default("ringing"), // ringing | active | ended | declined | missed
     offerSdp: text("offer_sdp"),
     answerSdp: text("answer_sdp"),
-    callerIce: jsonb("caller_ice").$type<RTCIceCandidateInit[]>().notNull().default(sql`'[]'::jsonb`),
-    calleeIce: jsonb("callee_ice").$type<RTCIceCandidateInit[]>().notNull().default(sql`'[]'::jsonb`),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     answeredAt: timestamp("answered_at", { withTimezone: true }),
     endedAt: timestamp("ended_at", { withTimezone: true }),
   },
-  (t) => [index("calls_callee_idx").on(t.calleeId, t.status)],
+  (t) => [index("calls_chat_idx").on(t.chatId, t.status)],
 );
 
 export type Call = typeof calls.$inferSelect;
-
-/** Участник чата: прогресс прочтения, индикатор «печатает», личные обои чата. */
-export const conversationMembers = pgTable(
-  "conversation_members",
-  {
-    conversationId: uuid("conversation_id")
-      .notNull()
-      .references(() => conversations.id, { onDelete: "cascade" }),
-    userId: uuid("user_id")
-      .notNull()
-      .references(() => users.id, { onDelete: "cascade" }),
-    lastReadAt: timestamp("last_read_at", { withTimezone: true }).notNull().defaultNow(),
-    typingAt: timestamp("typing_at", { withTimezone: true }),
-    wallpaper: text("wallpaper"),
-  },
-  (t) => [primaryKey({ columns: [t.conversationId, t.userId] })],
-);
-
-/** Сообщения: text | image (content = url) | call (content = JSON-лог звонка). */
-export const messages = pgTable(
-  "messages",
-  {
-    id: uuid("id").primaryKey().defaultRandom(),
-    conversationId: uuid("conversation_id")
-      .notNull()
-      .references(() => conversations.id, { onDelete: "cascade" }),
-    senderId: uuid("sender_id")
-      .notNull()
-      .references(() => users.id, { onDelete: "cascade" }),
-    type: text("type").notNull().default("text"),
-    content: text("content").notNull(),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-    deletedAt: timestamp("deleted_at", { withTimezone: true }),
-    /** Ссылка на звонок, чтобы лог звонка не дублировался (unique-индекс ниже). */
-    callId: uuid("call_id").references(() => calls.id, { onDelete: "cascade" }),
-  },
-  (t) => [
-    index("messages_conversation_idx").on(t.conversationId, t.createdAt),
-    uniqueIndex("messages_call_id_key").on(t.callId),
-  ],
-);
-
-/** Истории (как в Telegram): фото + подпись, исчезают через 24 часа. */
-export const stories = pgTable(
-  "stories",
-  {
-    id: uuid("id").primaryKey().defaultRandom(),
-    userId: uuid("user_id")
-      .notNull()
-      .references(() => users.id, { onDelete: "cascade" }),
-    mediaUrl: text("media_url").notNull(),
-    caption: text("caption").notNull().default(""),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
-  },
-  (t) => [index("stories_user_idx").on(t.userId, t.createdAt)],
-);
-
-/** Просмотры историй (кто видел). */
-export const storyViews = pgTable(
-  "story_views",
-  {
-    storyId: uuid("story_id")
-      .notNull()
-      .references(() => stories.id, { onDelete: "cascade" }),
-    userId: uuid("user_id")
-      .notNull()
-      .references(() => users.id, { onDelete: "cascade" }),
-    viewedAt: timestamp("viewed_at", { withTimezone: true }).notNull().defaultNow(),
-  },
-  (t) => [primaryKey({ columns: [t.storyId, t.userId] })],
-);
