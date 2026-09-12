@@ -40,10 +40,45 @@ export class ApiError extends Error {
 }
 
 export async function uploadFile(file: File): Promise<string> {
-  const form = new FormData();
-  form.append("file", file);
-  const res = await fetch("/api/upload", { method: "POST", body: form, credentials: "include" });
+  // Сырое тело вместо FormData: сервер пишет файл на диск потоком,
+  // поэтому даже 500 МБ не разворачиваются в памяти целиком.
+  const params = new URLSearchParams({
+    name: file.name || "file",
+    type: file.type || "application/octet-stream",
+    size: String(file.size),
+  });
+  const res = await fetch(`/api/upload?${params.toString()}`, {
+    method: "POST",
+    body: file,
+    credentials: "include",
+  });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new ApiError(data.error ?? "Не удалось загрузить файл", res.status);
   return data.url as string;
+}
+
+/**
+ * Копирование в буфер с фолбэком: navigator.clipboard доступен только в
+ * защищённом контексте (https/localhost). Раньше ссылка на звонок «не копировалась»
+ * именно потому, что после получения url его никто не записывал в буфер.
+ */
+export async function copyToClipboard(text: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    try {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      const ok = document.execCommand("copy");
+      document.body.removeChild(ta);
+      return ok;
+    } catch {
+      return false;
+    }
+  }
 }

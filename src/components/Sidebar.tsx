@@ -5,12 +5,10 @@ import { AnimatePresence, motion } from "framer-motion";
 import {
   Compass,
   Hash,
-  Image as ImageIcon,
   Loader2,
   Lock,
   LogOut,
   Megaphone,
-  PhoneCall,
   Plus,
   Radio,
   Search,
@@ -23,7 +21,7 @@ import {
 import Avatar from "./Avatar";
 import StoriesRow from "./StoriesRow";
 import { api } from "@/lib/api";
-import { callLogLabel, parseCallContent, timeHHmm } from "@/lib/format";
+import { messagePreview, timeHHmm } from "@/lib/format";
 import type { ConversationListItem, DiscoverItem, PublicUser, StoryGroup } from "@/lib/types";
 
 type Props = {
@@ -46,14 +44,9 @@ type Props = {
 function previewText(conv: ConversationListItem, meId: string) {
   const lm = conv.lastMessage;
   if (!lm) return "Нет сообщений";
-  if (lm.type === "image") return "🖼 Фото";
-  if (lm.type === "call") {
-    const info = parseCallContent(lm.content);
-    if (info) return `📞 ${callLogLabel(info)}`;
-    return "📞 Звонок";
-  }
+  const body = messagePreview(lm.type, lm.content);
   const prefix = lm.senderId === meId ? "Вы: " : conv.kind === "direct" ? "" : `${lm.senderName ?? ""}: `;
-  return prefix + lm.content.replace(/\n/g, " ").slice(0, 60);
+  return prefix + body;
 }
 
 /** Из вставленной ссылки/токена достаём token. */
@@ -424,8 +417,6 @@ function ConvRow({
             </p>
           ) : (
             <p className="truncate text-[13px] text-white/40">
-              {lm?.type === "call" && <PhoneCall className="mr-1 inline h-3.5 w-3.5 text-white/30" />}
-              {lm?.type === "image" && <ImageIcon className="mr-1 inline h-3.5 w-3.5 text-white/30" />}
               {previewText(conv, meId)}
             </p>
           )}

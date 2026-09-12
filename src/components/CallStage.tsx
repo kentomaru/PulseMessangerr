@@ -36,6 +36,7 @@ import {
 } from "lucide-react";
 import Avatar from "./Avatar";
 import PeoplePicker from "./PeoplePicker";
+import { copyToClipboard } from "@/lib/api";
 import { formatDuration } from "@/lib/format";
 import type { CallSession, IncomingCall } from "@/lib/useCallController";
 import type { CallParticipantInfo, PublicUser } from "@/lib/types";
@@ -98,6 +99,13 @@ export default function CallStage(props: Props) {
     const url = await onCopyLink();
     if (!url) {
       notify("Не удалось получить ссылку");
+      return;
+    }
+    // Раньше ссылку получали, но НЕ записывали в буфер — из-за этого
+    // «ссылка на звонок не копируется». Пишем сами + фолбэк на prompt.
+    const ok = await copyToClipboard(url);
+    if (!ok) {
+      window.prompt("Скопируйте ссылку на звонок:", url);
       return;
     }
     setCopied(true);

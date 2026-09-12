@@ -69,15 +69,17 @@ export default function StoryViewer({
     });
   }, [gi]);
 
-  // автопереход
+  // автопереход (для видео — по окончании проигрывания, а не по таймеру)
+  const storyIsVideo = !!story && /\.(webm|mp4|mov|mkv|m4v)(\?|$)/i.test(story.mediaUrl);
   useEffect(() => {
     if (!story || paused || showViewers) return;
     onWatched(story.id);
-    timerRef.current = setTimeout(next, STORY_MS);
+    // у видео свой темп: onEnded; таймер — страховка на 60 секунд
+    timerRef.current = setTimeout(next, storyIsVideo ? 60_000 : STORY_MS);
     return () => {
       if (timerRef.current) clearTimeout(timerRef.current);
     };
-  }, [story?.id, paused, showViewers, next, story, onWatched]);
+  }, [story?.id, paused, showViewers, next, story, onWatched, storyIsVideo]);
 
   // клавиатура
   useEffect(() => {
@@ -199,11 +201,26 @@ export default function StoryViewer({
           </button>
         </div>
 
-        {/* Изображение */}
+        {/* Изображение или видео */}
         <div className="relative min-h-0 flex-1 px-3 pb-4">
           <div className="relative h-full overflow-hidden rounded-3xl bg-white/5">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={story.mediaUrl} alt="История" className="h-full w-full object-contain" />
+            {storyIsVideo ? (
+              <video
+                src={story.mediaUrl}
+                autoPlay
+                playsInline
+                onEnded={next}
+                onClick={(e) => {
+                  const v = e.currentTarget;
+                  if (v.paused) void v.play().catch(() => {});
+                  else v.pause();
+                }}
+                className="h-full w-full cursor-pointer object-contain"
+              />
+            ) : (
+              /* eslint-disable-next-line @next/next/no-img-element */
+              <img src={story.mediaUrl} alt="История" className="h-full w-full object-contain" />
+            )}
             {story.caption && (
               <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent p-5 pt-12">
                 <p className="text-center text-[15px] leading-relaxed text-white/95">

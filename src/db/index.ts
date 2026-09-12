@@ -282,9 +282,21 @@ export async function ensureSchema(): Promise<void> {
           foreign key (call_id) references calls(id) on delete cascade;
       end if;
     end $$;
+    alter table messages add column if not exists reply_to_id uuid;
+    alter table messages add column if not exists edited_at timestamptz;
     create unique index if not exists messages_call_id_key on messages(call_id);
     create index if not exists messages_conversation_idx on messages(conversation_id, created_at);
     create index if not exists messages_reply_idx on messages(reply_to_id);
+
+    /* Реакции на сообщения (Discord/Telegram-стайл) */
+    create table if not exists message_reactions (
+      message_id uuid not null references messages(id) on delete cascade,
+      user_id uuid not null references users(id) on delete cascade,
+      emoji text not null,
+      created_at timestamptz not null default now(),
+      primary key (message_id, user_id, emoji)
+    );
+    create index if not exists message_reactions_message_idx on message_reactions(message_id);
 
     create table if not exists stories (
       id uuid primary key default gen_random_uuid(),

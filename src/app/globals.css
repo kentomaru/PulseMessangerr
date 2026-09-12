@@ -250,3 +250,9 @@ button {
     width: 100%;
   }
 }
+
+/* Сообщения: отключаем системное long-press меню iOS (callout),
+   потому что долгое нажатие открывает наше контекстное меню */
+.no-callout {
+  -webkit-touch-callout: none;
+}

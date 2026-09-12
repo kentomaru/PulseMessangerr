@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { db } from "@/db";
-import { conversationMembers, conversations, messages, users } from "@/db/schema";
+import { conversationMembers, conversations, messageReactions, messages, users } from "@/db/schema";
 import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import { publicUser } from "@/lib/auth";
 import { isUuid, withApi } from "@/lib/api-helpers";
@@ -12,7 +12,7 @@ import {
   normalizeRole,
 } from "@/lib/conversations";
 import { findActiveCall } from "@/lib/calls";
-import type { ChatMessage, ConversationMemberItem, ReplyPreview } from "@/lib/types";
+import type { ChatMessage, ConversationMemberItem, MessageReaction, ReplyPreview } from "@/lib/types";
 
 async function assertMember(conversationId: string, userId: string) {
   const rows = await db
@@ -49,9 +49,27 @@ function replyPreview(m: MessageRow, byId: Map<string, UserRow>): ReplyPreview |
   };
 }
 
-async function serializeMessages(list: MessageRow[]): Promise<ChatMessage[]> {
+/** Реакции сообщения, агрегированные по эмодзи. */
+function aggregateReactions(
+  rows: (typeof messageReactions.$inferSelect)[],
+  meId: string,
+): MessageReaction[] {
+  const byEmoji = new Map<string, { count: number; mine: boolean }>();
+  for (const r of rows) {
+    const cur = byEmoji.get(r.emoji) ?? { count: 0, mine: false };
+    cur.count += 1;
+    if (r.userId === meId) cur.mine = true;
+    byEmoji.set(r.emoji, cur);
+  }
+  return Array.from(byEmoji.entries())
+    .map(([emoji, { count, mine }]) => ({ emoji, count, mine }))
+    .sort((a, b) => b.count - a.count);
+}
+
+async function serializeMessages(list: MessageRow[], meId: string): Promise<ChatMessage[]> {
   const senderIds = Array.from(new Set(list.map((m) => m.senderId)));
   const replyIds = Array.from(new Set(list.map((m) => m.replyToId).filter((v): v is string => !!v)));
+  const messageIds = list.map((m) => m.id);
 
   const senderRows = senderIds.length > 0 ? await db.select().from(users).where(inArray(users.id, senderIds)) : [];
   const replyRows = replyIds.length > 0
@@ -61,6 +79,15 @@ async function serializeMessages(list: MessageRow[]): Promise<ChatMessage[]> {
   const replySenderRows = replySenderIds.length > 0
     ? await db.select().from(users).where(inArray(users.id, replySenderIds))
     : [];
+  const reactionRows = messageIds.length > 0
+    ? await db.select().from(messageReactions).where(inArray(messageReactions.messageId, messageIds))
+    : [];
+  const reactionsByMessage = new Map<string, (typeof reactionRows)[number][]>();
+  for (const r of reactionRows) {
+    const arr = reactionsByMessage.get(r.messageId) ?? [];
+    arr.push(r);
+    reactionsByMessage.set(r.messageId, arr);
+  }
 
   const senders = userMap([...senderRows, ...replySenderRows]);
   const replies = new Map(replyRows.map((m) => [m.id, m]));
@@ -77,8 +104,10 @@ async function serializeMessages(list: MessageRow[]): Promise<ChatMessage[]> {
       replyToId: m.replyToId,
       createdAt: new Date(m.createdAt).toISOString(),
       deletedAt: m.deletedAt ? new Date(m.deletedAt).toISOString() : null,
+      editedAt: m.editedAt ? new Date(m.editedAt).toISOString() : null,
       sender: sender ? publicUser(sender) : undefined,
       replyTo: reply ? replyPreview(reply, senders) : null,
+      reactions: aggregateReactions(reactionsByMessage.get(m.id) ?? [], meId),
     };
   });
 }
@@ -133,7 +162,7 @@ export const GET = withApi("messages", async ({ req, me }) => {
   const active = await findActiveCall(conversationId);
 
   return NextResponse.json({
-    messages: await serializeMessages(list),
+    messages: await serializeMessages(list, me.id),
     conversation: {
       id: conv.id,
       kind,
@@ -176,7 +205,8 @@ export const GET = withApi("messages", async ({ req, me }) => {
 export const POST = withApi("messages:send", async ({ req, me, log }) => {
   const body = await req.json().catch(() => ({}));
   const conversationId = String(body.conversationId ?? "");
-  const type = body.type === "image" ? "image" : "text";
+  const ALLOWED_TYPES = ["text", "image", "voice", "video_note", "file"] as const;
+  const type = ALLOWED_TYPES.includes(body.type) ? (body.type as (typeof ALLOWED_TYPES)[number]) : "text";
   const replyToId = typeof body.replyToId === "string" && isUuid(body.replyToId) ? body.replyToId : null;
   if (conversationId && !isUuid(conversationId))
     return NextResponse.json({ error: "Чат не найден" }, { status: 404 });
@@ -186,8 +216,25 @@ export const POST = withApi("messages:send", async ({ req, me, log }) => {
     return NextResponse.json({ error: "Пустое сообщение" }, { status: 400 });
   if (content.length > 4000)
     return NextResponse.json({ error: "Слишком длинное сообщение" }, { status: 400 });
-  if (type === "image" && !content.startsWith("/api/files/"))
-    return NextResponse.json({ error: "Некорректная ссылка на изображение" }, { status: 400 });
+
+  // Для вложений content — JSON {url, ...} (у image допускается и просто url).
+  // Проверяем, что url ведёт на наш файловый сервис, а не на внешний сайт.
+  if (type !== "text") {
+    let url: string | null = null;
+    if (content.startsWith("/api/files/")) {
+      url = content;
+    } else {
+      try {
+        const parsed = JSON.parse(content) as { url?: unknown };
+        if (typeof parsed.url === "string") url = parsed.url;
+      } catch {
+        url = null;
+      }
+    }
+    if (!url || !url.startsWith("/api/files/") || !/^[a-zA-Z0-9-]+\.[a-z0-9]{1,8}$/i.test(url.slice("/api/files/".length))) {
+      return NextResponse.json({ error: "Некорректная ссылка на файл" }, { status: 400 });
+    }
+  }
 
   const membership = await assertMember(conversationId, me.id);
   if (!membership) return NextResponse.json({ error: "Нет доступа" }, { status: 403 });
@@ -234,6 +281,6 @@ export const POST = withApi("messages:send", async ({ req, me, log }) => {
     );
   log.info("Сообщение отправлено", { conversationId, type, reply: String(!!replyToId) });
 
-  const [serialized] = await serializeMessages([msg]);
+  const [serialized] = await serializeMessages([msg], me.id);
   return NextResponse.json({ message: serialized });
 });
