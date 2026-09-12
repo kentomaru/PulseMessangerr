@@ -557,6 +557,15 @@ function CallBody({
 }: WindowProps) {
   const localVideoRef = useRef<HTMLVideoElement | null>(null);
 
+  // Смена состояний дорожек (девку выключили → кадры перестали идти) НЕ
+  // вызывает событие в React. Раз в секунду принудительно пересчитываем —
+  // чёрная плитка демки у собеседника исчезает максимум через секунду.
+  const [, forceRerender] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => forceRerender((v) => v + 1), 1_000);
+    return () => clearInterval(t);
+  }, []);
+
   useEffect(() => {
     if (localVideoRef.current)
       localVideoRef.current.srcObject =
@@ -580,11 +589,11 @@ function CallBody({
   const gridCols = videoPeople.length <= 1 ? 1 : videoPeople.length <= 4 ? 2 : 3;
 
   // Демонстрации экрана — большими плитками над сеткой.
-  // ВАЖНО: показываем плитку ТОЛЬКО пока в потоке есть живая видеодорожка.
-  // Раньше после «прекратить демонстрацию» флаг мог остаться, и висела
-  // ЧЁРНАЯ плитка демонстрации.
+  // Плитка живёт ТОЛЬКО пока в потоке есть живая дорожка, принимающая кадры:
+  // когда владелец выключает демку, дорожка у собеседника перестаёт получать
+  // кадры (становится muted/ended) — и чёрный экран исчезает у ВСЕХ.
   const hasLiveVideo = (s: MediaStream | null | undefined) =>
-    !!s?.getVideoTracks().some((t) => t.readyState === "live");
+    !!s?.getVideoTracks().some((t) => t.readyState === "live" && !t.muted);
   const screenSharers = people.filter((p) => {
     if (p.userId === meId) return screenSharing && hasLiveVideo(screenStreamRef.current);
     return p.screenOn && hasLiveVideo(remoteStreams[p.userId]);
@@ -1008,13 +1017,6 @@ function Controls({
         title="Настройки звука: шумоподавление, чувствительность микрофона"
       >
         <AudioLines className="h-4.5 w-4.5" />
-      </Control>
-      <Control
-        small={compact}
-        onClick={onReconnectMedia}
-        title="Переподключить звук и видео (если не слышно)"
-      >
-        <RotateCw className="h-4.5 w-4.5" />
       </Control>
       <Control
         small={compact}

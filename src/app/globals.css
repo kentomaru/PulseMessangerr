@@ -27,18 +27,41 @@ body {
   color: rgb(255 255 255 / 0.92);
   font-size: 15px;
   line-height: 1.45;
-  /* Фон мессенджера: «сумеречный аметист» — тёплый розово-фиолетовый
-     вечер сверху, холодный индиго справа и бирюзовое дыхание снизу.
-     Цвета мягкие, красивые и статичные — ничего не плавает. */
-  background-color: #0e0a1a;
+  /* Фон мессенджера: нежный сине-чёрный, медленно и плавно переливается.
+     Четыре мягких синих свечения дрейфуют по большому градиенту —
+     движение едва заметное, спокойное, «живое». */
+  background-color: #04070f;
   background-image:
-    linear-gradient(168deg, #1d1238 0%, #0e0a1a 52%, #0c1224 100%),
-    radial-gradient(48rem 32rem at 10% -8%, rgb(236 72 153 / 0.17), transparent 64%),
-    radial-gradient(42rem 30rem at 98% 2%, rgb(99 102 241 / 0.20), transparent 62%),
-    radial-gradient(52rem 34rem at 48% 112%, rgb(45 212 191 / 0.11), transparent 66%);
-  background-blend-mode: normal, screen, screen, screen;
+    linear-gradient(160deg, #060b1a 0%, #04070f 52%, #081120 100%),
+    radial-gradient(60rem 42rem at 12% -10%, rgb(37 99 235 / 0.22), transparent 64%),
+    radial-gradient(52rem 38rem at 102% 8%, rgb(14 165 233 / 0.15), transparent 62%),
+    radial-gradient(56rem 42rem at 45% 116%, rgb(59 130 246 / 0.17), transparent 66%);
+  background-size:
+    100% 100%,
+    210% 210%,
+    210% 210%,
+    210% 210%;
   background-attachment: fixed;
+  animation: bg-flow 36s ease-in-out infinite alternate;
   -webkit-font-smoothing: antialiased;
+}
+
+/* Плавный дрейф синих свечений фона — нежно и без рывков. */
+@keyframes bg-flow {
+  0% {
+    background-position:
+      0 0,
+      0% 0%,
+      100% 0%,
+      50% 100%;
+  }
+  100% {
+    background-position:
+      0 0,
+      100% 100%,
+      0% 80%,
+      55% 0%;
+  }
 }
 
 /* Лёгкое «зерно» поверх фона — делает тёмные поверхности глубже. */

@@ -1002,20 +1002,56 @@ export function useCallController(
   renegotiateAllRef.current = renegotiateAll;
 
   /* ─────────────────────────────────────────────────────────────────────
-   * АВТО-ПЕРЕГОВОРЫ после старта звонка.
-   * Симптом был такой: звука нет, пока кто-то не включит демку/камеру
-   * (т.е. пока не случится повторное согласование). Значит ПЕРВОЕ
-   * согласование на некоторых сетях проходит «битым». Чтобы не заставлять
-   * человека включать демку, мы сами повторяем согласование дважды —
-   * на 2.5-й и 6-й секунде. Дёшево и без разрыва соединения.
+   * АВТО-ПЕРЕГОВОРЫ после старта звонка + ОБНОВЛЕНИЕ ЗВУКОВОЙ ДОРОЖКИ.
+   * Симптом: звука нет, пока кто-то не включит демку. Демка работает,
+   * потому что ПОДМЕНЯЕТ дорожку у пиров. Значит, делаем то же самое для
+   * звука: через 4 секунды берём СВЕЖИЙ микрофон и подменяем дорожку —
+   * это тот же механизм, что «лечит» звук через демку. Плюс повторные
+   * согласования на 2.5-й и 6-й секунде.
    * ───────────────────────────────────────────────────────────────────── */
   useEffect(() => {
     if (session?.status !== "live") return;
     const t1 = setTimeout(() => void renegotiateAllRef.current(), 2_500);
     const t2 = setTimeout(() => void renegotiateAllRef.current(), 6_000);
+    const t3 = setTimeout(() => {
+      void (async () => {
+        const local = localStreamRef.current;
+        if (!local || linksRef.current.size === 0) return;
+        try {
+          const fresh = await navigator.mediaDevices.getUserMedia({
+            audio: audioConstraints(),
+          });
+          const [newAudio] = fresh.getAudioTracks();
+          if (!newAudio) return;
+          const old = local.getAudioTracks()[0];
+          // Сохраняем состояние мьюта
+          newAudio.enabled = old ? old.enabled : !mutedRef.current;
+          if (old) {
+            local.removeTrack(old);
+            old.stop();
+          }
+          local.addTrack(newAudio);
+          let added = false;
+          for (const l of linksRef.current.values()) {
+            const sender = l.pc.getSenders().find((x) => x.track?.kind === "audio");
+            if (sender) void sender.replaceTrack(newAudio).catch(() => {});
+            else {
+              l.pc.addTrack(newAudio, local);
+              added = true;
+            }
+          }
+          if (added) void renegotiateAllRef.current();
+          setStreamTick((v) => v + 1);
+          restartVoiceGateRef.current();
+        } catch {
+          /* микрофон занят/недоступен — остаёмся на старой дорожке */
+        }
+      })();
+    }, 4_000);
     return () => {
       clearTimeout(t1);
       clearTimeout(t2);
+      clearTimeout(t3);
     };
   }, [session?.status, session?.id]);
 
@@ -1124,6 +1160,8 @@ export function useCallController(
       /* нет WebAudio — звонок работает без VOX */
     }
   }, []);
+  const restartVoiceGateRef = useRef(restartVoiceGate);
+  restartVoiceGateRef.current = restartVoiceGate;
 
   /**
    * Применить новые настройки звука прямо во время звонка: микрофон
