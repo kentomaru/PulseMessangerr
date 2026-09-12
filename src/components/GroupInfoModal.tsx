@@ -392,6 +392,7 @@ export default function GroupInfoModal({
       <AnimatePresence>
         {picker === "add" && (
           <PeoplePicker
+            key="picker"
             title="Добавить участников"
             hint={isChannel ? "Подписчики канала" : "Участники группы"}
             excludeIds={members.map((m) => m.user.id)}

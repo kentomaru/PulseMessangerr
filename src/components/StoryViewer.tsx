@@ -257,6 +257,7 @@ export default function StoryViewer({
       <AnimatePresence>
         {showViewers && (
           <motion.div
+            key="viewers"
             initial={{ opacity: 0, y: 30 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 30 }}

@@ -144,6 +144,7 @@ export default function CallStage(props: Props) {
       <AnimatePresence>
         {showInvite && session && (
           <PeoplePicker
+            key="invite"
             title="Добавить в звонок"
             hint="Человек увидит звонок во входящих и сможет присоединиться"
             excludeIds={session.participants.map((p) => p.userId).filter((id) => id !== meId)}
