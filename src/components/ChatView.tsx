@@ -4,24 +4,39 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   ArrowLeft,
+  Ban,
   Check,
   CheckCheck,
+  ChevronRight,
   CornerUpLeft,
+  Copy,
+  Download,
+  File as FileIcon,
+  FileText,
+  Film,
   Hash,
   ImagePlus,
   Info,
   Loader2,
   Lock,
   Megaphone,
+  Mic,
   MoreVertical,
+  Music,
   Palette,
+  Paperclip,
+  Pause,
+  Pencil,
   Phone,
   PhoneIncoming,
   PhoneMissed,
   PhoneOutgoing,
+  Play,
   Radio,
   Reply,
+  RotateCcw,
   Send,
+  SmilePlus,
   Trash2,
   UserRound,
   Users,
@@ -30,24 +45,31 @@ import {
 } from "lucide-react";
 import Avatar from "./Avatar";
 import WallpaperModal from "./WallpaperModal";
-import { api, ApiError } from "@/lib/api";
+import { api, ApiError, copyToClipboard, uploadFile } from "@/lib/api";
 import {
   callLogLabel,
   dayLabel,
+  formatBytes,
   formatDuration,
   lastSeenLabel,
+  legacyAttachmentKind,
+  messagePreview,
   parseCallContent,
+  parseAttachment,
   sameDay,
   timeHHmm,
 } from "@/lib/format";
 import { wallpaperStyle } from "@/lib/wallpapers";
 import type {
+  AttachmentInfo,
   CallMedia,
   CallSummary,
   ChatMessage,
   ConversationKind,
+  ConversationListItem,
   ConversationMemberItem,
   MemberRole,
+  MessageReaction,
   Peer,
   PublicUser,
 } from "@/lib/types";
@@ -93,6 +115,37 @@ type MessageLoad = {
   wallpaper: string | null;
 };
 
+type DraftFile = {
+  id: string;
+  file: File;
+  /** Превью (для картинок). */
+  preview: string | null;
+};
+
+type ContextMenuState = {
+  x: number;
+  y: number;
+  message: ChatMessage;
+};
+
+/** Быстрые реакции (те же, что в белом списке сервера). */
+const QUICK_EMOJIS = ["👍", "❤️", "😂", "🔥", "😮", "😢", "🎉", "🤔", "👀", "💯"];
+
+const MAX_UPLOAD_BYTES = 500 * 1024 * 1024;
+
+/** Первый поддерживаемый браузером MIME для MediaRecorder. */
+function pickRecorderMime(candidates: string[]): string | undefined {
+  if (typeof MediaRecorder === "undefined") return undefined;
+  for (const c of candidates) {
+    try {
+      if (MediaRecorder.isTypeSupported(c)) return c;
+    } catch {
+      /* ignore */
+    }
+  }
+  return undefined;
+}
+
 export default function ChatView({
   me,
   conversationId,
@@ -125,7 +178,15 @@ export default function ChatView({
   const [lightbox, setLightbox] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [replyTo, setReplyTo] = useState<ChatMessage | null>(null);
+  const [editing, setEditing] = useState<ChatMessage | null>(null);
   const [highlight, setHighlight] = useState<string | null>(null);
+  const [draftFiles, setDraftFiles] = useState<DraftFile[]>([]);
+  const [dragOver, setDragOver] = useState(false);
+  const [ctxMenu, setCtxMenu] = useState<ContextMenuState | null>(null);
+  const [forwarding, setForwarding] = useState<ChatMessage | null>(null);
+  const [noteRecorder, setNoteRecorder] = useState(false);
+  const [voiceRecActive, setVoiceRecActive] = useState(false);
+  const [recSecs, setRecSecs] = useState(0);
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
@@ -133,12 +194,13 @@ export default function ChatView({
   const lastTypingSent = useRef(0);
   const lastCount = useRef(0);
   const loadedRef = useRef(false);
+  const voiceRef = useRef<{ recorder: MediaRecorder; stream: MediaStream; chunks: Blob[]; startedAt: number } | null>(null);
+  const draftId = useRef(0);
 
   /**
    * Прокрутить чат вниз.
    * — null-safe: при переключении чата в полёте запроса колбэк может сработать
-   *   после размонтирования — scrollRef.current уже null (раньше `scrollTo({ top: scrollRef.current.scrollHeight })`
-   *   падал с null-ref ещё до опционального вызова);
+   *   после размонтирования — scrollRef.current уже null;
    * — фолбэк на scrollTop: в окружениях без рабочей Element.scrollTo (например
    *   jsdom в UI-смоке) скролл просто не выполнялся молча.
    */
@@ -186,10 +248,23 @@ export default function ChatView({
     setLoaded(false);
     lastCount.current = 0;
     setReplyTo(null);
+    setEditing(null);
     void load();
     const t = setInterval(() => void load(), 2_500);
     return () => clearInterval(t);
   }, [load]);
+
+  // при уходе из чата — прибираем черновики и записи
+  useEffect(() => {
+    return () => {
+      setDraftFiles((ds) => {
+        for (const d of ds) if (d.preview) URL.revokeObjectURL(d.preview);
+        return [];
+      });
+      voiceRef.current?.stream.getTracks().forEach((t) => t.stop());
+      voiceRef.current = null;
+    };
+  }, [conversationId]);
 
   const kind = meta?.kind ?? initialKind;
   const title = meta?.title ?? initialTitle;
@@ -197,11 +272,84 @@ export default function ChatView({
   const isSpace = kind !== "direct";
   const canPost = kind !== "channel" || meta?.myRole === "owner" || meta?.myRole === "admin";
 
-  const send = async (imageUrl?: string) => {
-    const content = (imageUrl ?? text).trim();
-    if (!content || sending || !canPost) return;
+  /* ─────────────────────────── отправка ─────────────────────────── */
+
+  const send = async () => {
+    if (sending || uploading || !canPost) return;
+
+    // Редактирование своего сообщения
+    if (editing) {
+      const content = text.trim();
+      if (!content) return;
+      setSending(true);
+      const target = editing;
+      setEditing(null);
+      setText("");
+      try {
+        await api(`/api/messages/${target.id}`, {
+          method: "PATCH",
+          body: JSON.stringify({ content }),
+        });
+        await load();
+        refreshConversations();
+      } catch (e) {
+        setText(content);
+        setEditing(target);
+        notify(e instanceof Error ? e.message : "Не удалось изменить");
+      } finally {
+        setSending(false);
+      }
+      return;
+    }
+
+    // Файлы из черновика (первый файл получает подпись из поля ввода)
+    if (draftFiles.length > 0) {
+      const files = draftFiles;
+      const caption = text.trim();
+      setDraftFiles([]);
+      setText("");
+      setUploading(true);
+      try {
+        for (let i = 0; i < files.length; i++) {
+          const d = files[i];
+          const url = await uploadFile(d.file);
+          const isImage = d.file.type.startsWith("image/");
+          const att: AttachmentInfo = {
+            url,
+            name: d.file.name,
+            mimeType: d.file.type || "application/octet-stream",
+            size: d.file.size,
+          };
+          if (i === 0 && caption) att.caption = caption;
+          await api("/api/messages", {
+            method: "POST",
+            body: JSON.stringify({
+              conversationId,
+              type: isImage ? "image" : "file",
+              content: isImage && !att.caption ? url : JSON.stringify(att),
+              replyToId: replyTo?.id ?? null,
+            }),
+          });
+        }
+        setReplyTo(null);
+        await load();
+        refreshConversations();
+      } catch (e) {
+        notify(e instanceof Error ? e.message : "Не удалось отправить файлы");
+        setDraftFiles(files);
+        setText(caption);
+      } finally {
+        for (const d of files) if (d.preview) URL.revokeObjectURL(d.preview);
+        setUploading(false);
+      }
+      return;
+    }
+
+    // Обычный текст
+    const content = text.trim();
+    if (!content) return;
     setSending(true);
-    if (!imageUrl) setText("");
+    setText("");
     const reply = replyTo;
     setReplyTo(null);
     try {
@@ -209,7 +357,7 @@ export default function ChatView({
         method: "POST",
         body: JSON.stringify({
           conversationId,
-          type: imageUrl ? "image" : "text",
+          type: "text",
           content,
           replyToId: reply?.id ?? null,
         }),
@@ -217,7 +365,7 @@ export default function ChatView({
       await load();
       refreshConversations();
     } catch (e) {
-      if (!imageUrl) setText(content);
+      setText(content);
       setReplyTo(reply);
       notify(e instanceof Error ? e.message : "Не удалось отправить");
     } finally {
@@ -225,19 +373,134 @@ export default function ChatView({
     }
   };
 
-  const sendImage = async (file: File | null) => {
-    if (!file) return;
+  const sendAttachment = async (
+    blob: Blob,
+    durationSec: number,
+    type: "voice" | "video_note",
+    fallbackName: string,
+  ) => {
+    if (!canPost) return;
     setUploading(true);
     try {
-      const { uploadFile } = await import("@/lib/api");
+      const ext = blob.type.includes("mp4") ? "m4a" : blob.type.includes("ogg") ? "ogg" : "webm";
+      const file = new File([blob], `${type}.${ext}`, { type: blob.type });
       const url = await uploadFile(file);
-      await send(url);
+      await api("/api/messages", {
+        method: "POST",
+        body: JSON.stringify({
+          conversationId,
+          type,
+          content: JSON.stringify({
+            url,
+            name: fallbackName,
+            mimeType: blob.type,
+            size: blob.size,
+            duration: Math.max(1, Math.round(durationSec)),
+          }),
+          replyToId: replyTo?.id ?? null,
+        }),
+      });
+      setReplyTo(null);
+      await load();
+      refreshConversations();
     } catch (e) {
-      notify(e instanceof Error ? e.message : "Не удалось отправить фото");
+      notify(e instanceof Error ? e.message : "Не удалось отправить");
     } finally {
       setUploading(false);
     }
   };
+
+  /* ─────────────────────────── черновик файлов ─────────────────────────── */
+
+  const addDraftFiles = useCallback(
+    (files: File[]) => {
+      if (!canPost || files.length === 0) return;
+      setDraftFiles((ds) => {
+        const next = [...ds];
+        for (const f of files) {
+          if (f.size > MAX_UPLOAD_BYTES) {
+            notify(`«${f.name}» больше 500 МБ`);
+            continue;
+          }
+          next.push({
+            id: `d${++draftId.current}`,
+            file: f,
+            preview: f.type.startsWith("image/") ? URL.createObjectURL(f) : null,
+          });
+        }
+        return next.slice(0, 10);
+      });
+      inputRef.current?.focus();
+    },
+    [canPost, notify],
+  );
+
+  const removeDraftFile = (id: string) => {
+    setDraftFiles((ds) => {
+      const d = ds.find((x) => x.id === id);
+      if (d?.preview) URL.revokeObjectURL(d.preview);
+      return ds.filter((x) => x.id !== id);
+    });
+  };
+
+  /* ─────────────────────────── голосовая запись ─────────────────────────── */
+
+  const startVoiceRecording = async () => {
+    if (!canPost || voiceRecActive || noteRecorder) return;
+    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
+      notify("Запись звука не поддерживается этим браузером");
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mime = pickRecorderMime(["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg;codecs=opus"]);
+      const recorder = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+      const chunks: Blob[] = [];
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) chunks.push(e.data);
+      };
+      recorder.start(250);
+      voiceRef.current = { recorder, stream, chunks, startedAt: Date.now() };
+      setRecSecs(0);
+      setVoiceRecActive(true);
+    } catch {
+      notify("Не удалось получить доступ к микрофону");
+    }
+  };
+
+  const stopVoiceRecording = (send: boolean) => {
+    const rec = voiceRef.current;
+    if (!rec) return;
+    voiceRef.current = null;
+    const duration = (Date.now() - rec.startedAt) / 1000;
+    rec.recorder.onstop = () => {
+      rec.stream.getTracks().forEach((t) => t.stop());
+      const blob = new Blob(rec.chunks, { type: rec.recorder.mimeType || "audio/webm" });
+      if (send && blob.size > 0) {
+        void sendAttachment(blob, duration, "voice", "Голосовое сообщение");
+      }
+    };
+    try {
+      rec.recorder.stop();
+    } catch {
+      rec.stream.getTracks().forEach((t) => t.stop());
+    }
+    setVoiceRecActive(false);
+    setRecSecs(0);
+  };
+
+  // тик таймера записи + автостоп
+  useEffect(() => {
+    if (!voiceRecActive) return;
+    const t = setInterval(() => setRecSecs((s) => s + 1), 1000);
+    return () => clearInterval(t);
+  }, [voiceRecActive]);
+  useEffect(() => {
+    if (voiceRecActive && recSecs >= 300) stopVoiceRecording(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [recSecs, voiceRecActive]);
+
+  /* ─────────────────────────── действия с сообщениями ─────────────────────────── */
 
   const removeMessage = async (id: string) => {
     try {
@@ -254,6 +517,39 @@ export default function ChatView({
       refreshConversations();
     } catch (e) {
       notify(e instanceof Error ? e.message : "Не удалось удалить");
+    }
+  };
+
+  const toggleReaction = async (messageId: string, emoji: string) => {
+    // оптимистично — опрос подтвердит
+    setMessages((ms) =>
+      ms.map((m) => {
+        if (m.id !== messageId) return m;
+        const rs = [...(m.reactions ?? [])];
+        const idx = rs.findIndex((r) => r.emoji === emoji);
+        if (idx >= 0) {
+          const r = rs[idx];
+          if (r.mine) {
+            if (r.count <= 1) rs.splice(idx, 1);
+            else rs[idx] = { ...r, count: r.count - 1, mine: false };
+          } else {
+            rs[idx] = { ...r, count: r.count + 1, mine: true };
+          }
+        } else {
+          rs.push({ emoji, count: 1, mine: true });
+        }
+        return { ...m, reactions: rs };
+      }),
+    );
+    try {
+      const d = await api<{ reactions: MessageReaction[] }>(`/api/messages/${messageId}/reactions`, {
+        method: "POST",
+        body: JSON.stringify({ emoji }),
+      });
+      setMessages((ms) => ms.map((m) => (m.id === messageId ? { ...m, reactions: d.reactions } : m)));
+    } catch (e) {
+      notify(e instanceof Error ? e.message : "Не удалось поставить реакцию");
+      void load();
     }
   };
 
@@ -274,6 +570,55 @@ export default function ChatView({
     setHighlight(id);
     setTimeout(() => setHighlight(null), 1400);
   };
+
+  const startReply = (m: ChatMessage) => {
+    setEditing(null);
+    setReplyTo(m);
+    inputRef.current?.focus();
+  };
+
+  const startEdit = (m: ChatMessage) => {
+    const att = parseAttachment(m.type, m.content);
+    setReplyTo(null);
+    setEditing(m);
+    setText(m.type === "text" ? m.content : (att?.caption ?? ""));
+    inputRef.current?.focus();
+  };
+
+  const copyMessage = async (m: ChatMessage) => {
+    const att = parseAttachment(m.type, m.content);
+    const value = m.type === "text" ? m.content : (att?.caption ?? att?.url ?? "");
+    if (!value) return;
+    const ok = await copyToClipboard(value);
+    notify(ok ? "Скопировано" : "Не удалось скопировать");
+  };
+
+  /* ─────────────────────────── контекстное меню (ПКМ / долгое нажатие) ─────────────────────────── */
+
+  const openContextMenu = useCallback(
+    (x: number, y: number, message: ChatMessage) => {
+      setMenuOpen(false);
+      setCtxMenu({ x, y, message });
+    },
+    [],
+  );
+
+  useEffect(() => {
+    if (!ctxMenu) return;
+    const close = () => setCtxMenu(null);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") close();
+    };
+    // Клик «вне» закрывает меню через прозрачный фон (см. MessageContextMenu):
+    // window-click-слушатель не годится — клик, открывший меню, долетел бы
+    // до window уже ПОСЛЕ добавления слушателя и мгновенно закрывал меню.
+    window.addEventListener("resize", close);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("resize", close);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [ctxMenu]);
 
   // Тик для «протухания» индикатора «печатает…» между опросами
   const [nowTick, setNowTick] = useState(0);
@@ -319,10 +664,7 @@ export default function ChatView({
   };
   const subtitle = headerSubtitle();
 
-  const startReply = (m: ChatMessage) => {
-    setReplyTo(m);
-    inputRef.current?.focus();
-  };
+  const canSendSomething = !!text.trim() || draftFiles.length > 0;
 
   return (
     <div className="relative flex h-full min-w-0 flex-1 flex-col">
@@ -332,8 +674,9 @@ export default function ChatView({
         <div className="pointer-events-none absolute inset-0 bg-[#0a0a14]/70" aria-hidden />
       )}
 
-      {/* Шапка */}
-      <div className="glass-strong relative z-10 flex items-center gap-3 border-b border-white/8 px-4 py-3">
+      {/* Шапка — z-30: выпадающее меню «⋮» должно быть НАД областью сообщений
+          (раньше оба блока были z-10, сообщения перекрывали меню — клики «не работали») */}
+      <div className="glass-strong relative z-30 flex items-center gap-3 border-b border-white/8 px-4 py-3">
         <button
           onClick={onBack}
           className="glass flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-white/70 md:hidden"
@@ -388,13 +731,14 @@ export default function ChatView({
             onClick={() => onCall("video")}
             disabled={callBusy}
             title="Видеозвонок"
-            className="glass hidden h-10 w-10 items-center justify-center rounded-xl text-white/75 transition-colors hover:text-white sm:flex disabled:opacity-40"
+            className="glass flex h-10 w-10 items-center justify-center rounded-xl text-white/75 transition-colors hover:text-white sm:flex disabled:opacity-40"
           >
             <Video className="h-4.5 w-4.5" />
           </button>
           <div className="relative">
             <button
               onClick={() => setMenuOpen((v) => !v)}
+              title="Меню чата"
               className="glass flex h-10 w-10 items-center justify-center rounded-xl text-white/75 transition-colors hover:text-white"
             >
               <MoreVertical className="h-4.5 w-4.5" />
@@ -484,8 +828,33 @@ export default function ChatView({
         )}
       </AnimatePresence>
 
-      {/* Сообщения */}
-      <div ref={scrollRef} className="nice-scroll relative z-10 min-h-0 flex-1 overflow-y-auto px-4 py-5">
+      {/* Сообщения (и зона перетаскивания файлов) */}
+      <div
+        ref={scrollRef}
+        className="nice-scroll relative z-10 min-h-0 flex-1 overflow-y-auto px-4 py-5"
+        onDragOver={(e) => {
+          if (!canPost) return;
+          e.preventDefault();
+          setDragOver(true);
+        }}
+        onDragLeave={(e) => {
+          if (e.currentTarget.contains(e.relatedTarget as Node)) return;
+          setDragOver(false);
+        }}
+        onDrop={(e) => {
+          e.preventDefault();
+          setDragOver(false);
+          const files = Array.from(e.dataTransfer.files ?? []);
+          if (files.length > 0) addDraftFiles(files);
+        }}
+      >
+        {dragOver && (
+          <div className="pointer-events-none absolute inset-2 z-20 flex items-center justify-center rounded-3xl border-2 border-dashed border-violet-400/60 bg-violet-500/10 backdrop-blur-sm">
+            <p className="rounded-2xl bg-black/60 px-5 py-3 text-sm font-medium text-white/90">
+              Отпустите — прикрепим к сообщению
+            </p>
+          </div>
+        )}
         {!loaded ? (
           <div className="flex h-full items-center justify-center">
             <Loader2 className="h-6 w-6 animate-spin text-white/30" />
@@ -499,7 +868,7 @@ export default function ChatView({
                 ? kind === "channel"
                   ? "Канал создан. Опубликуйте первый пост — и позовите людей ссылкой"
                   : "Группа создана. Напишите первое сообщение или начните групповой звонок 👋"
-                : "Здесь пока пусто. Напишите первое сообщение — или позвоните 👋"}
+                : "Здесь пока пусто. Напишите первое сообщение — или запишите голосовое 👋"}
             </p>
           </div>
         ) : (
@@ -541,6 +910,9 @@ export default function ChatView({
                       onOpenImage={setLightbox}
                       onDelete={() => void removeMessage(m.id)}
                       onReply={() => startReply(m)}
+                      onEdit={() => startEdit(m)}
+                      onReact={(emoji) => void toggleReaction(m.id, emoji)}
+                      onMenu={openContextMenu}
                       onJump={jumpTo}
                       onViewUser={onViewUser}
                     />
@@ -552,33 +924,95 @@ export default function ChatView({
         )}
       </div>
 
-      {/* Ответ / поле ввода */}
+      {/* Ответ / редактирование / поле ввода */}
       <div className="glass-strong relative z-10 border-t border-white/8 px-4 py-3">
         <div className="mx-auto max-w-2xl">
+          {/* Черновик файлов: превью + подпись + кнопка «Отправить» */}
           <AnimatePresence>
-            {replyTo && (
+            {draftFiles.length > 0 && (
               <motion.div
-                key="reply"
+                key="draft"
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: "auto" }}
+                exit={{ opacity: 0, height: 0 }}
+                className="overflow-hidden"
+              >
+                <div className="mb-2 rounded-2xl border border-white/8 bg-white/[0.04] p-2.5">
+                  <p className="mb-2 px-1 text-[11px] font-semibold tracking-wide text-white/40 uppercase">
+                    К отправке · {draftFiles.length} шт.
+                    {uploading ? " · загрузка…" : ""}
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    {draftFiles.map((d) => (
+                      <div
+                        key={d.id}
+                        className="group/draft relative flex items-center gap-2.5 rounded-xl border border-white/10 bg-black/25 p-2 pr-3"
+                      >
+                        {d.preview ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img src={d.preview} alt={d.file.name} className="h-12 w-12 rounded-lg object-cover" />
+                        ) : (
+                          <span className="flex h-12 w-12 items-center justify-center rounded-lg bg-white/8">
+                            <DraftFileIcon mime={d.file.type} />
+                          </span>
+                        )}
+                        <span className="max-w-36">
+                          <span className="block truncate text-xs font-medium text-white/85">{d.file.name}</span>
+                          <span className="block text-[11px] text-white/35">{formatBytes(d.file.size)}</span>
+                        </span>
+                        <button
+                          onClick={() => removeDraftFile(d.id)}
+                          className="rounded-full bg-black/60 p-1 text-white/70 transition-colors hover:text-rose-300"
+                          title="Убрать"
+                        >
+                          <X className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          <AnimatePresence>
+            {(replyTo || editing) && (
+              <motion.div
+                key={editing ? "editing" : "reply"}
                 initial={{ opacity: 0, height: 0 }}
                 animate={{ opacity: 1, height: "auto" }}
                 exit={{ opacity: 0, height: 0 }}
                 className="overflow-hidden"
               >
                 <div className="mb-2 flex items-center gap-2.5 rounded-2xl border border-white/8 bg-white/[0.04] px-3 py-2">
-                  <Reply className="h-4 w-4 shrink-0 text-violet-300" />
+                  {editing ? (
+                    <Pencil className="h-4 w-4 shrink-0 text-amber-300" />
+                  ) : (
+                    <Reply className="h-4 w-4 shrink-0 text-violet-300" />
+                  )}
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-[11px] font-semibold text-violet-300">
-                      {replyTo.senderId === me.id ? "Вы" : (replyTo.sender?.displayName ?? "Сообщение")}
+                    <p className={`truncate text-[11px] font-semibold ${editing ? "text-amber-300" : "text-violet-300"}`}>
+                      {editing
+                        ? "Редактирование сообщения"
+                        : replyTo!.senderId === me.id
+                          ? "Вы"
+                          : (replyTo!.sender?.displayName ?? "Сообщение")}
                     </p>
                     <p className="truncate text-xs text-white/45">
-                      {replyTo.deletedAt
-                        ? "Сообщение удалено"
-                        : replyTo.type === "image"
-                          ? "🖼 Фото"
-                          : replyTo.content.replace(/\n/g, " ")}
+                      {editing
+                        ? messagePreview(editing.type, editing.content)
+                        : messagePreview(replyTo!.type, replyTo!.content)}
                     </p>
                   </div>
-                  <button onClick={() => setReplyTo(null)} className="shrink-0 rounded-full p-1 text-white/40 hover:text-white">
+                  <button
+                    onClick={() => {
+                      if (editing) {
+                        setEditing(null);
+                        setText("");
+                      } else setReplyTo(null);
+                    }}
+                    className="shrink-0 rounded-full p-1 text-white/40 hover:text-white"
+                  >
                     <X className="h-3.5 w-3.5" />
                   </button>
                 </div>
@@ -591,23 +1025,67 @@ export default function ChatView({
               <Lock className="h-4 w-4" />
               В этом канале писать могут только администраторы
             </div>
+          ) : voiceRecActive ? (
+            /* Запись голосового: таймер + отмена + отправка */
+            <div className="flex items-center gap-3 rounded-2xl border border-rose-400/25 bg-rose-500/10 px-4 py-3">
+              <span className="relative flex h-3 w-3 shrink-0">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-rose-400 opacity-70" />
+                <span className="relative inline-flex h-3 w-3 rounded-full bg-rose-500" />
+              </span>
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-semibold text-rose-200 tabular-nums">{formatDuration(recSecs)}</p>
+                <p className="text-[11px] text-white/40">Запись голосового сообщения…</p>
+              </div>
+              <button
+                onClick={() => stopVoiceRecording(false)}
+                title="Отменить запись"
+                className="glass flex h-11 w-11 items-center justify-center rounded-2xl text-white/70 transition-colors hover:text-rose-300"
+              >
+                <Ban className="h-4.5 w-4.5" />
+              </button>
+              <button
+                onClick={() => stopVoiceRecording(true)}
+                disabled={uploading}
+                title="Закончить и отправить"
+                className="btn-gradient flex h-11 items-center gap-2 rounded-2xl px-4 text-sm font-semibold text-white"
+              >
+                {uploading ? <Loader2 className="h-4.5 w-4.5 animate-spin" /> : <Send className="h-4.5 w-4.5" />}
+                Отправить
+              </button>
+            </div>
           ) : (
             <div className="flex items-end gap-2.5">
               <button
                 onClick={() => fileRef.current?.click()}
-                disabled={uploading}
-                title="Отправить фото"
+                disabled={uploading || sending}
+                title="Прикрепить файл (до 500 МБ)"
                 className="glass flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl text-white/70 transition-colors hover:text-white disabled:opacity-50"
               >
-                {uploading ? <Loader2 className="h-4.5 w-4.5 animate-spin" /> : <ImagePlus className="h-4.5 w-4.5" />}
+                {uploading ? <Loader2 className="h-4.5 w-4.5 animate-spin" /> : <Paperclip className="h-4.5 w-4.5" />}
+              </button>
+              <button
+                onClick={() => void startVoiceRecording()}
+                disabled={uploading || sending || noteRecorder}
+                title="Записать голосовое сообщение"
+                className="glass flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl text-white/70 transition-colors hover:text-white disabled:opacity-50"
+              >
+                <Mic className="h-4.5 w-4.5" />
+              </button>
+              <button
+                onClick={() => setNoteRecorder(true)}
+                disabled={uploading || sending || voiceRecActive}
+                title="Записать видеосообщение (кружок)"
+                className="glass hidden h-11 w-11 shrink-0 items-center justify-center rounded-2xl text-white/70 transition-colors hover:text-white sm:flex disabled:opacity-50"
+              >
+                <VideoNoteIcon />
               </button>
               <input
                 ref={fileRef}
                 type="file"
-                accept="image/png,image/jpeg,image/webp,image/gif"
+                multiple
                 className="hidden"
                 onChange={(e) => {
-                  void sendImage(e.target.files?.[0] ?? null);
+                  addDraftFiles(Array.from(e.target.files ?? []));
                   e.target.value = "";
                 }}
               />
@@ -618,21 +1096,33 @@ export default function ChatView({
                   setText(e.target.value);
                   sendTyping();
                 }}
+                onPaste={(e) => {
+                  const files = Array.from(e.clipboardData?.files ?? []);
+                  if (files.length > 0) {
+                    e.preventDefault();
+                    addDraftFiles(files);
+                  }
+                }}
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && !e.shiftKey) {
                     e.preventDefault();
                     void send();
                   }
-                  if (e.key === "Escape" && replyTo) setReplyTo(null);
+                  if (e.key === "Escape") {
+                    if (editing) {
+                      setEditing(null);
+                      setText("");
+                    } else if (replyTo) setReplyTo(null);
+                  }
                 }}
                 rows={1}
                 maxLength={4000}
-                placeholder={kind === "channel" ? "Написать в канал…" : "Сообщение…"}
+                placeholder={draftFiles.length > 0 ? "Подпись к файлам (необязательно)…" : kind === "channel" ? "Написать в канал…" : "Сообщение…"}
                 className="ring-focus nice-scroll max-h-32 min-h-11 flex-1 resize-none rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3 text-[15px] transition-all placeholder:text-white/30"
               />
               <button
                 onClick={() => void send()}
-                disabled={!text.trim() || sending}
+                disabled={(!canSendSomething && !editing) || sending || uploading}
                 title="Отправить"
                 className="btn-gradient flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl text-white"
               >
@@ -661,6 +1151,31 @@ export default function ChatView({
       </AnimatePresence>
 
       <AnimatePresence>
+        {noteRecorder && (
+          <VideoNoteRecorder
+            key="note-recorder"
+            notify={notify}
+            onClose={() => setNoteRecorder(false)}
+            onSend={(blob, duration) => {
+              setNoteRecorder(false);
+              void sendAttachment(blob, duration, "video_note", "Видеосообщение");
+            }}
+          />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {forwarding && (
+          <ForwardModal
+            key="forward"
+            message={forwarding}
+            onClose={() => setForwarding(null)}
+            notify={notify}
+          />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
         {lightbox && (
           <motion.div
             key="lightbox"
@@ -672,14 +1187,84 @@ export default function ChatView({
           >
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src={lightbox} alt="Фото" className="max-h-full max-w-full rounded-2xl object-contain shadow-2xl" />
-            <button className="absolute top-5 right-5 rounded-full bg-white/10 p-2.5 text-white/80">
+            <a
+              href={lightbox}
+              download
+              onClick={(e) => e.stopPropagation()}
+              className="glass absolute top-5 left-5 flex items-center gap-2 rounded-xl px-3.5 py-2.5 text-sm text-white/85 transition-colors hover:text-white"
+            >
+              <Download className="h-4 w-4" />
+              Скачать
+            </a>
+            <button
+              onClick={() => setLightbox(null)}
+              className="absolute top-5 right-5 rounded-full bg-white/10 p-2.5 text-white/80 transition-colors hover:bg-white/20"
+            >
               <X className="h-5 w-5" />
             </button>
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* Контекстное меню сообщения (ПКМ / долгое нажатие) */}
+      <AnimatePresence>
+        {ctxMenu && (
+          <MessageContextMenu
+            key="ctx"
+            state={ctxMenu}
+            meId={me.id}
+            isSpace={isSpace}
+            myRole={meta?.myRole ?? "member"}
+            onClose={() => setCtxMenu(null)}
+            onReact={(emoji) => void toggleReaction(ctxMenu.message.id, emoji)}
+            onReply={() => {
+              startReply(ctxMenu.message);
+              setCtxMenu(null);
+            }}
+            onEdit={() => {
+              startEdit(ctxMenu.message);
+              setCtxMenu(null);
+            }}
+            onCopy={() => {
+              void copyMessage(ctxMenu.message);
+              setCtxMenu(null);
+            }}
+            onForward={() => {
+              setForwarding(ctxMenu.message);
+              setCtxMenu(null);
+            }}
+            onDelete={() => {
+              void removeMessage(ctxMenu.message.id);
+              setCtxMenu(null);
+            }}
+          />
+        )}
+      </AnimatePresence>
     </div>
   );
+}
+
+/* ─────────────────────────── мелкие иконки ─────────────────────────── */
+
+/** Кнопка «кружок»: круг с треугольником записи. */
+function VideoNoteIcon() {
+  return (
+    <span className="relative flex h-7 w-7 items-center justify-center">
+      <span className="absolute inset-0 rounded-full border-[1.6px] border-current opacity-70" />
+      <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="currentColor">
+        <path d="M8 6.5v11l9-5.5-9-5.5Z" />
+      </svg>
+    </span>
+  );
+}
+
+function DraftFileIcon({ mime }: { mime: string }) {
+  const cls = "h-5 w-5 text-white/60";
+  if (mime.startsWith("video/")) return <Film className={cls} />;
+  if (mime.startsWith("audio/")) return <Music className={cls} />;
+  if (mime.startsWith("image/")) return <ImagePlus className={cls} />;
+  if (mime.includes("pdf") || mime.includes("word") || mime.startsWith("text/")) return <FileText className={cls} />;
+  return <FileIcon className={cls} />;
 }
 
 function MenuItem({ icon, label, onClick }: { icon: React.ReactNode; label: string; onClick: () => void }) {
@@ -694,6 +1279,479 @@ function MenuItem({ icon, label, onClick }: { icon: React.ReactNode; label: stri
   );
 }
 
+/* ─────────────────────────── меню сообщения ─────────────────────────── */
+
+function MessageContextMenu({
+  state,
+  meId,
+  isSpace,
+  myRole,
+  onClose,
+  onReact,
+  onReply,
+  onEdit,
+  onCopy,
+  onForward,
+  onDelete,
+}: {
+  state: ContextMenuState;
+  meId: string;
+  isSpace: boolean;
+  myRole: MemberRole;
+  onClose: () => void;
+  onReact: (emoji: string) => void;
+  onReply: () => void;
+  onEdit: () => void;
+  onCopy: () => void;
+  onForward: () => void;
+  onDelete: () => void;
+}) {
+  const m = state.message;
+  const own = m.senderId === meId;
+  const att = parseAttachment(m.type, m.content);
+  const isEditable = own && !m.deletedAt && (m.type === "text" || m.type === "image" || m.type === "file");
+  const hasText = m.type === "text" ? !!m.content : !!(att?.caption || att?.url);
+  const canDelete = own || (isSpace && (myRole === "owner" || myRole === "admin"));
+
+  // чтобы меню не вылезало за край экрана
+  const W = 236;
+  const H = 330;
+  const x = Math.min(Math.max(8, state.x), Math.max(8, window.innerWidth - W - 8));
+  const y = Math.min(Math.max(8, state.y), Math.max(8, window.innerHeight - H - 8));
+
+  return (
+    <>
+      {/* Прозрачный фон: клик мимо меню закрывает его */}
+      <div className="fixed inset-0 z-[84]" onClick={onClose} />
+      <motion.div
+        initial={{ opacity: 0, scale: 0.94 }}
+        animate={{ opacity: 1, scale: 1 }}
+        exit={{ opacity: 0, scale: 0.96 }}
+        transition={{ duration: 0.12 }}
+        onClick={(e) => e.stopPropagation()}
+        className="glass-strong fixed z-[85] w-[236px] overflow-hidden rounded-2xl p-1.5 shadow-2xl"
+        style={{ left: x, top: y }}
+      >
+      {/* быстрые реакции */}
+      <div className="grid grid-cols-5 gap-0.5 border-b border-white/8 p-1">
+        {QUICK_EMOJIS.map((e) => (
+          <button
+            key={e}
+            onClick={onReact.bind(null, e)}
+            className="rounded-lg py-1.5 text-lg transition-transform hover:scale-125 active:scale-95"
+            title={`Реакция ${e}`}
+          >
+            {e}
+          </button>
+        ))}
+      </div>
+      <ContextItem icon={<Reply className="h-4 w-4 text-violet-300" />} label="Ответить" onClick={onReply} />
+      {hasText && (
+        <ContextItem icon={<Copy className="h-4 w-4 text-cyan-300" />} label="Копировать" onClick={onCopy} />
+      )}
+      {isEditable && (
+        <ContextItem icon={<Pencil className="h-4 w-4 text-amber-300" />} label="Изменить" onClick={onEdit} />
+      )}
+      <ContextItem
+        icon={<ChevronRight className="h-4 w-4 text-emerald-300" />}
+        label="Переслать"
+        onClick={onForward}
+      />
+      {canDelete && (
+        <ContextItem icon={<Trash2 className="h-4 w-4 text-rose-300" />} label="Удалить" onClick={onDelete} danger />
+      )}
+      </motion.div>
+    </>
+  );
+}
+
+function ContextItem({
+  icon,
+  label,
+  onClick,
+  danger,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  onClick: () => void;
+  danger?: boolean;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={`flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-sm transition-colors hover:bg-white/8 ${
+        danger ? "text-rose-300/90 hover:text-rose-200" : "text-white/80 hover:text-white"
+      }`}
+    >
+      {icon}
+      {label}
+    </button>
+  );
+}
+
+/* ─────────────────────────── пересылка ─────────────────────────── */
+
+function ForwardModal({
+  message,
+  onClose,
+  notify,
+}: {
+  message: ChatMessage;
+  onClose: () => void;
+  notify: (msg: string) => void;
+}) {
+  const [convs, setConvs] = useState<ConversationListItem[] | null>(null);
+  const [sendingTo, setSendingTo] = useState<string | null>(null);
+
+  useEffect(() => {
+    api<{ conversations: ConversationListItem[] }>("/api/conversations")
+      .then((d) => setConvs(d.conversations))
+      .catch(() => setConvs([]));
+  }, []);
+
+  const forwardTo = async (conv: ConversationListItem) => {
+    if (sendingTo) return;
+    setSendingTo(conv.id);
+    try {
+      await api("/api/messages", {
+        method: "POST",
+        body: JSON.stringify({
+          conversationId: conv.id,
+          type: message.type === "call" ? "text" : message.type,
+          content: message.content,
+          replyToId: null,
+        }),
+      });
+      notify(`Переслано в «${conv.title}»`);
+      onClose();
+    } catch (e) {
+      notify(e instanceof Error ? e.message : "Не удалось переслать");
+      setSendingTo(null);
+    }
+  };
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      onClick={onClose}
+      className="fixed inset-0 z-[80] grid place-items-center bg-black/70 p-4 backdrop-blur-sm"
+    >
+      <motion.div
+        initial={{ opacity: 0, scale: 0.94, y: 16 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        exit={{ opacity: 0, scale: 0.96, y: 12 }}
+        onClick={(e) => e.stopPropagation()}
+        className="glass-strong w-full max-w-md overflow-hidden rounded-[1.8rem] shadow-2xl"
+      >
+        <div className="flex items-center justify-between border-b border-white/8 px-6 py-4">
+          <h3 className="font-display text-lg font-bold">Переслать сообщение</h3>
+          <button onClick={onClose} className="rounded-full bg-white/5 p-2 text-white/60 transition-colors hover:bg-white/10">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        <p className="truncate px-6 pt-4 text-xs text-white/40">
+          {messagePreview(message.type, message.content)}
+        </p>
+        <div className="nice-scroll max-h-80 overflow-y-auto p-3">
+          {!convs ? (
+            <div className="flex justify-center py-10">
+              <Loader2 className="h-6 w-6 animate-spin text-white/40" />
+            </div>
+          ) : convs.length === 0 ? (
+            <p className="px-3 py-6 text-center text-sm text-white/40">Пока нет чатов</p>
+          ) : (
+            convs.map((c) => (
+              <button
+                key={c.id}
+                onClick={() => void forwardTo(c)}
+                disabled={sendingTo !== null}
+                className="flex w-full items-center gap-3 rounded-2xl px-3 py-2.5 text-left transition-colors hover:bg-white/8 disabled:opacity-50"
+              >
+                <Avatar
+                  name={c.title}
+                  src={c.kind === "direct" ? c.peer?.avatarUrl ?? null : c.avatarUrl}
+                  size={40}
+                />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm font-medium">{c.title}</span>
+                  <span className="block text-[11px] text-white/35">
+                    {c.kind === "direct" ? "личный чат" : c.kind === "channel" ? "канал" : "группа"}
+                  </span>
+                </span>
+                {sendingTo === c.id && <Loader2 className="h-4 w-4 animate-spin text-white/50" />}
+              </button>
+            ))
+          )}
+        </div>
+      </motion.div>
+    </motion.div>
+  );
+}
+
+/* ─────────────────────────── запись «кружка» ─────────────────────────── */
+
+function VideoNoteRecorder({
+  notify,
+  onClose,
+  onSend,
+}: {
+  notify: (msg: string) => void;
+  onClose: () => void;
+  onSend: (blob: Blob, durationSec: number) => void;
+}) {
+  const [phase, setPhase] = useState<"camera" | "recording" | "review">("camera");
+  const [secs, setSecs] = useState(0);
+  const [reviewUrl, setReviewUrl] = useState<string | null>(null);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const reviewRef = useRef<HTMLVideoElement | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const recRef = useRef<{ recorder: MediaRecorder; chunks: Blob[]; startedAt: number } | null>(null);
+  const blobRef = useRef<Blob | null>(null);
+  /** Текущий blob:-URL предпросмотра — cleanup эффектов всегда видит актуальный. */
+  const reviewUrlRef = useRef<string | null>(null);
+  reviewUrlRef.current = reviewUrl;
+
+  useEffect(() => {
+    let cancelled = false;
+    const start = async () => {
+      if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
+        notify("Запись видео не поддерживается этим браузером");
+        onClose();
+        return;
+      }
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 640 } },
+          audio: true,
+        });
+        if (cancelled) {
+          stream.getTracks().forEach((t) => t.stop());
+          return;
+        }
+        streamRef.current = stream;
+        if (videoRef.current) videoRef.current.srcObject = stream;
+      } catch {
+        notify("Нужен доступ к камере и микрофону");
+        onClose();
+      }
+    };
+    void start();
+    return () => {
+      cancelled = true;
+      streamRef.current?.getTracks().forEach((t) => t.stop());
+      streamRef.current = null;
+      if (reviewUrlRef.current) URL.revokeObjectURL(reviewUrlRef.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // таймер записи (автостоп на 60 секундах, как в Telegram)
+  useEffect(() => {
+    if (phase !== "recording") return;
+    const t = setInterval(() => setSecs((s) => s + 1), 1000);
+    return () => clearInterval(t);
+  }, [phase]);
+  useEffect(() => {
+    if (phase === "recording" && secs >= 60) stopRecording();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [secs, phase]);
+
+  const startRecording = () => {
+    const stream = streamRef.current;
+    if (!stream) return;
+    const mime = pickRecorderMime([
+      "video/webm;codecs=vp8,opus",
+      "video/webm;codecs=vp9,opus",
+      "video/webm",
+      "video/mp4",
+    ]);
+    const recorder = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+    const chunks: Blob[] = [];
+    recorder.ondataavailable = (e) => {
+      if (e.data.size > 0) chunks.push(e.data);
+    };
+    recorder.start(250);
+    recRef.current = { recorder, chunks, startedAt: Date.now() };
+    setSecs(0);
+    setPhase("recording");
+  };
+
+  function stopRecording() {
+    const rec = recRef.current;
+    if (!rec) return;
+    recRef.current = null;
+    const duration = (Date.now() - rec.startedAt) / 1000;
+    rec.recorder.onstop = () => {
+      const blob = new Blob(rec.chunks, { type: rec.recorder.mimeType || "video/webm" });
+      blobRef.current = blob;
+      if (blob.size === 0) {
+        notify("Запись не получилась — попробуйте ещё раз");
+        setPhase("camera");
+        return;
+      }
+      setReviewUrl(URL.createObjectURL(blob));
+      setPhase("review");
+      streamRef.current?.getTracks().forEach((t) => t.stop());
+      streamRef.current = null;
+      setTimeout(() => {
+        if (reviewRef.current) {
+          reviewRef.current.currentTime = 0;
+          void reviewRef.current.play().catch(() => {});
+        }
+      }, 60);
+    };
+    try {
+      rec.recorder.stop();
+    } catch {
+      setPhase("camera");
+    }
+  }
+
+  const send = () => {
+    const blob = blobRef.current;
+    if (!blob) return;
+    const duration = reviewRef.current?.duration && Number.isFinite(reviewRef.current.duration)
+      ? reviewRef.current.duration
+      : secs;
+    onSend(blob, duration || 1);
+  };
+
+  const rerecord = () => {
+    if (reviewUrl) URL.revokeObjectURL(reviewUrl);
+    setReviewUrl(null);
+    blobRef.current = null;
+    setSecs(0);
+    setPhase("camera");
+    void (async () => {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 640 } },
+          audio: true,
+        });
+        streamRef.current = stream;
+        if (videoRef.current) videoRef.current.srcObject = stream;
+      } catch {
+        notify("Нужен доступ к камере и микрофону");
+        onClose();
+      }
+    })();
+  };
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 z-[80] flex flex-col items-center justify-center gap-6 bg-black/90 p-6 backdrop-blur-md"
+    >
+      <div className="flex w-full max-w-sm items-center justify-between">
+        <p className="font-display text-lg font-bold">Видеосообщение</p>
+        <button
+          onClick={() => {
+            const rec = recRef.current;
+            if (rec && rec.recorder.state === "recording") {
+              try {
+                rec.recorder.stop();
+              } catch {
+                /* ignore */
+              }
+            }
+            onClose();
+          }}
+          className="rounded-full bg-white/10 p-2.5 text-white/80 transition-colors hover:bg-white/20"
+        >
+          <X className="h-5 w-5" />
+        </button>
+      </div>
+
+      {/* Круглое превью — как «кружок» в Telegram */}
+      <div className="relative h-[280px] w-[280px]">
+        <div
+          className={`h-full w-full overflow-hidden rounded-full bg-black/60 ring-4 ${
+            phase === "recording" ? "ring-rose-500" : "ring-white/15"
+          }`}
+        >
+          {phase === "review" && reviewUrl ? (
+            <video
+              ref={reviewRef}
+              src={reviewUrl}
+              playsInline
+              controls={false}
+              className="h-full w-full object-cover"
+            />
+          ) : (
+            <video ref={videoRef} autoPlay playsInline muted className="h-full w-full scale-x-[-1] object-cover" />
+          )}
+        </div>
+        {phase === "recording" && (
+          <span className="absolute top-4 left-4 flex items-center gap-1.5 rounded-full bg-black/70 px-3 py-1 text-xs font-bold text-rose-300 tabular-nums">
+            <span className="h-2 w-2 animate-pulse rounded-full bg-rose-500" />
+            {formatDuration(secs)} / 1:00
+          </span>
+        )}
+        {phase === "camera" && (
+          <span className="absolute bottom-4 left-1/2 -translate-x-1/2 rounded-full bg-black/70 px-3 py-1 text-[11px] text-white/70">
+            до 60 секунд
+          </span>
+        )}
+      </div>
+
+      {/* Управление */}
+      <div className="flex items-center gap-6">
+        {phase === "camera" && (
+          <button
+            onClick={startRecording}
+            className="flex h-16 w-16 items-center justify-center rounded-full bg-rose-500 text-white shadow-[0_10px_30px_-6px_rgba(244,63,94,0.6)] transition-transform hover:scale-105 active:scale-95"
+            title="Начать запись"
+          >
+            <span className="flex h-8 w-8 items-center justify-center rounded-full bg-white">
+              <VideoNoteIcon />
+            </span>
+          </button>
+        )}
+        {phase === "recording" && (
+          <button
+            onClick={stopRecording}
+            className="flex h-16 w-16 items-center justify-center rounded-full bg-white text-black transition-transform hover:scale-105 active:scale-95"
+            title="Закончить запись"
+          >
+            <span className="h-5 w-5 rounded-[4px] bg-rose-500" />
+          </button>
+        )}
+        {phase === "review" && (
+          <>
+            <button
+              onClick={rerecord}
+              title="Перезаписать"
+              className="glass flex h-12 w-12 items-center justify-center rounded-full text-white/80 transition-colors hover:text-white"
+            >
+              <RotateCcw className="h-5 w-5" />
+            </button>
+            <button
+              onClick={send}
+              className="btn-gradient flex h-16 w-16 items-center justify-center rounded-full text-white shadow-[0_10px_30px_-6px_rgba(139,92,246,0.6)] transition-transform hover:scale-105 active:scale-95"
+              title="Отправить кружок"
+            >
+              <Send className="h-6 w-6" />
+            </button>
+          </>
+        )}
+      </div>
+      <p className="text-xs text-white/40">
+        {phase === "camera"
+          ? "Наведите камеру и нажмите запись"
+          : phase === "recording"
+            ? "Говорите — нажмите кнопку, чтобы закончить"
+            : "Проверьте запись и отправьте"}
+      </p>
+    </motion.div>
+  );
+}
+
+/* ─────────────────────────── пузырь сообщения ─────────────────────────── */
+
 function MessageBubble({
   message,
   meId,
@@ -706,6 +1764,9 @@ function MessageBubble({
   onOpenImage,
   onDelete,
   onReply,
+  onEdit,
+  onReact,
+  onMenu,
   onJump,
   onViewUser,
 }: {
@@ -721,11 +1782,49 @@ function MessageBubble({
   onOpenImage: (url: string) => void;
   onDelete: () => void;
   onReply: () => void;
+  onEdit: () => void;
+  onReact: (emoji: string) => void;
+  onMenu: (x: number, y: number, message: ChatMessage) => void;
   onJump: (id: string) => void;
   onViewUser: (u: PublicUser) => void;
 }) {
   const sender = message.sender;
   const alignRight = own && !space;
+  const canEdit = own && (message.type === "text" || message.type === "image" || message.type === "file");
+
+  // долгое нажатие на телефоне = контекстное меню
+  const longPress = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const touchStart = useRef<{ x: number; y: number } | null>(null);
+  const suppressClick = useRef(false);
+  const onTouchStart = (e: React.TouchEvent) => {
+    const t = e.touches[0];
+    if (!t) return;
+    touchStart.current = { x: t.clientX, y: t.clientY };
+    suppressClick.current = false;
+    longPress.current = setTimeout(() => {
+      longPress.current = null;
+      suppressClick.current = true;
+      onMenu(t.clientX, t.clientY, message);
+    }, 480);
+  };
+  const cancelLongPress = () => {
+    if (longPress.current) clearTimeout(longPress.current);
+    longPress.current = null;
+  };
+  const onTouchMove = (e: React.TouchEvent) => {
+    const t = e.touches[0];
+    const s = touchStart.current;
+    if (t && s && (Math.abs(t.clientX - s.x) > 12 || Math.abs(t.clientY - s.y) > 12)) cancelLongPress();
+  };
+  const onTouchEnd = (e: React.TouchEvent) => {
+    const fired = suppressClick.current;
+    cancelLongPress();
+    if (fired) {
+      // не даём браузеру сгенерировать click — он мгновенно закрыл бы меню
+      e.preventDefault();
+      suppressClick.current = false;
+    }
+  };
 
   if (message.deletedAt) {
     return (
@@ -738,11 +1837,30 @@ function MessageBubble({
     );
   }
 
+  // вложение (для старых «сломанных» text-сообщений тоже распознаётся)
+  const att = parseAttachment(message.type, message.content);
+  const legacyKind = message.type === "text" ? legacyAttachmentKind(att) : null;
+  const isVoice = message.type === "voice" || legacyKind === "voice";
+  const isNote = message.type === "video_note" || legacyKind === "video_note";
+  const isImage = message.type === "image" && !legacyKind;
+  const isFile = message.type === "file" && !legacyKind;
+
+  // голосовые и кружки не группируем вплотную — им нужен воздух
+  const media = isVoice || isNote || isImage || isFile;
+
   return (
     <div
-      className={`group flex items-start gap-2 py-0.5 ${alignRight ? "justify-end" : "justify-start"} ${
-        highlighted ? "animate-pulse-dot" : ""
-      }`}
+      className={`group no-callout flex items-start gap-2 ${media ? "py-1.5" : "py-0.5"} ${
+        alignRight ? "justify-end" : "justify-start"
+      } ${highlighted ? "animate-pulse-dot" : ""}`}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        onMenu(e.clientX, e.clientY, message);
+      }}
+      onTouchStart={onTouchStart}
+      onTouchMove={onTouchMove}
+      onTouchEnd={onTouchEnd}
+      onTouchCancel={cancelLongPress}
     >
       {space && !alignRight && (
         <button
@@ -770,8 +1888,8 @@ function MessageBubble({
 
         <div
           className={`relative overflow-hidden ${
-            message.type === "image" ? "" : own && !space ? "bubble-own text-white" : "bubble-peer text-white/90"
-          } ${message.type === "image" ? "" : "rounded-3xl px-4 py-2.5"} ${
+            media ? "" : own && !space ? "bubble-own text-white" : "bubble-peer text-white/90"
+          } ${media ? "" : "rounded-3xl px-4 py-2.5"} ${
             own && !space ? "rounded-br-lg" : space || !own ? "rounded-bl-lg" : ""
           } ${highlighted ? "ring-2 ring-violet-400/60" : ""}`}
         >
@@ -789,44 +1907,97 @@ function MessageBubble({
                 <span className="block truncate text-[12px] text-white/50">
                   {message.replyTo.deleted
                     ? "Сообщение удалено"
-                    : message.replyTo.type === "image"
-                      ? "🖼 Фото"
-                      : message.replyTo.content.replace(/\n/g, " ")}
+                    : messagePreview(message.replyTo.type, message.replyTo.content)}
                 </span>
               </span>
             </button>
           )}
 
-          {message.type === "image" ? (
-            <button
-              onClick={() => onOpenImage(message.content)}
-              className="block overflow-hidden rounded-3xl ring-1 ring-white/10 transition-transform hover:scale-[1.01]"
-            >
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={message.content}
-                alt="Фото"
-                className="max-h-80 w-full max-w-xs object-cover"
-                draggable={false}
-              />
-            </button>
+          {isVoice && att ? (
+            <VoiceBubble url={att.url} duration={att.duration ?? 0} own={own && !space} />
+          ) : isNote && att ? (
+            <VideoNoteBubble url={att.url} duration={att.duration ?? 0} />
+          ) : isImage && att ? (
+            <div>
+              <button
+                onClick={() => onOpenImage(att.url)}
+                className="block overflow-hidden rounded-3xl ring-1 ring-white/10 transition-transform hover:scale-[1.01]"
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={att.url}
+                  alt={att.caption || "Фото"}
+                  className="max-h-80 w-full max-w-xs object-cover"
+                  draggable={false}
+                />
+              </button>
+              {att.caption && <p className="px-1 pt-2 pb-1 text-[15px] leading-relaxed break-words whitespace-pre-wrap">{att.caption}</p>}
+            </div>
+          ) : isFile && att ? (
+            <FileCard att={att} />
           ) : (
             <p className="text-[15px] leading-relaxed break-words whitespace-pre-wrap">{message.content}</p>
           )}
         </div>
 
+        {/* Реакции */}
+        {message.reactions && message.reactions.length > 0 && (
+          <div className={`mt-1 flex flex-wrap gap-1 ${alignRight ? "justify-end" : ""}`}>
+            {message.reactions.map((r) => (
+              <button
+                key={r.emoji}
+                onClick={() => onReact(r.emoji)}
+                title={r.mine ? "Убрать реакцию" : "Поставить реакцию"}
+                className={`flex items-center gap-1 rounded-full px-2 py-0.5 text-xs transition-colors ${
+                  r.mine
+                    ? "bg-violet-500/30 text-violet-100 ring-1 ring-violet-400/50"
+                    : "bg-white/8 text-white/70 hover:bg-white/12"
+                }`}
+              >
+                <span>{r.emoji}</span>
+                {r.count > 1 && <span className="text-[10px] font-semibold tabular-nums">{r.count}</span>}
+              </button>
+            ))}
+          </div>
+        )}
+
         <div className={`mt-1 flex items-center gap-1 text-[10px] text-white/30 ${alignRight ? "justify-end" : ""}`}>
           <span>{timeHHmm(message.createdAt)}</span>
+          {message.editedAt && <span className="italic">изменено</span>}
           {own &&
             (read ? <CheckCheck className="h-3.5 w-3.5 text-cyan-300" /> : <Check className="h-3.5 w-3.5" />)}
         </div>
       </div>
 
-      {/* Действия: ответить / удалить */}
-      <div className={`flex shrink-0 items-center gap-1 self-center opacity-0 transition-opacity group-hover:opacity-100 ${alignRight ? "order-0" : ""}`}>
-        <button onClick={onReply} title="Ответить" className="rounded-full p-1 text-white/30 hover:text-violet-300">
+      {/* Действия: ответить / реакция / изменить / удалить.
+          На телефоне hover нет — поэтому там кнопки всегда чуть видны. */}
+      <div
+        className={`flex shrink-0 items-center gap-0.5 self-center opacity-60 transition-opacity group-hover:opacity-100 max-md:opacity-60 ${
+          alignRight ? "order-0" : ""
+        }`}
+      >
+        <button
+          onClick={onReply}
+          title="Ответить"
+          className="rounded-full p-1 text-white/30 hover:text-violet-300"
+        >
           <Reply className="h-3.5 w-3.5" />
         </button>
+        <button
+          onClick={(e) => {
+            const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+            onMenu(rect.left - 100, rect.bottom + 6, message);
+          }}
+          title="Реакция"
+          className="rounded-full p-1 text-white/30 hover:text-amber-300"
+        >
+          <SmilePlus className="h-3.5 w-3.5" />
+        </button>
+        {canEdit && (
+          <button onClick={onEdit} title="Изменить" className="rounded-full p-1 text-white/30 hover:text-cyan-300">
+            <Pencil className="h-3.5 w-3.5" />
+          </button>
+        )}
         {canDelete && (
           <button onClick={onDelete} title="Удалить" className="rounded-full p-1 text-white/30 hover:text-rose-300">
             <Trash2 className="h-3.5 w-3.5" />
@@ -836,6 +2007,229 @@ function MessageBubble({
     </div>
   );
 }
+
+/* ─────────────────────────── голосовое сообщение ─────────────────────────── */
+
+const WAVE_BARS = [
+  8, 14, 20, 11, 26, 18, 9, 22, 30, 14, 10, 24, 16, 28, 12, 19, 25, 9, 15, 27, 11, 21, 17, 29, 13, 23, 10, 18,
+];
+
+function VoiceBubble({ url, duration, own }: { url: string; duration: number; own: boolean }) {
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const [playing, setPlaying] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [speedIdx, setSpeedIdx] = useState(0);
+  const [total, setTotal] = useState(duration || 0);
+  const speeds = [1, 1.5, 2];
+
+  const toggle = () => {
+    const a = audioRef.current;
+    if (!a) return;
+    if (a.paused) void a.play().catch(() => {});
+    else a.pause();
+  };
+
+  return (
+    <div className="flex w-64 min-w-52 items-center gap-3 py-0.5">
+      <audio
+        ref={audioRef}
+        src={url}
+        preload="metadata"
+        onPlay={() => setPlaying(true)}
+        onPause={() => setPlaying(false)}
+        onEnded={() => {
+          setPlaying(false);
+          setProgress(0);
+        }}
+        onLoadedMetadata={(e) => {
+          const d = e.currentTarget.duration;
+          if (Number.isFinite(d) && d > 0) setTotal(d);
+        }}
+        onTimeUpdate={(e) => {
+          const a = e.currentTarget;
+          const t = Number.isFinite(a.duration) && a.duration > 0 ? a.duration : total;
+          setProgress(t > 0 ? Math.min(1, a.currentTime / t) : 0);
+        }}
+      />
+      <button
+        onClick={toggle}
+        title={playing ? "Пауза" : "Воспроизвести"}
+        className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full transition-transform hover:scale-105 active:scale-95 ${
+          own ? "bg-white/20 text-white" : "btn-gradient text-white"
+        }`}
+      >
+        {playing ? <Pause className="h-5 w-5" /> : <Play className="ml-0.5 h-5 w-5" />}
+      </button>
+
+      <div className="min-w-0 flex-1">
+        {/* «Волна»: бары закрашиваются по мере проигрывания */}
+        <button
+          onClick={(e) => {
+            const a = audioRef.current;
+            if (a && total > 0) {
+              const rect = e.currentTarget.getBoundingClientRect();
+              a.currentTime = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width)) * total;
+              void a.play().catch(() => {});
+            }
+          }}
+          className="flex h-8 w-full items-center gap-[2px]"
+          title="Перемотать"
+        >
+          {WAVE_BARS.map((h, i) => {
+            const filled = i / WAVE_BARS.length <= progress;
+            return (
+              <span
+                key={i}
+                className={`w-[3px] rounded-full transition-colors ${filled ? "bg-violet-300" : "bg-white/20"}`}
+                style={{ height: `${h}px` }}
+              />
+            );
+          })}
+        </button>
+        <div className="flex items-center justify-between text-[11px] text-white/45 tabular-nums">
+          <span>{formatDuration(Math.round(total))}</span>
+          <button
+            onClick={() => {
+              const next = (speedIdx + 1) % speeds.length;
+              setSpeedIdx(next);
+              if (audioRef.current) audioRef.current.playbackRate = speeds[next];
+            }}
+            title="Скорость воспроизведения"
+            className="rounded-full bg-white/8 px-2 py-0.5 text-[10px] font-semibold text-white/70 transition-colors hover:bg-white/15"
+          >
+            {speeds[speedIdx]}x
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ─────────────────────────── кружок (видеосообщение) ─────────────────────────── */
+
+function VideoNoteBubble({ url, duration }: { url: string; duration: number }) {
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const [playing, setPlaying] = useState(false);
+  const [started, setStarted] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [total, setTotal] = useState(duration || 0);
+
+  const toggle = () => {
+    const v = videoRef.current;
+    if (!v) return;
+    if (v.paused) {
+      setStarted(true);
+      void v.play().catch(() => {});
+    } else {
+      v.pause();
+    }
+  };
+
+  const R = 108; // радиус кольца прогресса
+  const C = 2 * Math.PI * R;
+
+  return (
+    <div className="relative h-[224px] w-[224px] select-none">
+      <video
+        ref={videoRef}
+        src={url}
+        playsInline
+        preload="metadata"
+        className="h-full w-full rounded-full object-cover"
+        onPlay={() => setPlaying(true)}
+        onPause={() => setPlaying(false)}
+        onEnded={() => {
+          setPlaying(false);
+          setProgress(0);
+        }}
+        onLoadedMetadata={(e) => {
+          const d = e.currentTarget.duration;
+          if (Number.isFinite(d) && d > 0) setTotal(d);
+        }}
+        onTimeUpdate={(e) => {
+          const v = e.currentTarget;
+          const t = Number.isFinite(v.duration) && v.duration > 0 ? v.duration : total;
+          setProgress(t > 0 ? Math.min(1, v.currentTime / t) : 0);
+        }}
+        onClick={toggle}
+      />
+      {/* Кольцо прогресса */}
+      <svg viewBox="0 0 224 224" className="pointer-events-none absolute inset-0 h-full w-full -rotate-90">
+        <circle cx="112" cy="112" r={R} fill="none" stroke="rgba(255,255,255,0.12)" strokeWidth="3" />
+        <circle
+          cx="112"
+          cy="112"
+          r={R}
+          fill="none"
+          stroke="rgb(167 139 250)"
+          strokeWidth="3"
+          strokeLinecap="round"
+          strokeDasharray={C}
+          strokeDashoffset={C * (1 - progress)}
+        />
+      </svg>
+      {!playing && (
+        <button
+          onClick={toggle}
+          className="absolute inset-0 flex items-center justify-center rounded-full transition-colors hover:bg-black/25"
+          title={started ? "Продолжить" : "Воспроизвести"}
+        >
+          <span className="flex h-14 w-14 items-center justify-center rounded-full bg-black/55 backdrop-blur-sm">
+            <Play className="ml-1 h-6 w-6 text-white" />
+          </span>
+        </button>
+      )}
+      <span className="pointer-events-none absolute right-3 bottom-3 rounded-full bg-black/70 px-2 py-0.5 text-[10px] text-white/80 tabular-nums">
+        {formatDuration(Math.round(total))}
+      </span>
+    </div>
+  );
+}
+
+/* ─────────────────────────── карточка файла ─────────────────────────── */
+
+function FileCard({ att }: { att: AttachmentInfo }) {
+  const mime = att.mimeType ?? "";
+  return (
+    <div className="w-72 min-w-60">
+      <div className="flex items-center gap-3">
+        <span className="glass flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl">
+          <DraftFileIcon mime={mime} />
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-sm font-medium text-white/90">{att.name ?? "Файл"}</p>
+          <p className="text-[11px] text-white/40">
+            {formatBytes(att.size)}
+            {mime ? ` · ${mime.split("/")[1]?.split(";")[0] ?? mime}` : ""}
+          </p>
+        </div>
+        <a
+          href={att.url}
+          download={att.name ?? undefined}
+          onClick={(e) => e.stopPropagation()}
+          title="Скачать"
+          className="glass flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-white/75 transition-colors hover:text-white"
+        >
+          <Download className="h-4.5 w-4.5" />
+        </a>
+      </div>
+      {(mime.startsWith("audio/") || mime.startsWith("video/")) && (
+        <div className="mt-2">
+          {mime.startsWith("audio/") ? (
+            <audio src={att.url} controls preload="metadata" className="h-9 w-full" />
+          ) : (
+            <video src={att.url} controls preload="metadata" className="mt-1 max-h-64 w-full rounded-xl" />
+          )}
+        </div>
+      )}
+      {att.caption && (
+        <p className="mt-2 text-[15px] leading-relaxed break-words whitespace-pre-wrap">{att.caption}</p>
+      )}
+    </div>
+  );
+}
+
+/* ─────────────────────────── лог звонка ─────────────────────────── */
 
 function CallLogBubble({
   message,

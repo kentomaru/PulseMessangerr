@@ -213,7 +213,10 @@ export const callInvites = pgTable(
   ],
 );
 
-/** Сообщения: text | image (content = url) | call (content = JSON-лог звонка). */
+/**
+ * Сообщения: text | image (content = url или JSON) | voice | video_note («кружок»)
+ *          | file (content = JSON) | call (content = JSON-лог звонка).
+ */
 export const messages = pgTable(
   "messages",
   {
@@ -230,6 +233,7 @@ export const messages = pgTable(
     replyToId: uuid("reply_to_id"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
+    editedAt: timestamp("edited_at", { withTimezone: true }),
     /** Ссылка на звонок, чтобы лог звонка не дублировался (unique-индекс ниже). */
     callId: uuid("call_id").references(() => calls.id, { onDelete: "cascade" }),
   },
@@ -241,6 +245,27 @@ export const messages = pgTable(
 );
 
 export type Message = typeof messages.$inferSelect;
+
+/** Реакции на сообщения (как в Discord/Telegram): (сообщение, пользователь, эмодзи). */
+export const messageReactions = pgTable(
+  "message_reactions",
+  {
+    messageId: uuid("message_id")
+      .notNull()
+      .references(() => messages.id, { onDelete: "cascade" }),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    emoji: text("emoji").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.messageId, t.userId, t.emoji] }),
+    index("message_reactions_message_idx").on(t.messageId),
+  ],
+);
+
+export type MessageReaction = typeof messageReactions.$inferSelect;
 
 /** Истории (как в Telegram): фото + подпись, исчезают через 24 часа. */
 export const stories = pgTable(

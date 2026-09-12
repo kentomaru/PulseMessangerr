@@ -1,4 +1,4 @@
-import type { CallLogInfo } from "@/lib/types";
+import type { AttachmentInfo, CallLogInfo } from "@/lib/types";
 
 export function timeHHmm(iso: string | Date) {
   const d = new Date(iso);
@@ -87,4 +87,85 @@ export function callLogLabel(info: CallLogInfo): string {
     default:
       return "Звонок";
   }
+}
+
+/* ─────────────────── вложения (голосовые, кружки, файлы) ─────────────────── */
+
+/**
+ * Разбирает content сообщения во вложение.
+ *
+ * Форматы в базе:
+ *  — image: url строка (старый формат) или JSON {url, caption};
+ *  — voice / video_note / file: JSON {url, name, mimeType, size, duration, caption};
+ *  — text: обычно текст, НО раньше голосовые/кружки сохранялись как text
+ *    с JSON внутри (баг «выдаются текстом») — распознаём и их, чтобы
+ *    уже отправленные сообщения снова отображались плеером.
+ */
+export function parseAttachment(type: string, content: string): AttachmentInfo | null {
+  const looksLikeJson = content.trimStart().startsWith("{");
+  if (!looksLikeJson) {
+    // image в старом формате — просто ссылка
+    return type === "image" && content.startsWith("/api/files/") ? { url: content } : null;
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(content);
+  } catch {
+    return null;
+  }
+  if (!parsed || typeof parsed !== "object") return null;
+  const obj = parsed as Record<string, unknown>;
+  const url = typeof obj.url === "string" ? obj.url : "";
+  if (!url.startsWith("/api/files/")) return null;
+
+  const att: AttachmentInfo = { url };
+  if (typeof obj.name === "string") att.name = obj.name;
+  if (typeof obj.mimeType === "string") att.mimeType = obj.mimeType;
+  if (typeof obj.size === "number" && Number.isFinite(obj.size)) att.size = obj.size;
+  if (typeof obj.duration === "number" && Number.isFinite(obj.duration)) att.duration = obj.duration;
+  if (typeof obj.caption === "string" && obj.caption.trim()) att.caption = obj.caption;
+
+  // «кружок» или голосовое, сохранившееся как text — пропускаем только аудио/видео
+  if (type === "text") {
+    const mime = (att.mimeType ?? "").toLowerCase();
+    if (!mime.startsWith("audio/") && !mime.startsWith("video/")) return null;
+  }
+  return att;
+}
+
+/** Это «испорченное» text-сообщение, внутри которого лежит голосовое/кружок? */
+export function legacyAttachmentKind(att: AttachmentInfo | null): "voice" | "video_note" | null {
+  if (!att || !att.mimeType) return null;
+  const mime = att.mimeType.toLowerCase();
+  if (mime.startsWith("video/")) return "video_note";
+  if (mime.startsWith("audio/")) return "voice";
+  return null;
+}
+
+/** Короткая строка-превью сообщения (сайдбар, цитаты, пересылка). */
+export function messagePreview(type: string, content: string): string {
+  if (type === "call") {
+    const info = parseCallContent(content);
+    return info ? `📞 ${callLogLabel(info)}` : "📞 Звонок";
+  }
+  const att = parseAttachment(type, content);
+  if (att) {
+    const caption = att.caption ? ` ${att.caption.replace(/\n/g, " ").slice(0, 40)}` : "";
+    if (type === "image") return `🖼 Фото${caption}`;
+    if (type === "voice" || legacyAttachmentKind(att) === "voice")
+      return `🎤 Голосовое${att.duration ? ` · ${formatDuration(Math.round(att.duration))}` : ""}`;
+    if (type === "video_note" || legacyAttachmentKind(att) === "video_note")
+      return `🎬 Видеосообщение${att.duration ? ` · ${formatDuration(Math.round(att.duration))}` : ""}`;
+    if (type === "file") return `📎 ${att.name ?? "Файл"}${caption}`;
+  }
+  return content.replace(/\n/g, " ").slice(0, 80);
+}
+
+/** «2,4 МБ» / «500 МБ» — размер файла для карточек. */
+export function formatBytes(bytes: number | undefined): string {
+  if (!bytes || bytes <= 0) return "";
+  if (bytes < 1024) return `${bytes} Б`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} КБ`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1).replace(".", ",")} МБ`;
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2).replace(".", ",")} ГБ`;
 }

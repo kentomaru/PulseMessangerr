@@ -92,19 +92,45 @@ export type ReplyPreview = {
   deleted: boolean;
 };
 
+/**
+ * Вложение (голосовое, видеосообщение-«кружок», файл, фото с подписью).
+ * В базе хранится как JSON в messages.content.
+ */
+export type AttachmentInfo = {
+  url: string;
+  name?: string;
+  mimeType?: string;
+  size?: number;
+  /** Длительность в секундах (голосовые и кружки). */
+  duration?: number;
+  caption?: string;
+};
+
+/** Реакция на сообщение (агрегированная по эмодзи). */
+export type MessageReaction = {
+  emoji: string;
+  count: number;
+  mine: boolean;
+};
+
 export type ChatMessage = {
   id: string;
   conversationId: string;
   senderId: string;
-  type: "text" | "image" | "call";
+  /** text | image (content = url или JSON) | voice | video_note | file | call. */
+  type: "text" | "image" | "voice" | "video_note" | "file" | "call";
   content: string;
   replyToId: string | null;
   createdAt: string;
   deletedAt: string | null;
+  /** Когда сообщение отредактировано. */
+  editedAt: string | null;
   /** Кто отправил (для групп/каналов). */
   sender?: PublicUser;
   /** Сообщение, на которое отвечает. */
   replyTo?: ReplyPreview | null;
+  /** Реакции (эмодзи → сколько и есть ли моя). */
+  reactions?: MessageReaction[];
 };
 
 export type CallMedia = "audio" | "video";

@@ -29,7 +29,7 @@ import {
 import Avatar from "./Avatar";
 import PeoplePicker from "./PeoplePicker";
 import { ModalShell } from "./ProfileModal";
-import { api, uploadFile } from "@/lib/api";
+import { api, copyToClipboard, uploadFile } from "@/lib/api";
 import { timeAgo } from "@/lib/format";
 import type { ConversationInfo, ConversationMemberItem, MemberRole, PublicUser } from "@/lib/types";
 
@@ -177,9 +177,8 @@ export default function GroupInfoModal({
         method: "POST",
       });
       const url = `${window.location.origin}${window.location.pathname}#group=${d.token}`;
-      try {
-        await navigator.clipboard.writeText(url);
-      } catch {
+      // copyToClipboard — с фолбэком на execCommand (http/небезопасный контекст)
+      if (!(await copyToClipboard(url))) {
         window.prompt("Скопируйте ссылку-приглашение:", url);
         return;
       }
