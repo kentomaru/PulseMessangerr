@@ -81,42 +81,51 @@ npm run dev                   # http://localhost:3000
 драйвер и Node-модули помечены внешними для edge-целей — без этого любой
 запрос в `next dev` падал с `Module not found: Can't resolve 'net'`.
 
-### Ошибка сборки «Cannot find native binding»
+### Ошибка сборки «EBUSY … rmdir /app/node_modules/.cache»
 
-Симптом: деплой на Railway падает на `npm run build` с ошибкой вида
+Симптом: деплой падает на этапе сборки с
 
 ```
-Error: Cannot find module '../lightningcss.linux-x64-gnu.node'
-Cannot find native binding
+npm error code EBUSY
+npm error syscall rmdir
+npm error path /app/node_modules/.cache
+npm error EBUSY: resource busy or locked, rmdir '/app/node_modules/.cache'
+failed to solve: process "/bin/bash -ol pipefail -c npm ci … did not complete successfully"
 ```
 
-Причина: Tailwind v4 и его CSS-движок (`@tailwindcss/oxide`, `lightningcss`)
-подтягивают платформенные бинарники через **optional dependencies**. В окружении
-сборки Railway они могут не установиться (npm пропускает optional-пакеты при
-ошибке сети/платформы), и postcss падает уже на `src/app/globals.css`.
+Причина не в коде: билд-демон Railway подмонтирует кэш сборки в
+`/app/node_modules/.cache` (Docker держит эту директорию залоченной), а
+`npm ci` **перед установкой сносит весь `node_modules`** — и упирается в
+заблокированную точку монтирования.
 
-Фикс (уже применён):
+Фикс (уже применён): в `railway.json` вместо `npm ci` стоит `npm install`,
+который не удаляет дерево, а только доустанавливает недостающее:
 
-- в `package.json` linux-бинарники закреплены явно:
+```json
+"buildCommand": "npm install --include=dev --include=optional --no-audit --no-fund && npm run build"
+```
 
-  ```json
-  "optionalDependencies": {
-    "@tailwindcss/oxide-linux-x64-gnu": "4.3.3",
-    "@tailwindcss/oxide-linux-arm64-gnu": "4.3.3",
-    "lightningcss-linux-x64-gnu": "1.32.0",
-    "lightningcss-linux-arm64-gnu": "1.32.0"
-  }
-  ```
+Флаги тут важны:
 
-- в `railway.json` сборка идёт командой, которая не даёт их пропустить:
+- `--include=dev` — в окружении сборки Railway встречается `production=true`
+  (в логе это выглядит как `npm warn config production Use --omit=dev instead`),
+  из-за чего npm пропускает devDependencies. А `next build` без них не живёт:
+  нужны `typescript`, `tailwindcss` и `@tailwindcss/postcss`.
+- `--include=optional` — ставит платформенные бинарники Tailwind v4
+  (`@tailwindcss/oxide-*`, `lightningcss-*`), иначе сборка падает с
+  «Cannot find native binding».
 
-  ```json
-  "buildCommand": "npm ci --include=optional && npm run build"
-  ```
+Если ошибка всё же повторится (кэш сборки может «залипнуть»), помогает
+`Redeploy` того же коммита или переменная `NO_CACHE=1` в Variables сервиса —
+она отключает кэширование слоёв, и `/app/node_modules/.cache` больше не
+монтируется.
 
-Проверить локально: `rm -rf node_modules/lightningcss-linux-x64-gnu
-node_modules/@tailwindcss/oxide-linux-x64-gnu && npm run build` — до фикса
-сборка падала, после `npm ci --include=optional` проходит.
+Проверить локально, что сборка самодостаточна:
+
+```bash
+git clone <repo> /tmp/rw && cd /tmp/rw
+npm install --include=dev --include=optional --no-audit --no-fund && npm run build
+```
 
 ## Логи: «где что сломалось?»
 
