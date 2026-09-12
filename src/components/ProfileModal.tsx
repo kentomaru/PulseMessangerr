@@ -18,6 +18,7 @@ import Avatar, { paletteFor } from "./Avatar";
 import StatusEmoji from "./StatusEmoji";
 import { PrivacySettings } from "./PrivacyModal";
 import { api, uploadFile } from "@/lib/api";
+import { compressImage } from "@/lib/images";
 import { BANNER_PRESETS, bannerStyle, isFileBanner } from "@/lib/wallpapers";
 import type { PublicUser } from "@/lib/types";
 
@@ -47,6 +48,8 @@ export default function ProfileModal({ me, onClose, onSaved, onDeletedAccount }:
   const [bannerPickerOpen, setBannerPickerOpen] = useState(false);
   /** Панель выбора статус-эмодзи. */
   const [emojiPickerOpen, setEmojiPickerOpen] = useState(false);
+  /** Короткое «Фото обновлено ✓» после мгновенной смены аватара/баннера. */
+  const [flash, setFlash] = useState("");
   const [saving, setSaving] = useState(false);
   const [busy, setBusy] = useState<"avatar" | "banner" | null>(null);
   const [error, setError] = useState("");
@@ -57,8 +60,12 @@ export default function ProfileModal({ me, onClose, onSaved, onDeletedAccount }:
     if (!file) return;
     setBusy(kind);
     setError("");
+    setFlash("");
     try {
-      const url = await uploadFile(file);
+      // Сжимаем фото до лёгкого JPEG (аватар 512, баннер 1280 по большей
+      // стороне) — тяжелые фото с телефона не проходили через сеть/прокси.
+      const light = await compressImage(file, kind === "avatar" ? 512 : 1280);
+      const url = await uploadFile(light);
       if (kind === "avatar") setAvatarUrl(url);
       else setBannerUrl(url);
       // ВАЖНО: применяем СРАЗУ после загрузки, не дожидаясь «Сохранить».
@@ -70,11 +77,17 @@ export default function ProfileModal({ me, onClose, onSaved, onDeletedAccount }:
           body: JSON.stringify(kind === "avatar" ? { avatarUrl: url } : { bannerUrl: url }),
         });
         onSaved(d.user);
+        setFlash(kind === "avatar" ? "Фото обновлено ✓" : "Баннер обновлён ✓");
+        setTimeout(() => setFlash(""), 2500);
       } catch {
         /* сохранится вместе с кнопкой «Сохранить» */
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Ошибка загрузки");
+      setError(
+        e instanceof Error
+          ? e.message
+          : "Ошибка загрузки — попробуйте файл поменьше или другую сеть",
+      );
     } finally {
       setBusy(null);
     }
@@ -213,8 +226,9 @@ export default function ProfileModal({ me, onClose, onSaved, onDeletedAccount }:
         </div>
       )}
 
-      {/* аватар: клик по нему ИЛИ по кнопке «Сменить фото» открывает выбор файла */}
-      <div className="relative -mt-10 flex flex-col items-center gap-2">
+      {/* аватар: клик по нему ИЛИ по кнопке «Сменить фото» открывает выбор файла.
+          z-10: блок лежит поверх баннера (-mt-10) и должен ловить клики всегда. */}
+      <div className="relative z-10 -mt-10 flex flex-col items-center gap-2">
         <button
           onClick={() => avatarInput.current?.click()}
           className="group relative rounded-full ring-4 ring-[#0d0d18]"
@@ -235,7 +249,16 @@ export default function ProfileModal({ me, onClose, onSaved, onDeletedAccount }:
           </button>
           {avatarUrl && (
             <button
-              onClick={() => setAvatarUrl(null)}
+              onClick={() => {
+                setAvatarUrl(null);
+                // Применяем удаление сразу, как и установку
+                void api<{ user: PublicUser }>("/api/auth/me", {
+                  method: "PATCH",
+                  body: JSON.stringify({ avatarUrl: null }),
+                })
+                  .then((d) => onSaved(d.user))
+                  .catch(() => {});
+              }}
               className="flex items-center gap-1 rounded-full px-2 py-1.5 text-[11px] text-rose-300/90 transition-colors hover:bg-rose-500/10"
               title="Убрать аватар"
             >
@@ -243,6 +266,8 @@ export default function ProfileModal({ me, onClose, onSaved, onDeletedAccount }:
             </button>
           )}
         </div>
+        {/* Мгновенная обратная связь по смене фото/баннера */}
+        {flash && <p className="text-[11px] font-semibold text-emerald-300">{flash}</p>}
         <input
           ref={avatarInput}
           type="file"
@@ -299,7 +324,7 @@ export default function ProfileModal({ me, onClose, onSaved, onDeletedAccount }:
           {/* Имя видно сразу при редактировании профиля + статус-эмодзи рядом */}
           <p className="flex items-center justify-center gap-2">
             <span className="font-display text-lg font-bold">{displayName || me.username}</span>
-            <StatusEmoji value={statusEmoji} size={28} />
+            <StatusEmoji value={statusEmoji} size={32} />
           </p>
           <p className="text-xs text-white/35">@{me.username}</p>
         </div>
@@ -339,7 +364,7 @@ export default function ProfileModal({ me, onClose, onSaved, onDeletedAccount }:
           <div className="flex items-center gap-3 rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3">
             <div className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-white/[0.06]">
               {statusEmoji ? (
-                <StatusEmoji value={statusEmoji} size={30} />
+                <StatusEmoji value={statusEmoji} size={36} />
               ) : (
                 <span className="text-[11px] text-white/25">нет</span>
               )}

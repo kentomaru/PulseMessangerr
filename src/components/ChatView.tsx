@@ -1069,7 +1069,7 @@ export default function ChatView({
               <span className="truncate">{title}</span>
               {/* Кастомный статус-эмодзи собеседника (эмодзи или анимированная гифка) */}
               {kind === "direct" && peerState?.statusEmoji && (
-                <StatusEmoji value={peerState.statusEmoji} size={24} />
+                <StatusEmoji value={peerState.statusEmoji} size={28} />
               )}
               {isSaved && <Bookmark className="h-3.5 w-3.5 shrink-0 text-amber-300" />}
               {isSpace && kind === "channel" && <Megaphone className="h-3.5 w-3.5 shrink-0 text-cyan-300" />}

@@ -17,6 +17,7 @@ import {
 import Avatar from "./Avatar";
 import { ModalShell } from "./ProfileModal";
 import { api, uploadFile } from "@/lib/api";
+import { compressImage } from "@/lib/images";
 import type { ConversationKind, PublicUser } from "@/lib/types";
 
 type Props = {
@@ -87,7 +88,9 @@ export default function GroupCreateModal({
     if (!file) return;
     setUploading(true);
     try {
-      setAvatarUrl(await uploadFile(file));
+      // Тяжёлые фото сжимаем до 512px — аватарка загружается надёжнее
+      const light = await compressImage(file, 512);
+      setAvatarUrl(await uploadFile(light));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Не удалось загрузить картинку");
     } finally {

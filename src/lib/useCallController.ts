@@ -86,6 +86,8 @@ type PeerLink = {
   offeringSince: number | null;
   /** SDP, который я опубликовал/отправил этому участнику. */
   publishedSdp: string | null;
+  /** Когда последний раз делали ICE-рестарт (защита от спама). */
+  lastIceRestart?: number;
   /** Кандидаты, пришедшие до setRemoteDescription. */
   pendingIce: RTCIceCandidateInit[];
 };
@@ -337,8 +339,34 @@ export function useCallController(
         if (e.candidate && callId) void sendSignal(callId, peerId, "ice", e.candidate.toJSON());
       };
       pc.onconnectionstatechange = () => {
-        if (pc.connectionState === "failed") {
-          notifyRef.current("Соединение с одним из участников потеряно");
+        const st = pc.connectionState;
+        if (st === "failed" || st === "disconnected") {
+          // Авто-переподключение: пересобираем маршрут медиа через
+          // ICE-рестарт. Раньше при обрыве звук/видео умирали навсегда,
+          // пока кто-нибудь не включал демку.
+          const link = linksRef.current.get(peerId);
+          const last = link?.lastIceRestart ?? 0;
+          if (link && Date.now() - last > 8000) {
+            link.lastIceRestart = Date.now();
+            (async () => {
+              try {
+                link.offering = true;
+                link.offeringSince = Date.now();
+                const offer = await pc.createOffer({ iceRestart: true });
+                await pc.setLocalDescription(offer);
+                const s = sessionRef.current;
+                if (s)
+                  await sendSignal(s.id, peerId, "offer", {
+                    type: offer.type,
+                    sdp: offer.sdp,
+                  });
+              } catch {
+                link.offering = false;
+                link.offeringSince = null;
+              }
+            })();
+          }
+          if (st === "failed") notifyRef.current("Переподключаемся к участнику…");
         }
       };
 

@@ -68,7 +68,7 @@ export default function UserCardModal({ user, onClose, onMessage }: Props) {
         <h3 className="flex items-center justify-center gap-2">
           <span className="font-display text-xl font-bold">{user.displayName}</span>
           {/* Кастомный статус-эмодзи: эмодзи или анимированная гифка */}
-          <StatusEmoji value={user.statusEmoji} size={30} />
+          <StatusEmoji value={user.statusEmoji} size={36} />
         </h3>
         <p className="mt-0.5 text-sm text-white/40">@{user.username}</p>
         <p className={`mt-1.5 text-xs font-medium ${user.online ? "text-emerald-400" : "text-white/35"}`}>
