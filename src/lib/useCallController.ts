@@ -414,6 +414,11 @@ export function useCallController(
     async (state: CallState) => {
       if (syncingRef.current) return;
       syncingRef.current = true;
+      // Страховка: даже если какой-то внутренний await зависнет, блокировка
+      // снимется сама через 12 секунд и соединения продолжат создаваться.
+      const lockTimer = setTimeout(() => {
+        syncingRef.current = false;
+      }, 12_000);
       // Сервер уже пометил выданные сигналы прочитанными — обрабатываем всё,
       // что накопилось в очереди (включая недообработанное прошлым проходом).
       const signals = signalQueueRef.current.splice(0, signalQueueRef.current.length);
@@ -540,6 +545,7 @@ export function useCallController(
           }
         }
       } finally {
+        clearTimeout(lockTimer);
         syncingRef.current = false;
       }
     },

@@ -24,10 +24,17 @@ export async function api<T = unknown>(
     }
   }
   let res: Response;
+  // ЖЁСТКИЙ ТАЙМАУТ: раньше зависший запрос (прокси «задумался») вечно
+  // висел в await и навсегда блокировал синхронизацию звонка — соединения
+  // между участниками не создавались вообще («Участников: 2, Соединений: 0»).
+  const isUpload = path.split("?")[0] === "/api/upload";
+  const ctrl = isUpload ? null : new AbortController();
+  const timer = ctrl ? setTimeout(() => ctrl.abort(), 8_000) : null;
   try {
     res = await fetch(path, {
       ...options,
       body,
+      signal: ctrl ? ctrl.signal : options.signal,
       headers:
         options.body instanceof FormData
           ? options.headers
@@ -36,6 +43,8 @@ export async function api<T = unknown>(
     });
   } catch {
     throw new ApiError("Нет соединения с сервером", 0);
+  } finally {
+    if (timer) clearTimeout(timer);
   }
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
