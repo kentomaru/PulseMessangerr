@@ -156,6 +156,7 @@ export default function Sidebar({
           <AnimatePresence>
             {createOpen && (
               <motion.div
+                key="create-menu"
                 initial={{ opacity: 0, y: -6, scale: 0.96 }}
                 animate={{ opacity: 1, y: 0, scale: 1 }}
                 exit={{ opacity: 0, y: -4, scale: 0.97 }}
@@ -218,6 +219,7 @@ export default function Sidebar({
         <AnimatePresence>
           {query.trim().length > 0 && (
             <motion.div
+              key="search-results"
               initial={{ opacity: 0, y: -6 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -6 }}

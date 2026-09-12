@@ -251,9 +251,13 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
         )}
       </div>
 
+      {/* Каждый условный ребёнок — со своим key: без них framer-motion
+          ставит пустой ключ, а при двух открытых модалках это
+          «two children with the same key» и сбитые exit-анимации. */}
       <AnimatePresence>
         {showProfile && (
           <ProfileModal
+            key="profile"
             me={me}
             onClose={() => setShowProfile(false)}
             onSaved={(u: PublicUser) => {
@@ -269,6 +273,7 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
         )}
         {viewUser && (
           <UserCardModal
+            key="user-card"
             user={viewUser}
             onClose={() => setViewUser(null)}
             onMessage={() => {
@@ -279,6 +284,7 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
         )}
         {createKind && (
           <GroupCreateModal
+            key="create"
             me={me}
             contacts={contacts}
             initialKind={createKind}
@@ -292,6 +298,7 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
         )}
         {discover && (
           <DiscoverModal
+            key="discover"
             onClose={() => setDiscover(false)}
             onJoined={(id) => {
               void loadConversations();
@@ -302,6 +309,7 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
         )}
         {groupInfoId && (
           <GroupInfoModal
+            key="group-info"
             me={me}
             conversationId={groupInfoId}
             callBusy={!!callCtl.session || !!callCtl.incoming || callCtl.starting}
@@ -322,6 +330,7 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
         )}
         {storyComposer && (
           <StoryComposer
+            key="story-composer"
             onClose={() => setStoryComposer(false)}
             notify={notify}
             onPublished={() => {
@@ -332,6 +341,7 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
         )}
         {storyViewer !== null && storyGroups[storyViewer] && (
           <StoryViewer
+            key="story-viewer"
             me={me}
             groups={storyGroups}
             startGroupIndex={storyViewer}

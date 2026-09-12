@@ -180,6 +180,7 @@ export default function AuthScreen() {
               <AnimatePresence>
                 {error && (
                   <motion.p
+                    key="error"
                     initial={{ opacity: 0, y: -6 }}
                     animate={{ opacity: 1, y: 0 }}
                     exit={{ opacity: 0 }}

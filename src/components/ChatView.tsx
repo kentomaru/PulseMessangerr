@@ -134,6 +134,29 @@ export default function ChatView({
   const lastCount = useRef(0);
   const loadedRef = useRef(false);
 
+  /**
+   * Прокрутить чат вниз.
+   * — null-safe: при переключении чата в полёте запроса колбэк может сработать
+   *   после размонтирования — scrollRef.current уже null (раньше `scrollTo({ top: scrollRef.current.scrollHeight })`
+   *   падал с null-ref ещё до опционального вызова);
+   * — фолбэк на scrollTop: в окружениях без рабочей Element.scrollTo (например
+   *   jsdom в UI-смоке) скролл просто не выполнялся молча.
+   */
+  const scrollToEnd = useCallback((smooth = false) => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const top = el.scrollHeight;
+    if (typeof el.scrollTo === "function") {
+      try {
+        el.scrollTo({ top, behavior: smooth ? "smooth" : "auto" });
+        return;
+      } catch {
+        /* не поддерживается — уходим в scrollTop ниже */
+      }
+    }
+    el.scrollTop = top;
+  }, []);
+
   const load = useCallback(async () => {
     try {
       const d = await api<MessageLoad>(`/api/messages?conversationId=${conversationId}`);
@@ -146,12 +169,9 @@ export default function ChatView({
       if (!loadedRef.current) {
         loadedRef.current = true;
         setLoaded(true);
-        requestAnimationFrame(() => scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight }));
+        requestAnimationFrame(() => scrollToEnd());
       } else if (d.messages.length !== lastCount.current) {
-        requestAnimationFrame(() => {
-          const el = scrollRef.current;
-          if (el) el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
-        });
+        requestAnimationFrame(() => scrollToEnd(true));
       }
       lastCount.current = d.messages.length;
     } catch (e) {
@@ -159,7 +179,7 @@ export default function ChatView({
       /* иначе сеть моргнула — следующий опрос поправит */
     }
     // ВАЖНО: зависимость только от conversationId (см. комментарий в истории правок)
-  }, [conversationId, onUnauthorized]);
+  }, [conversationId, onUnauthorized, scrollToEnd]);
 
   useEffect(() => {
     loadedRef.current = false;
@@ -382,8 +402,9 @@ export default function ChatView({
             <AnimatePresence>
               {menuOpen && (
                 <>
-                  <div className="fixed inset-0 z-20" onClick={() => setMenuOpen(false)} />
+                  <div key="menu-backdrop" className="fixed inset-0 z-20" onClick={() => setMenuOpen(false)} />
                   <motion.div
+                    key="menu"
                     initial={{ opacity: 0, y: -6, scale: 0.96 }}
                     animate={{ opacity: 1, y: 0, scale: 1 }}
                     exit={{ opacity: 0, y: -4, scale: 0.97 }}
@@ -439,6 +460,7 @@ export default function ChatView({
       <AnimatePresence>
         {activeCall && (
           <motion.div
+            key="call-banner"
             initial={{ height: 0, opacity: 0 }}
             animate={{ height: "auto", opacity: 1 }}
             exit={{ height: 0, opacity: 0 }}
@@ -536,6 +558,7 @@ export default function ChatView({
           <AnimatePresence>
             {replyTo && (
               <motion.div
+                key="reply"
                 initial={{ opacity: 0, height: 0 }}
                 animate={{ opacity: 1, height: "auto" }}
                 exit={{ opacity: 0, height: 0 }}
@@ -624,6 +647,7 @@ export default function ChatView({
       <AnimatePresence>
         {showWallpaper && (
           <WallpaperModal
+            key="wallpaper"
             conversationId={conversationId}
             current={wallpaper}
             onClose={() => setShowWallpaper(false)}
@@ -639,6 +663,7 @@ export default function ChatView({
       <AnimatePresence>
         {lightbox && (
           <motion.div
+            key="lightbox"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}

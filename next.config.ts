@@ -8,6 +8,13 @@ import type { NextConfig } from "next";
  *
  * Поэтому для edge-целей помечаем драйвер и Node-модули как внешние:
  * код instrumentation сам проверяет NEXT_RUNTIME и в edge ничего не вызывает.
+ *
+ * ЛОВУШКА: externals должны применяться ТОЛЬКО при `nextRuntime === "edge"`.
+ * В Next 15 `nextRuntime === undefined` — это КЛИЕНТСКАЯ (браузерная) сборка.
+ * Если externals попадут туда, в бандл уедет `require("process")` и прочие
+ * commonjs-требования Node-модулей: в браузере `require` не существует,
+ * ReferenceError роняет весь клиентский JS до гидратации React — сервер
+ * отвечает 200, данные целы, а интерфейс «мёртв» (виден только SSR-каркас).
  */
 const NODE_BUILTINS = [
   "net",
@@ -50,7 +57,9 @@ const nextConfig: NextConfig = {
   // Звонки/сообщения — реальное время через polling, ничего не кэшируем на уровне сборки.
   experimental: {},
   webpack: (config, { nextRuntime }) => {
-    if (nextRuntime === "edge" || nextRuntime === undefined) {
+    // Только edge! `nextRuntime === undefined` в Next 15 — клиентская сборка,
+    // и externals там «мёртвый» UI (см. комментарий в начале файла).
+    if (nextRuntime === "edge") {
       config.externals = config.externals ?? [];
       config.externals.push({
         postgres: "commonjs postgres",
