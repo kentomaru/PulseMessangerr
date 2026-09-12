@@ -606,6 +606,12 @@ function CallBody({
 
   return (
     <div className="nice-scroll relative min-h-0 flex-1 overflow-y-auto p-3">
+      {people.length <= 1 && (
+        <div className="absolute inset-x-0 top-3 z-10 mx-auto w-fit max-w-[92%] rounded-xl border border-white/10 bg-[#0a1120]/90 px-4 py-2.5 text-center text-xs text-white/70 shadow-xl backdrop-blur">
+          Вы одни в звонке — звук и видео появятся, когда войдёт второй
+          участник. Позовите кого-нибудь кнопкой «Пригласить» внизу.
+        </div>
+      )}
       {screenSharers.map((p) => (
         <div key={`screen-${p.userId}`} className="mb-2.5 last:mb-0">
           <ScreenTile
@@ -1045,6 +1051,23 @@ function Controls({
             Если при разговоре ↑ растёт, а ↓ не растёт (или наоборот) — напишите
             об этом разработчику вместе с цифрами.
           </p>
+          <div className="mt-2 border-t border-white/10 pt-2 text-[11px] text-white/60">
+            Участников в звонке: {(session?.participants ?? []).length} · Соединений:{" "}
+            {Object.keys(audioWatchdog ?? {}).length}
+            {(session?.participants ?? []).length <= 1 && (
+              <p className="mt-1 text-amber-300/90">
+                Вы одни в звонке — звук и видео появятся, когда войдёт второй
+                участник. Позовите кого-нибудь кнопкой «Пригласить».
+              </p>
+            )}
+            {(session?.participants ?? []).length > 1 &&
+              Object.keys(audioWatchdog ?? {}).length === 0 && (
+                <p className="mt-1 text-amber-300/90">
+                  Соединение с участником устанавливается… Если дольше 20 секунд —
+                  перезапустите звонок.
+                </p>
+              )}
+          </div>
         </div>
       )}
       <Control

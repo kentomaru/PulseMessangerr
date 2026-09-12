@@ -545,6 +545,8 @@ export function useCallController(
     },
     [createLink, dropPeer, flushIce, iShouldOffer, sendSignal],
   );
+  const syncMeshRef = useRef(syncMesh);
+  syncMeshRef.current = syncMesh;
 
   /**
    * СТОРОЖ ЗВУКА. Каждые 3 секунды читаем реальную статистику соединений
@@ -664,6 +666,19 @@ export function useCallController(
         }
         setAudioWatchdog(diag);
         if (anyStuck) void healAudioNow();
+
+        // Если участников больше одного, а соединений нет (сигнал потерялся,
+        // вкладка засыпала) — принудительно пересинхронизируем mesh.
+        const cur = sessionRef.current;
+        if (cur && cur.status === "live") {
+          const others = cur.participants.filter((p) => p.userId !== meIdRef.current);
+          if (others.length > 0 && linksRef.current.size === 0) {
+            void syncMeshRef.current({
+              call: { id: cur.id },
+              participants: cur.participants,
+            } as unknown as CallState);
+          }
+        }
       })();
     }, 3_000);
     return () => {
