@@ -48,6 +48,9 @@ type Props = {
   mutedIds: Set<string>;
   onTogglePin: (id: string) => void;
   onToggleMute: (id: string) => void;
+  /** Масштаб интерфейса: мелкий / обычный / крупный. */
+  uiScale: "s" | "m" | "l";
+  onSetUiScale: (v: "s" | "m" | "l") => void;
   /** Звук входящего звонка (рингтон). */
   callSoundOn: boolean;
   /** Браузерные уведомления (всплывающие, когда вкладка не активна). */
@@ -105,6 +108,8 @@ export default function Sidebar({
   mutedIds,
   onTogglePin,
   onToggleMute,
+  uiScale,
+  onSetUiScale,
   callSoundOn,
   notifyOn,
   onSelect,
@@ -309,6 +314,30 @@ export default function Sidebar({
                   active={notifyOn}
                   onClick={onToggleNotify}
                 />
+                <p className="px-1 pt-3 pb-2 text-[10px] font-semibold tracking-wide text-white/40 uppercase">
+                  Размер интерфейса
+                </p>
+                <div className="grid grid-cols-3 gap-1 rounded-xl bg-white/[0.05] p-1">
+                  {(
+                    [
+                      ["s", "Мелкий"],
+                      ["m", "Обычный"],
+                      ["l", "Крупный"],
+                    ] as const
+                  ).map(([v, label]) => (
+                    <button
+                      key={v}
+                      onClick={() => onSetUiScale(v)}
+                      className={`rounded-lg px-1 py-1.5 text-[11px] font-medium transition-colors ${
+                        uiScale === v
+                          ? "btn-gradient text-white"
+                          : "text-white/50 hover:bg-white/8 hover:text-white/80"
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
               </motion.div>
             )}
           </AnimatePresence>

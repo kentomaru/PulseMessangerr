@@ -173,6 +173,8 @@ export function useCallController(
 ) {
   const [session, setSession] = useState<CallSession | null>(null);
   const [incoming, setIncoming] = useState<IncomingCall | null>(null);
+  /** Качество связи с каждым участником: 0 — нет, 1 — плохая, 2 — средняя, 3 — отличная. */
+  const [connQuality, setConnQuality] = useState<Record<string, number>>({});
   const [muted, setMuted] = useState(false);
   const [cameraOn, setCameraOn] = useState(false);
   const [screenSharing, setScreenSharing] = useState(false);
@@ -874,6 +876,50 @@ export function useCallController(
     return () => clearInterval(t);
   }, [session?.status, session?.id]);
 
+  // Уровень связи с каждым участником: раз в 3 секунды смотрим статистику
+  // WebRTC (пинг + потери пакетов) и переводим в 0–3 «палочки».
+  useEffect(() => {
+    if (session?.status !== "live") {
+      setConnQuality({});
+      return;
+    }
+    const t = setInterval(async () => {
+      const next: Record<string, number> = {};
+      for (const [peerId, l] of Array.from(linksRef.current.entries())) {
+        try {
+          const stats = await l.pc.getStats();
+          let rtt: number | null = null;
+          let lost = 0;
+          let received = 0;
+          stats.forEach((r) => {
+            const s = r as Record<string, unknown>;
+            if (s.type === "candidate-pair" && s.state === "succeeded" && typeof s.currentRoundTripTime === "number") {
+              rtt = (s.currentRoundTripTime as number) * 1000;
+            }
+            if (s.type === "inbound-rtp") {
+              lost += typeof s.packetsLost === "number" ? (s.packetsLost as number) : 0;
+              received += typeof s.packetsReceived === "number" ? (s.packetsReceived as number) : 0;
+            }
+          });
+          const lossRatio = received + lost > 0 ? lost / (received + lost) : 0;
+          const ping = rtt ?? 0;
+          let q = 3;
+          if (ping > 900 || lossRatio > 0.2) q = 0;
+          else if (ping > 400 || lossRatio > 0.08) q = 1;
+          else if (ping > 150 || lossRatio > 0.02) q = 2;
+          next[peerId] = q;
+        } catch {
+          next[peerId] = 0;
+        }
+      }
+      setConnQuality((cur) => {
+        const key = JSON.stringify(cur);
+        return JSON.stringify(next) === key ? cur : next;
+      });
+    }, 3_000);
+    return () => clearInterval(t);
+  }, [session?.status, session?.id]);
+
   // Рингтон входящего. Зависимость — только id звонящего звонка: объект incoming
   // обновляется каждым опросом, и рингтон перезапускался бы каждые 3 секунды.
   const ringingId = incoming && incoming.status === "ringing" ? incoming.id : null;
@@ -1261,6 +1307,7 @@ export function useCallController(
     screenSharing,
     screenStreamRef,
     seconds,
+    connQuality,
     minimized,
     setMinimized,
     streamTick,

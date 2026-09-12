@@ -4,6 +4,7 @@ import { useRef, useState } from "react";
 import { Film, ImagePlus, Loader2, Send, X } from "lucide-react";
 import { ModalShell } from "./ProfileModal";
 import { api, uploadFile } from "@/lib/api";
+import { compressImage } from "@/lib/images";
 import { formatBytes } from "@/lib/format";
 import type { StoryItem } from "@/lib/types";
 
@@ -53,7 +54,10 @@ export default function StoryComposer({ onClose, onPublished, notify }: Props) {
     setBusy(true);
     setError("");
     try {
-      const mediaUrl = await uploadFile(file);
+      // Фото-истории сжимаем до 1920px — истории на ПК грузятся заметно
+      // быстрее (видео и гифки не трогаем).
+      const light = await compressImage(file, 1920);
+      const mediaUrl = await uploadFile(light);
       const d = await api<{ story: StoryItem }>("/api/stories", {
         method: "POST",
         body: JSON.stringify({ mediaUrl, caption }),

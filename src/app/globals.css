@@ -332,6 +332,19 @@ select:focus-visible,
   border-radius: 1.25rem 1.25rem 1.25rem 0.45rem;
 }
 
+/* Фирменный узор чата, когда обои не выбраны: тонкая диагональная сетка
+   точек + мягкая виньетка — чат не выглядит «пустым листом». */
+.chat-pattern {
+  background-image:
+    radial-gradient(rgb(255 255 255 / 0.045) 1px, transparent 1.4px),
+    radial-gradient(60rem 40rem at 50% -10%, rgb(124 58 237 / 0.08), transparent 65%),
+    radial-gradient(50rem 36rem at 50% 115%, rgb(37 99 235 / 0.07), transparent 62%);
+  background-size:
+    22px 22px,
+    auto,
+    auto;
+}
+
 .story-ring {
   background: conic-gradient(from 140deg, #7c3aed, #d946ef, #22d3ee, #7c3aed);
 }

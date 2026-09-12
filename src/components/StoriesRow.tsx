@@ -18,17 +18,25 @@ export default function StoriesRow({ me, groups, onOpen, onAdd }: Props) {
 
   return (
     <div className="nice-scroll flex shrink-0 items-start gap-4 overflow-x-auto border-b border-white/5 px-5 py-3">
-      {/* Моя история */}
-      <button onClick={onAdd} className="group flex w-14 shrink-0 flex-col items-center gap-1.5">
+      {/* Моя история: клик по кружку — СМОТРЕТЬ свои истории, клик по «+» — добавить */}
+      <button onClick={() => (mine ? onOpen(groups.indexOf(mine)) : onAdd())} className="group flex w-14 shrink-0 flex-col items-center gap-1.5">
         <div className="relative">
           <div
-            className={`rounded-full p-[2.5px] ${mine ? "story-ring-seen" : "bg-white/10"} group-hover:bg-violet-500/40 transition-colors`}
+            className={`rounded-full p-[2.5px] ${mine ? "story-ring" : "bg-white/10"} group-hover:bg-violet-500/40 transition-colors`}
           >
             <div className="rounded-full bg-[#0c0c17] p-[2px]">
               <Avatar name={me.displayName} src={me.avatarUrl} size={44} />
             </div>
           </div>
-          <span className="btn-gradient absolute -right-0.5 -bottom-0.5 flex h-5 w-5 items-center justify-center rounded-full border-2 border-[#0c0c17] text-white">
+          <span
+            role="button"
+            title="Добавить историю"
+            onClick={(e) => {
+              e.stopPropagation();
+              onAdd();
+            }}
+            className="btn-gradient absolute -right-0.5 -bottom-0.5 flex h-5 w-5 items-center justify-center rounded-full border-2 border-[#0c0c17] text-white transition-transform hover:scale-110"
+          >
             <Plus className="h-3 w-3" />
           </span>
         </div>

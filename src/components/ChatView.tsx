@@ -1036,7 +1036,8 @@ export default function ChatView({
           (раньше второй живой пресет не играл до перезагрузки страницы). */}
       <div
         key={wallpaper ?? "default"}
-        className="pointer-events-none absolute inset-0"
+        // Без обоев — фирменный узор из точек, чтобы чат не был «пустым»
+        className={`pointer-events-none absolute inset-0 ${wallpaper ? "" : "chat-pattern"}`}
         style={wallpaperStyle(wallpaper)}
         aria-hidden
       />

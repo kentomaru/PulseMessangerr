@@ -40,6 +40,8 @@ export default function StoryViewer({
   const [viewers, setViewers] = useState<Viewer[] | null>(null);
   /** Файл истории побит (404) — показываем заглушку вместо «сломанной картинки». */
   const [mediaBroken, setMediaBroken] = useState(false);
+  /** Повторная попытка загрузки медиа (кэш/сеть моргнули). */
+  const [mediaRetried, setMediaRetried] = useState(false);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const group = groups[gi];
@@ -49,7 +51,15 @@ export default function StoryViewer({
   // Новая история — сбрасываем флаг «файл побит»
   useEffect(() => {
     setMediaBroken(false);
+    setMediaRetried(false);
   }, [story?.id]);
+
+  // URL с «анти-кэш» суффиксом для второй попытки загрузки
+  const mediaUrl = story
+    ? mediaRetried
+      ? `${story.mediaUrl}${story.mediaUrl.includes("?") ? "&" : "?"}r=1`
+      : story.mediaUrl
+    : "";
 
   const next = useCallback(() => {
     setSi((curSi) => {
@@ -225,7 +235,7 @@ export default function StoryViewer({
             {!storyIsVideo && !mediaBroken && (
               // eslint-disable-next-line @next/next/no-img-element
               <img
-                src={story.mediaUrl}
+                src={mediaUrl}
                 alt=""
                 aria-hidden
                 className="absolute inset-0 h-full w-full scale-110 object-cover opacity-60 blur-xl"
@@ -233,7 +243,7 @@ export default function StoryViewer({
             )}
             {storyIsVideo ? (
               <video
-                src={story.mediaUrl}
+                src={mediaUrl}
                 autoPlay
                 playsInline
                 onEnded={next}
@@ -256,9 +266,14 @@ export default function StoryViewer({
             ) : (
               /* eslint-disable-next-line @next/next/no-img-element */
               <img
-                src={story.mediaUrl}
+                src={mediaUrl}
                 alt="История"
-                onError={() => setMediaBroken(true)}
+                loading="eager"
+                onError={() => {
+                  // Один раз пробуем перезагрузить (против кэша/моргания сети)
+                  if (!mediaRetried) setMediaRetried(true);
+                  else setMediaBroken(true);
+                }}
                 className="relative h-full w-full object-contain"
               />
             )}

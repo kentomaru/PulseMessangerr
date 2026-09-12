@@ -87,7 +87,26 @@ type Props = {
   onApplyAudioSettings: (s: AudioSettings) => void;
   /** Текущий уровень микрофона (0–100) для индикатора. */
   micLevelRef: React.RefObject<number>;
+  /** Уровень связи с каждым участником: 0–3 «палочки». */
+  connQuality?: Record<string, number>;
 };
+
+/** Индикатор уровня связи: 3 столбика, заполнены по качеству (0–3). */
+function SignalBars({ quality }: { quality: number | undefined }) {
+  const q = quality ?? 0;
+  const color = q >= 3 ? "bg-emerald-400" : q === 2 ? "bg-amber-300" : q === 1 ? "bg-rose-400" : "bg-white/20";
+  return (
+    <span className="flex items-end gap-[2px]" title={`Связь: ${q === 0 ? "нет данных" : q === 1 ? "слабая" : q === 2 ? "средняя" : "отличная"}`}>
+      {[1, 2, 3].map((i) => (
+        <span
+          key={i}
+          className={`w-[3px] rounded-sm ${i <= q ? color : "bg-white/15"}`}
+          style={{ height: 3 + i * 2.5 }}
+        />
+      ))}
+    </span>
+  );
+}
 
 const SIZES = {
   sm: { w: 340, h: 260 },
@@ -527,6 +546,7 @@ function CallBody({
   remoteStreams,
   streamTick,
   onViewUser,
+  connQuality,
 }: WindowProps) {
   const localVideoRef = useRef<HTMLVideoElement | null>(null);
 
@@ -560,14 +580,15 @@ function CallBody({
   return (
     <div className="nice-scroll relative min-h-0 flex-1 overflow-y-auto p-3">
       {screenSharers.map((p) => (
-        <ScreenTile
-          key={`screen-${p.userId}`}
-          participant={p}
-          isMe={p.userId === meId}
-          stream={p.userId === meId ? (screenStreamRef.current ?? null) : (remoteStreams[p.userId] ?? null)}
-          tick={streamTick}
-          onViewUser={onViewUser}
-        />
+        <div key={`screen-${p.userId}`} className="mb-2.5 last:mb-0">
+          <ScreenTile
+            participant={p}
+            isMe={p.userId === meId}
+            stream={p.userId === meId ? (screenStreamRef.current ?? null) : (remoteStreams[p.userId] ?? null)}
+            tick={streamTick}
+            onViewUser={onViewUser}
+          />
+        </div>
       ))}
 
       {videoPeople.length > 0 ? (
@@ -585,6 +606,7 @@ function CallBody({
                 localStream={localStreamRef.current ?? null}
                 userById={userById}
                 onViewUser={onViewUser}
+                quality={connQuality?.[p.userId]}
               />
             ))}
         </div>
@@ -677,12 +699,35 @@ function ScreenTile({
   onViewUser: (u: PublicUser) => void;
 }) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const boxRef = useRef<HTMLDivElement | null>(null);
+  const [fs, setFs] = useState(false);
   useEffect(() => {
     if (videoRef.current) videoRef.current.srcObject = stream ?? null;
   }, [stream, tick]);
 
+  // Полноэкранный режим демо (как в Discord): разворачивается весь блок
+  useEffect(() => {
+    const onChange = () => setFs(!!document.fullscreenElement);
+    document.addEventListener("fullscreenchange", onChange);
+    return () => document.removeEventListener("fullscreenchange", onChange);
+  }, []);
+
+  const toggleFullscreen = () => {
+    const el = boxRef.current;
+    if (!el) return;
+    if (document.fullscreenElement) void document.exitFullscreen().catch(() => {});
+    else void el.requestFullscreen().catch(() => {});
+  };
+
   return (
-    <div className="relative aspect-video min-w-0 overflow-hidden rounded-2xl bg-black/60 ring-1 ring-emerald-400/25">
+    <div
+      ref={boxRef}
+      // Компактный размер как в Discord: не во всю ширину окна, а аккуратным
+      // «экраном» по центру; по кнопке разворачивается на весь экран.
+      className={`relative overflow-hidden rounded-2xl bg-black/80 ring-1 ring-emerald-400/25 ${
+        fs ? "h-full w-full" : "mx-auto aspect-video w-full max-w-2xl"
+      }`}
+    >
       <video
         ref={videoRef}
         autoPlay
@@ -698,11 +743,16 @@ function ScreenTile({
         >
           {isMe ? "Вы демонстрируете экран" : `Экран · ${participant.user.displayName}`}
         </button>
-        {!isMe && (
-          <span className="ml-auto shrink-0">
-            <VolumeControl userId={participant.userId} name={participant.user.displayName} />
-          </span>
-        )}
+        <div className="ml-auto flex shrink-0 items-center gap-1.5">
+          {!isMe && <VolumeControl userId={participant.userId} name={participant.user.displayName} />}
+          <button
+            onClick={toggleFullscreen}
+            title={fs ? "Выйти из полноэкранного режима" : "На весь экран"}
+            className="grid h-7 w-7 place-items-center rounded-lg bg-white/10 text-white/85 transition-colors hover:bg-white/20"
+          >
+            {fs ? <Minimize2 className="h-3.5 w-3.5" /> : <Maximize2 className="h-3.5 w-3.5" />}
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -821,14 +871,40 @@ function AudioSettingsPanel({
           </p>
         </div>
 
-        {/* Индикатор уровня микрофона */}
+        {/* Индикатор микрофона: ВЕРХНЯЯ полоса — порог, с которого вас
+            слышно (порог активации голоса), НИЖНЯЯ — ваш живой уровень звука.
+            Когда нижняя дорастает до верхней — микрофон открыт. */}
         <div>
           <p className="mb-1 text-[10px] uppercase tracking-wide text-white/35">Уровень микрофона</p>
-          <div className="h-2 overflow-hidden rounded-full bg-white/10">
-            <div
-              className="h-full rounded-full bg-gradient-to-r from-emerald-400 via-violet-400 to-fuchsia-400 transition-[width] duration-100"
-              style={{ width: `${Math.min(100, level)}%` }}
-            />
+          <div className="space-y-1.5">
+            <div className="flex items-center gap-2">
+              <span className="w-14 shrink-0 text-[9px] text-white/30">порог</span>
+              <div className="relative h-2 flex-1 overflow-hidden rounded-full bg-white/10">
+                <div
+                  className="h-full rounded-full bg-gradient-to-r from-amber-400/80 to-amber-300/80 transition-[width] duration-150"
+                  style={{ width: `${settings.voiceGate}%` }}
+                />
+              </div>
+              <span className="w-9 shrink-0 text-right text-[9px] tabular-nums text-white/35">
+                {settings.voiceGate}%
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="w-14 shrink-0 text-[9px] text-white/30">голос</span>
+              <div className="relative h-2 flex-1 overflow-hidden rounded-full bg-white/10">
+                <div
+                  className={`h-full rounded-full transition-[width] duration-100 ${
+                    settings.voiceGate > 0 && level >= settings.voiceGate
+                      ? "bg-gradient-to-r from-emerald-400 to-emerald-300"
+                      : "bg-gradient-to-r from-emerald-400 via-violet-400 to-fuchsia-400"
+                  }`}
+                  style={{ width: `${Math.min(100, level)}%` }}
+                />
+              </div>
+              <span className="w-9 shrink-0 text-right text-[9px] tabular-nums text-white/35">
+                {Math.min(100, Math.round(level))}
+              </span>
+            </div>
           </div>
         </div>
       </div>
@@ -1007,12 +1083,15 @@ function Tile({
   localStream,
   userById,
   onViewUser,
+  quality,
 }: {
   participant: CallParticipantInfo;
   isMe: boolean;
   localStream: MediaStream | null;
   userById: Record<string, PublicUser>;
   onViewUser: (u: PublicUser) => void;
+  /** Уровень связи с участником (0–3). */
+  quality?: number;
 }) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const { stream: remote, tick } = useRemoteStream(participant.userId);
@@ -1045,6 +1124,8 @@ function Tile({
             {isMe ? "Вы" : participant.user.displayName}
           </span>
         </button>
+        {/* Уровень связи с участником (пинг + потери пакетов) */}
+        {!isMe && <SignalBars quality={quality} />}
         {participant.muted && <MicOff className="h-3 w-3 shrink-0 text-rose-300" />}
         {participant.guest && !isMe && (
           <span className="shrink-0 rounded-full bg-white/10 px-1.5 text-[10px] text-white/50">

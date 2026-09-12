@@ -196,6 +196,26 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
     document.title = n > 0 ? `(${n}) Pulse` : "Pulse";
   }, [conversations]);
 
+  /* ── Масштаб интерфейса: «всё очень маленькое» → можно укрупнить ── */
+  const UI_SCALE_KEY = "pulse_ui_scale_v1";
+  const [uiScale, setUiScaleState] = useState<"s" | "m" | "l">(() => {
+    try {
+      const v = localStorage.getItem(UI_SCALE_KEY);
+      return v === "s" || v === "l" ? v : "m";
+    } catch {
+      return "m";
+    }
+  });
+  const setUiScale = useCallback((v: "s" | "m" | "l") => {
+    setUiScaleState(v);
+    try {
+      localStorage.setItem(UI_SCALE_KEY, v);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+  const zoom = uiScale === "s" ? 0.88 : uiScale === "l" ? 1.14 : 1;
+
   /* ── Закреплённые и заглушённые чаты (хранятся локально) ── */
   const PINNED_KEY = "pulse_pinned_v1";
   const MUTED_KEY = "pulse_muted_v1";
@@ -447,7 +467,11 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
   };
 
   return (
-    <main className="relative z-10 flex h-dvh overflow-hidden">
+    <main
+      className="relative z-10 flex h-dvh overflow-hidden"
+      // Масштаб интерфейса («Мелкий / Обычный / Крупный» в настройках)
+      style={zoom !== 1 ? ({ zoom } as React.CSSProperties) : undefined}
+    >
       <div
         className={`${activeId ? "hidden md:flex" : "flex"} w-full shrink-0 md:w-[var(--sbw,380px)]`}
         style={{ "--sbw": `${sidebarW}px` } as React.CSSProperties}
@@ -462,6 +486,8 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
           mutedIds={mutedIds}
           onTogglePin={togglePinned}
           onToggleMute={toggleMuted}
+          uiScale={uiScale}
+          onSetUiScale={setUiScale}
           callSoundOn={callSoundOn}
           notifyOn={notifyOn}
           onToggleSound={toggleSound}
@@ -654,6 +680,7 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
         notify={notify}
         onApplyAudioSettings={(s) => void callCtl.applyAudioSettings(s)}
         micLevelRef={callCtl.micLevelRef}
+        connQuality={callCtl.connQuality}
       />
 
       {/* toasts */}
