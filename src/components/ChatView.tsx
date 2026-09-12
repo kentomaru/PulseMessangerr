@@ -1,1016 +1,2714 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { ChatPayload, MessagePayload, SettingsPayload } from "@/lib/pulse";
+import { AnimatePresence, motion } from "framer-motion";
 import {
-  REACTION_EMOJI,
-  dayKey,
+  ArrowLeft,
+  Ban,
+  Bookmark,
+  Check,
+  CheckCheck,
+  ChevronLeft,
+  ChevronRight,
+  CornerUpLeft,
+  Copy,
+  Download,
+  File as FileIcon,
+  FileText,
+  Film,
+  Hash,
+  ImagePlus,
+  Info,
+  Loader2,
+  Lock,
+  Megaphone,
+  Mic,
+  MoreVertical,
+  Music,
+  Palette,
+  Paperclip,
+  Pause,
+  Pencil,
+  Phone,
+  PhoneIncoming,
+  PhoneMissed,
+  PhoneOutgoing,
+  Pin,
+  PinOff,
+  Play,
+  Radio,
+  Reply,
+  RotateCcw,
+  Search,
+  Send,
+  Smile,
+  SmilePlus,
+  Trash2,
+  UserRound,
+  Users,
+  Video,
+  X,
+} from "lucide-react";
+import Avatar from "./Avatar";
+import WallpaperModal from "./WallpaperModal";
+import { api, ApiError, copyToClipboard, uploadFile } from "@/lib/api";
+import { EMOJI_CATEGORIES } from "@/lib/emojis";
+import { renderRichText } from "@/lib/richText";
+import {
+  callLogLabel,
+  dayLabel,
   formatBytes,
-  formatDay,
-  formatLastSeen,
-  formatTime,
-  isOnline,
-  parseWallpaper,
-  wallpaperCss,
-} from "@/lib/pulse";
-import AttachmentView from "./AttachmentView";
-import Composer from "./Composer";
-import {
-  Avatar,
-  IconArchive,
-  IconBack,
-  IconBan,
-  IconBell,
-  IconBellOff,
-  IconCheck,
-  IconCheckDouble,
-  IconClose,
-  IconDownload,
-  IconEdit,
-  IconMore,
-  IconPhone,
-  IconPin,
-  IconReply,
-  IconSearch,
-  IconSmile,
-  IconStorage,
-  IconTrash,
-  IconUsers,
-  IconWallpaper,
-  Modal,
-  PulseLogo,
-} from "./ui";
+  formatDuration,
+  lastSeenLabel,
+  legacyAttachmentKind,
+  messagePreview,
+  parseCallContent,
+  parseAttachment,
+  sameDay,
+  timeHHmm,
+} from "@/lib/format";
+import { wallpaperStyle } from "@/lib/wallpapers";
+import type {
+  AttachmentInfo,
+  CallMedia,
+  CallSummary,
+  ChatMessage,
+  ConversationKind,
+  ConversationListItem,
+  ConversationMemberItem,
+  MemberRole,
+  MessageReaction,
+  Peer,
+  PublicUser,
+} from "@/lib/types";
 
-type Member = {
-  userId: number;
-  name: string;
-  handle: string;
-  emoji: string;
-  accent: string;
-  avatarFileId: number | null;
-  lastSeenAt: string;
-  role: string;
-  lastReadMessageId: number;
+type ConvMeta = {
+  id: string;
+  kind: ConversationKind;
+  name: string | null;
+  avatarUrl: string | null;
+  about: string;
+  isPrivate: boolean;
+  memberCount: number;
+  myRole: MemberRole;
+  title: string;
 };
 
-type ChatDetails = {
-  chat: {
-    id: number;
-    kind: string;
-    title: string;
-    emoji: string;
-    accent: string;
-    avatarFileId: number | null;
-    wallpaper: string | null;
-    ownerId: number | null;
-  };
-  me: { muted: boolean; pinned: boolean; archived: boolean; wallpaper: string | null; role: string };
-  members: Member[];
-  blockState: { blocked: boolean; blockedBy: boolean };
+type Props = {
+  me: PublicUser;
+  conversationId: string;
+  /** Данные из списка диалогов (используются до первой загрузки). */
+  initialTitle: string;
+  initialKind: ConversationKind;
+  initialAvatar: string | null;
+  /** Непрочитанные на момент открытия (для разделителя «Непрочитанные»). */
+  initialUnread?: number;
+  peer: Peer | null;
+  onBack: () => void;
+  onCall: (media: CallMedia) => void;
+  onJoinCall: (callId: string, media: CallMedia) => void;
+  onViewPeer: () => void;
+  onViewUser: (user: PublicUser) => void;
+  onOpenInfo: () => void;
+  callBusy: boolean;
+  refreshConversations: () => void;
+  notify: (msg: string) => void;
+  onUnauthorized: () => void;
 };
 
-export type Person = { id: number; name: string; handle: string; emoji: string; accent: string; about: string };
+type MessageLoad = {
+  messages: ChatMessage[];
+  pinned: ChatMessage[];
+  conversation: ConvMeta;
+  members: ConversationMemberItem[];
+  peer: Peer | null;
+  activeCall: CallSummary | null;
+  wallpaper: string | null;
+};
 
-function isEmojiOnly(value: string): boolean {
-  const trimmed = value.trim();
-  if (!trimmed || trimmed.length > 8) return false;
-  return /^(\p{Extended_Pictographic}|️|‍|\p{Emoji_Component})+$/u.test(trimmed);
+/** Результат поиска по чату. */
+type SearchHit = {
+  id: string;
+  type: string;
+  content: string;
+  preview: string;
+  createdAt: string;
+  senderId: string;
+  senderName: string;
+  sender: PublicUser | null;
+};
+
+type DraftFile = {
+  id: string;
+  file: File;
+  /** Превью (для картинок). */
+  preview: string | null;
+};
+
+type ContextMenuState = {
+  x: number;
+  y: number;
+  message: ChatMessage;
+};
+
+/** Быстрые реакции (те же, что в белом списке сервера). */
+const QUICK_EMOJIS = ["👍", "❤️", "😂", "🔥", "😮", "😢", "🎉", "🤔", "👀", "💯"];
+
+const MAX_UPLOAD_BYTES = 500 * 1024 * 1024;
+
+/** Первый поддерживаемый браузером MIME для MediaRecorder. */
+function pickRecorderMime(candidates: string[]): string | undefined {
+  if (typeof MediaRecorder === "undefined") return undefined;
+  for (const c of candidates) {
+    try {
+      if (MediaRecorder.isTypeSupported(c)) return c;
+    } catch {
+      /* ignore */
+    }
+  }
+  return undefined;
 }
 
 export default function ChatView({
-  chat,
   me,
-  settings,
-  onNotify,
-  onChanged,
-  onOpenWallpaper,
+  conversationId,
+  initialTitle,
+  initialKind,
+  initialAvatar,
+  initialUnread,
+  peer,
   onBack,
-  onStartCall,
-}: {
-  chat: ChatPayload;
-  me: Person;
-  settings: SettingsPayload;
-  onNotify: (text: string) => void;
-  onChanged: () => void;
-  onOpenWallpaper: () => void;
-  onBack: () => void;
-  onStartCall: (peer: { id: number; name: string; handle: string; emoji: string; accent: string; avatarFileId: number | null }) => void;
-}) {
-  const [details, setDetails] = useState<ChatDetails | null>(null);
-  const [messages, setMessages] = useState<MessagePayload[]>([]);
-  const [typing, setTyping] = useState<string[]>([]);
-  const [replyTo, setReplyTo] = useState<MessagePayload | null>(null);
-  const [editing, setEditing] = useState<MessagePayload | null>(null);
-  const [highlightId, setHighlightId] = useState<number | null>(null);
-  const [query, setQuery] = useState("");
-  const [showSearch, setShowSearch] = useState(false);
+  onCall,
+  onJoinCall,
+  onViewPeer,
+  onViewUser,
+  onOpenInfo,
+  callBusy,
+  refreshConversations,
+  notify,
+  onUnauthorized,
+}: Props) {
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [pinned, setPinned] = useState<ChatMessage[]>([]);
+  const [pinnedIdx, setPinnedIdx] = useState(0);
+  const [meta, setMeta] = useState<ConvMeta | null>(null);
+  const [members, setMembers] = useState<ConversationMemberItem[]>([]);
+  const [peerState, setPeerState] = useState<Peer | null>(peer);
+  const [activeCall, setActiveCall] = useState<CallSummary | null>(null);
+  const [wallpaper, setWallpaper] = useState<string | null>(null);
+  const [text, setText] = useState("");
+  const [sending, setSending] = useState(false);
+  const [uploading, setUploading] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
-  const [infoOpen, setInfoOpen] = useState(false);
-  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [showWallpaper, setShowWallpaper] = useState(false);
+  const [lightbox, setLightbox] = useState<string | null>(null);
+  const [loaded, setLoaded] = useState(false);
+  const [replyTo, setReplyTo] = useState<ChatMessage | null>(null);
+  const [editing, setEditing] = useState<ChatMessage | null>(null);
+  const [highlight, setHighlight] = useState<string | null>(null);
+  const [draftFiles, setDraftFiles] = useState<DraftFile[]>([]);
+  const [dragOver, setDragOver] = useState(false);
+  const [ctxMenu, setCtxMenu] = useState<ContextMenuState | null>(null);
+  const [forwarding, setForwarding] = useState<ChatMessage | null>(null);
+  const [noteRecorder, setNoteRecorder] = useState(false);
+  const [voiceRecActive, setVoiceRecActive] = useState(false);
+  const [recSecs, setRecSecs] = useState(0);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchHits, setSearchHits] = useState<SearchHit[] | null>(null);
+  const [searching, setSearching] = useState(false);
+  const [emojiOpen, setEmojiOpen] = useState(false);
+  /** id сообщения, перед которым рисуем разделитель «Непрочитанные». */
+  const [unreadBefore, setUnreadBefore] = useState<string | null>(null);
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
-  const bottomRef = useRef<HTMLDivElement | null>(null);
-  const sinceRef = useRef<string>(new Date(0).toISOString());
-  const typingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const stopTypingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const pinnedToBottom = useRef(true);
+  const fileRef = useRef<HTMLInputElement | null>(null);
+  const inputRef = useRef<HTMLTextAreaElement | null>(null);
+  const lastTypingSent = useRef(0);
+  const lastCount = useRef(0);
+  const loadedRef = useRef(false);
+  /** Непрочитанные на момент открытия чата — замораживаем, чтобы опросы их не затирали. */
+  const initialUnreadRef = useRef(initialUnread ?? 0);
+  const voiceRef = useRef<{ recorder: MediaRecorder; stream: MediaStream; chunks: Blob[]; startedAt: number } | null>(null);
+  const draftId = useRef(0);
 
-  const partner = chat.partner;
-  const isGroup = chat.kind === "group";
-  const title = isGroup ? chat.title : (partner?.name ?? "Чат");
-  const emoji = isGroup ? chat.emoji : (partner?.emoji ?? "💬");
-  const accent = isGroup ? chat.accent : (partner?.accent ?? "violet");
-  const avatarFileId = isGroup ? chat.avatarFileId : partner?.avatarFileId;
-
-  const wallpaper = useMemo(() => {
-    const raw = chat.wallpaper ?? settings.wallpaper;
-    const parsed = parseWallpaper(raw);
-    const url = parsed.image ? `/api/files/${parsed.image}` : null;
-    return { css: wallpaperCss(parsed, url), parsed };
-  }, [chat.wallpaper, settings.wallpaper]);
-
-  const loadDetails = useCallback(async () => {
-    const res = await fetch(`/api/chats/${chat.id}`);
-    if (!res.ok) return;
-    const data = (await res.json()) as ChatDetails;
-    setDetails(data);
-  }, [chat.id]);
-
-  const loadMessages = useCallback(
-    async (mode: "full" | "poll") => {
-      const after = mode === "full" ? 0 : (messagesRef.current.at(-1)?.id ?? 0);
-      const params = new URLSearchParams({
-        after: String(after),
-        since: sinceRef.current,
-        limit: "300",
-      });
-      const res = await fetch(`/api/chats/${chat.id}/messages?${params.toString()}`);
-      if (!res.ok) return;
-      const data = (await res.json()) as {
-        messages: MessagePayload[];
-        updates: MessagePayload[];
-        typing: string[];
-        serverTime?: string;
-      };
-      sinceRef.current = data.serverTime ?? new Date().toISOString();
-      setTyping(data.typing ?? []);
-      setMessages((prev) => {
-        const map = new Map(prev.map((m) => [m.id, m]));
-        for (const m of data.messages ?? []) map.set(m.id, m);
-        for (const m of data.updates ?? []) map.set(m.id, m);
-        return [...map.values()].sort((a, b) => a.id - b.id);
-      });
-    },
-    [chat.id],
-  );
-
-  const messagesRef = useRef<MessagePayload[]>([]);
-  useEffect(() => {
-    messagesRef.current = messages;
-  }, [messages]);
-
-  useEffect(() => {
-    setMessages([]);
-    setReplyTo(null);
-    setEditing(null);
-    setMenuOpen(false);
-    setInfoOpen(false);
-    sinceRef.current = new Date(0).toISOString();
-    pinnedToBottom.current = true;
-    void loadDetails();
-    void loadMessages("full").then(() => {
-      requestAnimationFrame(() => {
-        bottomRef.current?.scrollIntoView({ block: "end" });
-      });
-    });
-  }, [chat.id, loadDetails, loadMessages]);
-
-  useEffect(() => {
-    const interval = setInterval(() => {
-      void loadMessages("poll");
-      void loadDetails();
-    }, 3000);
-    return () => clearInterval(interval);
-  }, [loadDetails, loadMessages]);
-
-  const markRead = useCallback(
-    async (isTyping = false) => {
-      await fetch(`/api/chats/${chat.id}/read`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ typing: isTyping }),
-      });
-    },
-    [chat.id],
-  );
-
-  useEffect(() => {
-    void markRead(false);
-  }, [markRead, messages.length]);
-
-  useEffect(() => {
-    if (!pinnedToBottom.current) return;
-    bottomRef.current?.scrollIntoView({ block: "end" });
-  }, [messages.length, typing.length]);
-
-  const handleTyping = useCallback(() => {
-    if (!settings.typingStatus) return;
-    if (stopTypingTimer.current) clearTimeout(stopTypingTimer.current);
-    if (typingTimer.current) clearTimeout(typingTimer.current);
-    typingTimer.current = setTimeout(() => void markRead(true), 350);
-    stopTypingTimer.current = setTimeout(() => void markRead(false), 3200);
-  }, [markRead, settings.typingStatus]);
-
-  const patchChat = useCallback(
-    async (patch: Record<string, unknown>) => {
-      await fetch(`/api/chats/${chat.id}`, {
-        method: "PATCH",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(patch),
-      });
-      await loadDetails();
-      onChanged();
-    },
-    [chat.id, loadDetails, onChanged],
-  );
-
-  const toggleBlock = useCallback(async () => {
-    if (!partner) return;
-    if (details?.blockState.blocked) {
-      await fetch(`/api/blocks?userId=${partner.id}`, { method: "DELETE" });
-      onNotify(`${partner.name} разблокирован(а)`);
-    } else {
-      await fetch("/api/blocks", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ userId: partner.id }),
-      });
-      onNotify(`${partner.name} заблокирован(а)`);
+  /**
+   * Прокрутить чат вниз.
+   * — null-safe: при переключении чата в полёте запроса колбэк может сработать
+   *   после размонтирования — scrollRef.current уже null;
+   * — фолбэк на scrollTop: в окружениях без рабочей Element.scrollTo (например
+   *   jsdom в UI-смоке) скролл просто не выполнялся молча.
+   */
+  const scrollToEnd = useCallback((smooth = false) => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const top = el.scrollHeight;
+    if (typeof el.scrollTo === "function") {
+      try {
+        el.scrollTo({ top, behavior: smooth ? "smooth" : "auto" });
+        return;
+      } catch {
+        /* не поддерживается — уходим в scrollTop ниже */
+      }
     }
-    setMenuOpen(false);
-    await loadDetails();
-    onChanged();
-  }, [details?.blockState.blocked, loadDetails, onChanged, onNotify, partner]);
-
-  const deleteChat = useCallback(
-    async (scope: "me" | "all") => {
-      const res = await fetch(`/api/chats/${chat.id}?scope=${scope}`, { method: "DELETE" });
-      if (!res.ok) {
-        onNotify("Недостаточно прав для удаления");
-        return;
-      }
-      setConfirmDelete(false);
-      setMenuOpen(false);
-      onNotify(scope === "all" ? "Чат удалён для всех" : "Чат удалён");
-      onChanged();
-    },
-    [chat.id, onChanged, onNotify],
-  );
-
-  const messageAction = useCallback(
-    async (action: "delete-me" | "delete-all" | "react" | "edit", message: MessagePayload, emoji?: string) => {
-      if (action === "react") {
-        await fetch(`/api/messages/${message.id}/react`, {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ emoji }),
-        });
-        void loadMessages("poll");
-        return;
-      }
-      if (action === "delete-me" || action === "delete-all") {
-        await fetch(`/api/messages/${message.id}?scope=${action === "delete-all" ? "all" : "me"}`, {
-          method: "DELETE",
-        });
-        setMessages((prev) => prev.filter((m) => m.id !== message.id));
-        onChanged();
-        return;
-      }
-      if (action === "edit") {
-        setEditing(message);
-      }
-    },
-    [loadMessages, onChanged],
-  );
-
-  const jumpTo = useCallback((id: number) => {
-    setHighlightId(id);
-    const el = document.getElementById(`msg-${id}`);
-    el?.scrollIntoView({ behavior: "smooth", block: "center" });
-    setTimeout(() => setHighlightId(null), 1800);
+    el.scrollTop = top;
   }, []);
 
-  const visibleMessages = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return messages;
-    return messages.filter((m) => m.body.toLowerCase().includes(q));
-  }, [messages, query]);
-
-  const blocked = details?.blockState.blocked || details?.blockState.blockedBy;
-  const muted = details?.me?.muted ?? chat.muted;
-  const pinned = details?.me?.pinned ?? chat.pinned;
-  const archived = details?.me?.archived ?? chat.archived;
-  const partnerLastRead = useMemo(() => {
-    if (!details) return 0;
-    const others = details.members.filter((m) => m.userId !== me.id);
-    return Math.max(0, ...others.map((m) => m.lastReadMessageId));
-  }, [details, me.id]);
-
-  const statusText = (() => {
-    if (typing.length > 0 && settings.typingStatus) {
-      return typing.length === 1 ? `${typing[0]} печатает…` : "печатают…";
+  const load = useCallback(async () => {
+    try {
+      const d = await api<MessageLoad>(`/api/messages?conversationId=${conversationId}`);
+      setMessages(d.messages);
+      setPinned(d.pinned ?? []);
+      setMeta(d.conversation);
+      setMembers(d.members);
+      setActiveCall(d.activeCall);
+      if (d.peer) setPeerState(d.peer);
+      setWallpaper(d.wallpaper);
+      if (!loadedRef.current) {
+        loadedRef.current = true;
+        setLoaded(true);
+        // разделитель «Непрочитанные»: перед N-м с конца чужим сообщением
+        // (initialUnreadRef — значение на момент открытия чата, дальше не меняется)
+        const target = initialUnreadRef.current;
+        if (target > 0) {
+          let c = target;
+          let idx = -1;
+          for (let i = d.messages.length - 1; i >= 0 && c > 0; i--) {
+            if (d.messages[i].senderId !== me.id) {
+              c--;
+              idx = i;
+            }
+          }
+          setUnreadBefore(idx >= 0 ? d.messages[idx].id : (d.messages[0]?.id ?? null));
+        }
+        requestAnimationFrame(() => scrollToEnd());
+      } else if (d.messages.length !== lastCount.current) {
+        requestAnimationFrame(() => scrollToEnd(true));
+      }
+      lastCount.current = d.messages.length;
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 401) onUnauthorized();
+      /* иначе сеть моргнула — следующий опрос поправит */
     }
-    if (isGroup) {
-      return `${details?.members.length ?? 1} участников`;
-    }
-    if (!partner) return "";
-    if (partner.lastSeenAt && isOnline(partner.lastSeenAt)) return "в сети";
-    return formatLastSeen(partner.lastSeenAt);
-  })();
+    // ВАЖНО: зависимость только от conversationId (см. комментарий в истории правок)
+  }, [conversationId, onUnauthorized, scrollToEnd, me.id]);
 
-  let lastDay = "";
-  let lastSender = -1;
+  useEffect(() => {
+    loadedRef.current = false;
+    setLoaded(false);
+    lastCount.current = 0;
+    setReplyTo(null);
+    setEditing(null);
+    setUnreadBefore(null);
+    setSearchOpen(false);
+    setSearchQuery("");
+    setSearchHits(null);
+    setPinnedIdx(0);
+    setEmojiOpen(false);
+    void load();
+    const t = setInterval(() => void load(), 2_500);
+    return () => clearInterval(t);
+  }, [load]);
+
+  // при уходе из чата — прибираем черновики и записи
+  useEffect(() => {
+    return () => {
+      setDraftFiles((ds) => {
+        for (const d of ds) if (d.preview) URL.revokeObjectURL(d.preview);
+        return [];
+      });
+      voiceRef.current?.stream.getTracks().forEach((t) => t.stop());
+      voiceRef.current = null;
+    };
+  }, [conversationId]);
+
+  const kind = meta?.kind ?? initialKind;
+  const title = meta?.title ?? initialTitle;
+  const avatar = kind === "direct" ? (peerState?.avatarUrl ?? initialAvatar) : (meta?.avatarUrl ?? initialAvatar);
+  const isSpace = kind !== "direct";
+  const canPost = kind !== "channel" || meta?.myRole === "owner" || meta?.myRole === "admin";
+  /** «Избранное» — чат с самим собой: без звонков, подпись «сохранённые». */
+  const isSaved = kind === "direct" && (peerState?.id ?? peer?.id) === me.id;
+  const pinnedCurrent = pinned.length > 0 ? pinned[Math.min(pinnedIdx, pinned.length - 1)] : null;
+
+  /* ─────────────────────────── отправка ─────────────────────────── */
+
+  const send = async () => {
+    if (sending || uploading || !canPost) return;
+
+    // Редактирование своего сообщения
+    if (editing) {
+      const content = text.trim();
+      if (!content) return;
+      setSending(true);
+      const target = editing;
+      setEditing(null);
+      setText("");
+      try {
+        await api(`/api/messages/${target.id}`, {
+          method: "PATCH",
+          body: JSON.stringify({ content }),
+        });
+        await load();
+        refreshConversations();
+      } catch (e) {
+        setText(content);
+        setEditing(target);
+        notify(e instanceof Error ? e.message : "Не удалось изменить");
+      } finally {
+        setSending(false);
+      }
+      return;
+    }
+
+    // Файлы из черновика (первый файл получает подпись из поля ввода)
+    if (draftFiles.length > 0) {
+      const files = draftFiles;
+      const caption = text.trim();
+      setDraftFiles([]);
+      setText("");
+      setUploading(true);
+      try {
+        for (let i = 0; i < files.length; i++) {
+          const d = files[i];
+          const url = await uploadFile(d.file);
+          const isImage = d.file.type.startsWith("image/");
+          const att: AttachmentInfo = {
+            url,
+            name: d.file.name,
+            mimeType: d.file.type || "application/octet-stream",
+            size: d.file.size,
+          };
+          if (i === 0 && caption) att.caption = caption;
+          await api("/api/messages", {
+            method: "POST",
+            body: JSON.stringify({
+              conversationId,
+              type: isImage ? "image" : "file",
+              content: isImage && !att.caption ? url : JSON.stringify(att),
+              replyToId: replyTo?.id ?? null,
+            }),
+          });
+        }
+        setReplyTo(null);
+        await load();
+        refreshConversations();
+      } catch (e) {
+        notify(e instanceof Error ? e.message : "Не удалось отправить файлы");
+        setDraftFiles(files);
+        setText(caption);
+      } finally {
+        for (const d of files) if (d.preview) URL.revokeObjectURL(d.preview);
+        setUploading(false);
+      }
+      return;
+    }
+
+    // Обычный текст
+    const content = text.trim();
+    if (!content) return;
+    setSending(true);
+    setText("");
+    const reply = replyTo;
+    setReplyTo(null);
+    try {
+      await api("/api/messages", {
+        method: "POST",
+        body: JSON.stringify({
+          conversationId,
+          type: "text",
+          content,
+          replyToId: reply?.id ?? null,
+        }),
+      });
+      await load();
+      refreshConversations();
+    } catch (e) {
+      setText(content);
+      setReplyTo(reply);
+      notify(e instanceof Error ? e.message : "Не удалось отправить");
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const sendAttachment = async (
+    blob: Blob,
+    durationSec: number,
+    type: "voice" | "video_note",
+    fallbackName: string,
+  ) => {
+    if (!canPost) return;
+    setUploading(true);
+    try {
+      const ext = blob.type.includes("mp4") ? "m4a" : blob.type.includes("ogg") ? "ogg" : "webm";
+      const file = new File([blob], `${type}.${ext}`, { type: blob.type });
+      const url = await uploadFile(file);
+      await api("/api/messages", {
+        method: "POST",
+        body: JSON.stringify({
+          conversationId,
+          type,
+          content: JSON.stringify({
+            url,
+            name: fallbackName,
+            mimeType: blob.type,
+            size: blob.size,
+            duration: Math.max(1, Math.round(durationSec)),
+          }),
+          replyToId: replyTo?.id ?? null,
+        }),
+      });
+      setReplyTo(null);
+      await load();
+      refreshConversations();
+    } catch (e) {
+      notify(e instanceof Error ? e.message : "Не удалось отправить");
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  /* ─────────────────────────── черновик файлов ─────────────────────────── */
+
+  const addDraftFiles = useCallback(
+    (files: File[]) => {
+      if (!canPost || files.length === 0) return;
+      setDraftFiles((ds) => {
+        const next = [...ds];
+        for (const f of files) {
+          if (f.size > MAX_UPLOAD_BYTES) {
+            notify(`«${f.name}» больше 500 МБ`);
+            continue;
+          }
+          next.push({
+            id: `d${++draftId.current}`,
+            file: f,
+            preview: f.type.startsWith("image/") ? URL.createObjectURL(f) : null,
+          });
+        }
+        return next.slice(0, 10);
+      });
+      inputRef.current?.focus();
+    },
+    [canPost, notify],
+  );
+
+  const removeDraftFile = (id: string) => {
+    setDraftFiles((ds) => {
+      const d = ds.find((x) => x.id === id);
+      if (d?.preview) URL.revokeObjectURL(d.preview);
+      return ds.filter((x) => x.id !== id);
+    });
+  };
+
+  /* ─────────────────────────── голосовая запись ─────────────────────────── */
+
+  const startVoiceRecording = async () => {
+    if (!canPost || voiceRecActive || noteRecorder) return;
+    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
+      notify("Запись звука не поддерживается этим браузером");
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mime = pickRecorderMime(["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg;codecs=opus"]);
+      const recorder = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+      const chunks: Blob[] = [];
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) chunks.push(e.data);
+      };
+      recorder.start(250);
+      voiceRef.current = { recorder, stream, chunks, startedAt: Date.now() };
+      setRecSecs(0);
+      setVoiceRecActive(true);
+    } catch {
+      notify("Не удалось получить доступ к микрофону");
+    }
+  };
+
+  const stopVoiceRecording = (send: boolean) => {
+    const rec = voiceRef.current;
+    if (!rec) return;
+    voiceRef.current = null;
+    const duration = (Date.now() - rec.startedAt) / 1000;
+    rec.recorder.onstop = () => {
+      rec.stream.getTracks().forEach((t) => t.stop());
+      const blob = new Blob(rec.chunks, { type: rec.recorder.mimeType || "audio/webm" });
+      if (send && blob.size > 0) {
+        void sendAttachment(blob, duration, "voice", "Голосовое сообщение");
+      }
+    };
+    try {
+      rec.recorder.stop();
+    } catch {
+      rec.stream.getTracks().forEach((t) => t.stop());
+    }
+    setVoiceRecActive(false);
+    setRecSecs(0);
+  };
+
+  // тик таймера записи + автостоп
+  useEffect(() => {
+    if (!voiceRecActive) return;
+    const t = setInterval(() => setRecSecs((s) => s + 1), 1000);
+    return () => clearInterval(t);
+  }, [voiceRecActive]);
+  useEffect(() => {
+    if (voiceRecActive && recSecs >= 300) stopVoiceRecording(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [recSecs, voiceRecActive]);
+
+  /* ─────────────────────────── действия с сообщениями ─────────────────────────── */
+
+  const removeMessage = async (id: string) => {
+    try {
+      await api(`/api/messages/${id}`, { method: "DELETE" });
+      setMessages((ms) =>
+        ms.map((m) =>
+          m.id === id
+            ? { ...m, deletedAt: new Date().toISOString(), content: "" }
+            : m.replyToId === id
+              ? { ...m, replyToId: null, replyTo: null }
+              : m,
+        ),
+      );
+      setPinned((ps) => ps.filter((p) => p.id !== id));
+      refreshConversations();
+    } catch (e) {
+      notify(e instanceof Error ? e.message : "Не удалось удалить");
+    }
+  };
+
+  const toggleReaction = async (messageId: string, emoji: string) => {
+    // оптимистично — опрос подтвердит
+    setMessages((ms) =>
+      ms.map((m) => {
+        if (m.id !== messageId) return m;
+        const rs = [...(m.reactions ?? [])];
+        const idx = rs.findIndex((r) => r.emoji === emoji);
+        if (idx >= 0) {
+          const r = rs[idx];
+          if (r.mine) {
+            if (r.count <= 1) rs.splice(idx, 1);
+            else rs[idx] = { ...r, count: r.count - 1, mine: false };
+          } else {
+            rs[idx] = { ...r, count: r.count + 1, mine: true };
+          }
+        } else {
+          rs.push({ emoji, count: 1, mine: true });
+        }
+        return { ...m, reactions: rs };
+      }),
+    );
+    try {
+      const d = await api<{ reactions: MessageReaction[] }>(`/api/messages/${messageId}/reactions`, {
+        method: "POST",
+        body: JSON.stringify({ emoji }),
+      });
+      setMessages((ms) => ms.map((m) => (m.id === messageId ? { ...m, reactions: d.reactions } : m)));
+    } catch (e) {
+      notify(e instanceof Error ? e.message : "Не удалось поставить реакцию");
+      void load();
+    }
+  };
+
+  /* ─────────────────────────── закреплённые сообщения ─────────────────────────── */
+
+  /** Можно ли закрепить сообщение: в ЛС — любой, в группе/канале — админы или автор. */
+  const canPinMessage = useCallback(
+    (m: ChatMessage) => {
+      if (!meta) return false;
+      if (kind === "direct") return true;
+      return meta.myRole === "owner" || meta.myRole === "admin" || m.senderId === me.id;
+    },
+    [meta, kind, me.id],
+  );
+
+  const togglePin = async (m: ChatMessage) => {
+    try {
+      const d = await api<{ pinned: boolean }>(`/api/messages/${m.id}/pin`, { method: "POST" });
+      setPinned((ps) => {
+        if (d.pinned) return [m, ...ps.filter((x) => x.id !== m.id)].slice(0, 10);
+        return ps.filter((x) => x.id !== m.id);
+      });
+      setPinnedIdx(0);
+      setMessages((ms) => ms.map((x) => (x.id === m.id ? { ...x, pinned: d.pinned } : x)));
+      notify(d.pinned ? "Сообщение закреплено" : "Сообщение откреплено");
+    } catch (e) {
+      notify(e instanceof Error ? e.message : "Не удалось закрепить");
+    }
+  };
+
+  /* ─────────────────────────── поиск по чату ─────────────────────────── */
+
+  useEffect(() => {
+    if (!searchOpen) return;
+    const q = searchQuery.trim();
+    if (q.length < 1) {
+      setSearchHits(null);
+      setSearching(false);
+      return;
+    }
+    setSearching(true);
+    const t = setTimeout(async () => {
+      try {
+        const d = await api<{ results: SearchHit[] }>(
+          `/api/messages/search?conversationId=${conversationId}&q=${encodeURIComponent(q)}`,
+        );
+        setSearchHits(d.results);
+      } catch {
+        setSearchHits([]);
+      } finally {
+        setSearching(false);
+      }
+    }, 300);
+    return () => clearTimeout(t);
+  }, [searchQuery, searchOpen, conversationId]);
+
+  /* ─────────────────────────── эмодзи-пикер ─────────────────────────── */
+
+  const insertEmoji = (emoji: string) => {
+    const el = inputRef.current;
+    if (!el) {
+      setText((t) => t + emoji);
+      return;
+    }
+    const start = el.selectionStart ?? text.length;
+    const end = el.selectionEnd ?? text.length;
+    const next = text.slice(0, start) + emoji + text.slice(end);
+    setText(next);
+    requestAnimationFrame(() => {
+      el.focus();
+      const pos = start + emoji.length;
+      el.setSelectionRange(pos, pos);
+    });
+  };
+
+  const emojiBtnRef = useRef<HTMLButtonElement | null>(null);
+  const emojiPickRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!emojiOpen) return;
+    const onDown = (e: PointerEvent) => {
+      const t = e.target as Node;
+      if (emojiBtnRef.current?.contains(t) || emojiPickRef.current?.contains(t)) return;
+      setEmojiOpen(false);
+    };
+    window.addEventListener("pointerdown", onDown);
+    return () => window.removeEventListener("pointerdown", onDown);
+  }, [emojiOpen]);
+
+  const sendTyping = () => {
+    const now = Date.now();
+    if (now - lastTypingSent.current < 2_500) return;
+    lastTypingSent.current = now;
+    void api(`/api/conversations/${conversationId}/typing`, { method: "POST" }).catch(() => {});
+  };
+
+  const jumpTo = (id: string) => {
+    const el = scrollRef.current?.querySelector<HTMLElement>(`[data-mid="${id}"]`);
+    if (!el) {
+      notify("Это сообщение старше загруженной истории");
+      return;
+    }
+    // scrollIntoView есть не везде (старые Safari/тестовые окружения) — страховка
+    if (typeof el.scrollIntoView === "function") {
+      try {
+        el.scrollIntoView({ behavior: "smooth", block: "center" });
+      } catch {
+        el.scrollTop = 0;
+      }
+    }
+    setHighlight(id);
+    setTimeout(() => setHighlight(null), 1400);
+  };
+
+  const startReply = (m: ChatMessage) => {
+    setEditing(null);
+    setReplyTo(m);
+    inputRef.current?.focus();
+  };
+
+  const startEdit = (m: ChatMessage) => {
+    const att = parseAttachment(m.type, m.content);
+    setReplyTo(null);
+    setEditing(m);
+    setText(m.type === "text" ? m.content : (att?.caption ?? ""));
+    inputRef.current?.focus();
+  };
+
+  const copyMessage = async (m: ChatMessage) => {
+    const att = parseAttachment(m.type, m.content);
+    const value = m.type === "text" ? m.content : (att?.caption ?? att?.url ?? "");
+    if (!value) return;
+    const ok = await copyToClipboard(value);
+    notify(ok ? "Скопировано" : "Не удалось скопировать");
+  };
+
+  /* ─────────────────────────── контекстное меню (ПКМ / долгое нажатие) ─────────────────────────── */
+
+  const openContextMenu = useCallback(
+    (x: number, y: number, message: ChatMessage) => {
+      setMenuOpen(false);
+      setCtxMenu({ x, y, message });
+    },
+    [],
+  );
+
+  useEffect(() => {
+    if (!ctxMenu) return;
+    const close = () => setCtxMenu(null);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") close();
+    };
+    // Клик «вне» закрывает меню через прозрачный фон (см. MessageContextMenu):
+    // window-click-слушатель не годится — клик, открывший меню, долетел бы
+    // до window уже ПОСЛЕ добавления слушателя и мгновенно закрывал меню.
+    window.addEventListener("resize", close);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("resize", close);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [ctxMenu]);
+
+  // Тик для «протухания» индикатора «печатает…» между опросами
+  const [nowTick, setNowTick] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => setNowTick((v) => v + 1), 1_500);
+    return () => clearInterval(t);
+  }, []);
+
+  const typingMembers = useMemo(() => {
+    const now = Date.now();
+    void nowTick;
+    return members.filter(
+      (m) => m.user.id !== me.id && m.typingAt && now - new Date(m.typingAt).getTime() < 4_500,
+    );
+  }, [members, me.id, nowTick]);
+
+  const readUpTo = useMemo(() => {
+    if (kind === "direct") {
+      return peerState?.lastReadAt ? new Date(peerState.lastReadAt).getTime() : 0;
+    }
+    // В группах считаем прочитанным, если прочитали все остальные
+    const others = members.filter((m) => m.user.id !== me.id && m.lastReadAt);
+    if (others.length === 0) return 0;
+    return Math.min(...others.map((m) => new Date(m.lastReadAt as string).getTime()));
+  }, [kind, peerState, members, me.id]);
+
+  const headerSubtitle = () => {
+    if (typingMembers.length > 0) {
+      const names = typingMembers.map((m) => m.user.displayName.split(" ")[0]);
+      return {
+        text: names.length === 1 ? `${names[0]} печатает…` : `${names.slice(0, 2).join(", ")} печатают…`,
+        accent: true,
+      };
+    }
+    if (isSaved) return { text: "сохранённые сообщения", accent: false };
+    if (kind === "direct") {
+      return { text: lastSeenLabel(peerState?.lastSeenAt ?? null, !!peerState?.online), accent: !!peerState?.online };
+    }
+    const online = members.filter((m) => m.user.online).length;
+    return {
+      text: `${meta?.memberCount ?? members.length} участников · ${online} в сети`,
+      accent: false,
+    };
+  };
+  const subtitle = headerSubtitle();
+
+  const canSendSomething = !!text.trim() || draftFiles.length > 0;
 
   return (
-    <section className="relative flex h-full min-w-0 flex-1 flex-col">
-      <header
-        className="glass relative z-20 flex items-center gap-3 border-b px-3 py-2.5"
-        style={{ background: "var(--panel)", borderColor: "var(--border)" }}
-      >
+    <div className="relative flex h-full min-w-0 flex-1 flex-col">
+      {/* Обои */}
+      <div className="pointer-events-none absolute inset-0" style={wallpaperStyle(wallpaper)} aria-hidden />
+      {wallpaper?.startsWith("/api/files/") && (
+        <div className="pointer-events-none absolute inset-0 bg-[#0a0a14]/70" aria-hidden />
+      )}
+
+      {/* Шапка — z-30: выпадающее меню «⋮» должно быть НАД областью сообщений
+          (раньше оба блока были z-10, сообщения перекрывали меню — клики «не работали») */}
+      <div className="glass-strong relative z-30 flex items-center gap-3 border-b border-white/8 px-4 py-3">
         <button
           onClick={onBack}
-          className="rounded-xl p-2 transition hover:brightness-125 md:hidden"
-          style={{ color: "var(--muted)" }}
+          className="glass flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-white/70 md:hidden"
         >
-          <IconBack size={19} />
+          <ArrowLeft className="h-4 w-4" />
         </button>
-        <button onClick={() => setInfoOpen((v) => !v)} className="flex min-w-0 items-center gap-3">
+
+        <button
+          onClick={kind === "direct" ? onViewPeer : onOpenInfo}
+          className="flex min-w-0 items-center gap-3 text-left"
+        >
           <Avatar
             name={title}
-            emoji={emoji}
-            accent={accent}
-            fileId={avatarFileId}
+            src={avatar}
             size={42}
-            online={!isGroup && !!partner && isOnline(partner.lastSeenAt)}
+            online={kind === "direct" ? peerState?.online : undefined}
           />
-          <div className="min-w-0 text-left">
-            <div className="truncate text-[14.5px] font-semibold">{title}</div>
-            <div className="truncate text-[12px]" style={{ color: typing.length ? "var(--accent)" : "var(--muted)" }}>
-              {statusText}
-            </div>
+          <div className="min-w-0">
+            <p className="flex items-center gap-1.5 truncate text-[15px] font-semibold">
+              <span className="truncate">{title}</span>
+              {isSaved && <Bookmark className="h-3.5 w-3.5 shrink-0 text-amber-300" />}
+              {isSpace && kind === "channel" && <Megaphone className="h-3.5 w-3.5 shrink-0 text-cyan-300" />}
+              {isSpace && kind === "group" && <Hash className="h-3.5 w-3.5 shrink-0 text-violet-300" />}
+              {isSpace && meta?.isPrivate && <Lock className="h-3 w-3 shrink-0 text-white/25" />}
+            </p>
+            <p className={`truncate text-xs ${subtitle.accent ? "text-violet-300" : "text-white/35"}`}>
+              {subtitle.text}
+            </p>
           </div>
         </button>
 
-        <div className="ml-auto flex items-center gap-1">
+        <div className="ml-auto flex items-center gap-1.5">
+          {activeCall && (
+            <button
+              onClick={() => onJoinCall(activeCall.id, activeCall.media)}
+              className="flex items-center gap-2 rounded-xl bg-emerald-500/90 px-3 py-2 text-[13px] font-semibold text-white transition-transform hover:scale-[1.03] active:scale-95"
+              title="Присоединиться к звонку"
+            >
+              <Radio className="h-4 w-4 animate-pulse-dot" />
+              <span className="hidden sm:inline">В звонке · {activeCall.participantCount}</span>
+              <span className="sm:hidden">{activeCall.participantCount}</span>
+            </button>
+          )}
           <button
-            onClick={() => {
-              setShowSearch((v) => !v);
-              setQuery("");
-            }}
-            className="rounded-xl p-2.5 transition hover:brightness-125"
-            style={{ color: showSearch ? "var(--accent)" : "var(--muted)" }}
+            onClick={() => setSearchOpen((v) => !v)}
             title="Поиск по чату"
+            className={`glass flex h-10 w-10 items-center justify-center rounded-xl transition-colors hover:text-white ${
+              searchOpen ? "text-violet-300" : "text-white/75"
+            }`}
           >
-            <IconSearch size={18} />
+            <Search className="h-4.5 w-4.5" />
           </button>
-          <button
-            onClick={() => {
-              if (partner) onStartCall(partner);
-              else onNotify("Звонки доступны только в личных чатах");
-            }}
-            className="rounded-xl p-2.5 transition hover:brightness-125"
-            style={{ color: "var(--muted)" }}
-            title="Позвонить"
-          >
-            <IconPhone size={18} />
-          </button>
+          {!isSaved && (
+            <>
+              <button
+                onClick={() => onCall("audio")}
+                disabled={callBusy}
+                title="Аудиозвонок"
+                className="glass flex h-10 w-10 items-center justify-center rounded-xl text-white/75 transition-colors hover:text-white disabled:opacity-40"
+              >
+                <Phone className="h-4.5 w-4.5" />
+              </button>
+              <button
+                onClick={() => onCall("video")}
+                disabled={callBusy}
+                title="Видеозвонок"
+                className="glass flex h-10 w-10 items-center justify-center rounded-xl text-white/75 transition-colors hover:text-white sm:flex disabled:opacity-40"
+              >
+                <Video className="h-4.5 w-4.5" />
+              </button>
+            </>
+          )}
           <div className="relative">
             <button
               onClick={() => setMenuOpen((v) => !v)}
-              className="rounded-xl p-2.5 transition hover:brightness-125"
-              style={{ color: menuOpen ? "var(--accent)" : "var(--muted)" }}
               title="Меню чата"
+              className="glass flex h-10 w-10 items-center justify-center rounded-xl text-white/75 transition-colors hover:text-white"
             >
-              <IconMore size={18} />
+              <MoreVertical className="h-4.5 w-4.5" />
             </button>
-            {menuOpen ? (
-              <>
-                <div className="fixed inset-0 z-30" onClick={() => setMenuOpen(false)} />
-                <div
-                  className="animate-pulse-in absolute top-full right-0 z-40 mt-1 w-60 overflow-hidden rounded-2xl border p-1.5"
-                  style={{ background: "var(--panel-solid)", borderColor: "var(--border)", boxShadow: "var(--shadow)" }}
-                >
-                  <MenuItem icon={<IconWallpaper size={17} />} onClick={() => { setMenuOpen(false); onOpenWallpaper(); }}>
-                    Обои чата
-                  </MenuItem>
-                  <MenuItem
-                    icon={muted ? <IconBellOff size={17} /> : <IconBell size={17} />}
-                    onClick={() => void patchChat({ muted: !muted })}
+            <AnimatePresence>
+              {menuOpen && (
+                <>
+                  <div key="menu-backdrop" className="fixed inset-0 z-20" onClick={() => setMenuOpen(false)} />
+                  <motion.div
+                    key="menu"
+                    initial={{ opacity: 0, y: -6, scale: 0.96 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, y: -4, scale: 0.97 }}
+                    className="glass-strong absolute right-0 z-30 mt-2 w-56 overflow-hidden rounded-2xl p-1.5 shadow-2xl"
                   >
-                    {muted ? "Включить звук" : "Без звука"}
-                  </MenuItem>
-                  <MenuItem icon={<IconPin size={17} />} onClick={() => void patchChat({ pinned: !pinned })}>
-                    {pinned ? "Открепить" : "Закрепить"}
-                  </MenuItem>
-                  <MenuItem icon={<IconArchive size={17} />} onClick={() => void patchChat({ archived: !archived })}>
-                    {archived ? "Вернуть из архива" : "В архив"}
-                  </MenuItem>
-                  {partner ? (
+                    {isSpace && (
+                      <MenuItem
+                        icon={<Info className="h-4 w-4" />}
+                        label={kind === "channel" ? "О канале" : "О группе"}
+                        onClick={() => {
+                          setMenuOpen(false);
+                          onOpenInfo();
+                        }}
+                      />
+                    )}
                     <MenuItem
-                      icon={<IconBan size={17} />}
-                      danger={!details?.blockState.blocked}
-                      onClick={() => void toggleBlock()}
-                    >
-                      {details?.blockState.blocked ? "Разблокировать" : "Заблокировать"}
-                    </MenuItem>
-                  ) : null}
-                  <MenuItem icon={<IconTrash size={17} />} danger onClick={() => { setMenuOpen(false); setConfirmDelete(true); }}>
-                    Удалить чат
-                  </MenuItem>
-                </div>
-              </>
-            ) : null}
+                      icon={<Palette className="h-4 w-4" />}
+                      label="Обои чата"
+                      onClick={() => {
+                        setMenuOpen(false);
+                        setShowWallpaper(true);
+                      }}
+                    />
+                    {kind === "direct" && (
+                      <MenuItem
+                        icon={<UserRound className="h-4 w-4" />}
+                        label="Профиль"
+                        onClick={() => {
+                          setMenuOpen(false);
+                          onViewPeer();
+                        }}
+                      />
+                    )}
+                    {isSpace && (
+                      <MenuItem
+                        icon={<Users className="h-4 w-4" />}
+                        label={`Участники · ${meta?.memberCount ?? members.length}`}
+                        onClick={() => {
+                          setMenuOpen(false);
+                          onOpenInfo();
+                        }}
+                      />
+                    )}
+                  </motion.div>
+                </>
+              )}
+            </AnimatePresence>
           </div>
         </div>
-      </header>
+      </div>
 
-      {showSearch ? (
-        <div className="relative z-10 px-3 py-2" style={{ background: "var(--panel)" }}>
-          <div
-            className="mx-auto flex max-w-3xl items-center gap-2 rounded-2xl px-3 py-2"
-            style={{ background: "var(--panel-2)", border: "1px solid var(--border)" }}
+      {/* Плашка закреплённого сообщения */}
+      <AnimatePresence>
+        {pinnedCurrent && (
+          <motion.div
+            key="pinned-bar"
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            className="relative z-20 overflow-hidden border-b border-white/8 bg-violet-500/8"
           >
-            <IconSearch size={16} />
-            <input
-              autoFocus
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Поиск в переписке"
-              className="w-full bg-transparent text-[13.5px] outline-none"
-            />
-            <button onClick={() => setShowSearch(false)} style={{ color: "var(--muted)" }}>
-              <IconClose size={15} />
-            </button>
-          </div>
-        </div>
-      ) : null}
+            <div className="mx-auto flex max-w-2xl items-center gap-2 px-4 py-1.5">
+              <Pin className="h-3.5 w-3.5 shrink-0 text-violet-300" />
+              <button
+                onClick={() => jumpTo(pinnedCurrent.id)}
+                title="Перейти к сообщению"
+                className="min-w-0 flex-1 truncate text-left text-xs text-white/70"
+              >
+                <span className="font-semibold text-violet-300">
+                  {pinnedCurrent.senderId === me.id ? "Вы" : (pinnedCurrent.sender?.displayName ?? "")}:{" "}
+                </span>
+                {messagePreview(pinnedCurrent.type, pinnedCurrent.content)}
+              </button>
+              {pinned.length > 1 && (
+                <span className="flex shrink-0 items-center gap-0.5 text-[11px] text-white/40 tabular-nums">
+                  <button
+                    onClick={() => setPinnedIdx((i) => (i - 1 + pinned.length) % pinned.length)}
+                    className="rounded-full p-0.5 hover:text-white"
+                    title="Предыдущее закреплённое"
+                  >
+                    <ChevronLeft className="h-3.5 w-3.5" />
+                  </button>
+                  {Math.min(pinnedIdx, pinned.length - 1) + 1}/{pinned.length}
+                  <button
+                    onClick={() => setPinnedIdx((i) => (i + 1) % pinned.length)}
+                    className="rounded-full p-0.5 hover:text-white"
+                    title="Следующее закреплённое"
+                  >
+                    <ChevronRight className="h-3.5 w-3.5" />
+                  </button>
+                </span>
+              )}
+              {canPinMessage(pinnedCurrent) && (
+                <button
+                  onClick={() => void togglePin(pinnedCurrent)}
+                  title="Открепить"
+                  className="shrink-0 rounded-full p-1 text-white/40 transition-colors hover:text-rose-300"
+                >
+                  <PinOff className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
+      {/* Панель поиска по чату */}
+      <AnimatePresence>
+        {searchOpen && (
+          <motion.div
+            key="search-panel"
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            className="relative z-20 overflow-hidden border-b border-white/8 bg-[#0d0d18]/90"
+          >
+            <div className="mx-auto max-w-2xl px-4 py-2.5">
+              <div className="flex items-center gap-2.5">
+                <Search className="h-4 w-4 shrink-0 text-white/35" />
+                <input
+                  autoFocus
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Escape") setSearchOpen(false);
+                  }}
+                  placeholder="Поиск по чату…"
+                  maxLength={100}
+                  className="ring-focus w-full rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-sm transition-all placeholder:text-white/30"
+                />
+                {searching && <Loader2 className="h-4 w-4 shrink-0 animate-spin text-white/40" />}
+                <button
+                  onClick={() => setSearchOpen(false)}
+                  className="shrink-0 rounded-full p-1.5 text-white/50 transition-colors hover:text-white"
+                  title="Закрыть поиск"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+              {searchHits && searchHits.length > 0 && (
+                <div className="nice-scroll mt-2 max-h-64 space-y-0.5 overflow-y-auto">
+                  {searchHits.map((h) => (
+                    <button
+                      key={h.id}
+                      onClick={() => {
+                        jumpTo(h.id);
+                        setSearchOpen(false);
+                      }}
+                      className="flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left transition-colors hover:bg-white/8"
+                    >
+                      <Avatar name={h.senderName} src={h.sender?.avatarUrl ?? null} size={28} />
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-[13px] text-white/85">{h.preview}</span>
+                        <span className="block text-[11px] text-white/35">
+                          {h.senderName} · {dayLabel(h.createdAt)} {timeHHmm(h.createdAt)}
+                        </span>
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
+              {searchHits && searchHits.length === 0 && !searching && searchQuery.trim().length > 0 && (
+                <p className="px-2 pt-2 text-xs text-white/40">Ничего не найдено</p>
+              )}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Идёт звонок — приглашение присоединиться */}
+      <AnimatePresence>
+        {activeCall && (
+          <motion.div
+            key="call-banner"
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            className="relative z-10 overflow-hidden"
+          >
+            <div className="mx-4 mt-3 flex max-w-2xl items-center gap-3 rounded-2xl border border-emerald-400/25 bg-emerald-500/12 px-4 py-2.5">
+              <Radio className="h-4 w-4 shrink-0 animate-pulse-dot text-emerald-300" />
+              <p className="min-w-0 flex-1 truncate text-[13px] text-emerald-100/90">
+                {activeCall.participantCount > 0
+                  ? `В комнате ${activeCall.participantCount} чел. — присоединяйтесь`
+                  : "Комната звонка открыта"}
+              </p>
+              <button
+                onClick={() => onJoinCall(activeCall.id, activeCall.media)}
+                className="shrink-0 rounded-xl bg-emerald-500 px-3 py-1.5 text-xs font-semibold text-white"
+              >
+                Войти
+              </button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Сообщения (и зона перетаскивания файлов) */}
       <div
         ref={scrollRef}
-        onScroll={(e) => {
-          const el = e.currentTarget;
-          pinnedToBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 140;
+        className="nice-scroll relative z-10 min-h-0 flex-1 overflow-y-auto px-4 py-5"
+        onDragOver={(e) => {
+          if (!canPost) return;
+          e.preventDefault();
+          setDragOver(true);
         }}
-        className="pulse-scroll relative flex-1 px-3 py-4 sm:px-5"
-        style={{ background: wallpaper.css }}
+        onDragLeave={(e) => {
+          if (e.currentTarget.contains(e.relatedTarget as Node)) return;
+          setDragOver(false);
+        }}
+        onDrop={(e) => {
+          e.preventDefault();
+          setDragOver(false);
+          const files = Array.from(e.dataTransfer.files ?? []);
+          if (files.length > 0) addDraftFiles(files);
+        }}
       >
-        <div
-          className="pointer-events-none absolute inset-0"
-          style={{
-            background: wallpaper.parsed.dim
-              ? `rgba(0,0,0,${wallpaper.parsed.dim / 100})`
-              : "transparent",
-            backdropFilter: wallpaper.parsed.blur ? `blur(${wallpaper.parsed.blur}px)` : undefined,
-          }}
-        />
-        <div className="relative mx-auto flex max-w-3xl flex-col gap-1.5">
-          {visibleMessages.length === 0 ? (
-            <div className="mt-16 text-center">
-              <div className="mb-3 flex justify-center opacity-80">
-                <PulseLogo size={54} />
-              </div>
-              <div className="text-[14px] font-semibold">{query ? "Ничего не найдено" : "Пока пусто"}</div>
-              <div className="text-[12.5px]" style={{ color: "var(--muted)" }}>
-                {query ? "Попробуйте другой запрос" : "Отправьте первое сообщение ⚡"}
-              </div>
-            </div>
-          ) : null}
-
-          {visibleMessages.map((message) => {
-            const day = formatDay(message.createdAt);
-            const key = dayKey(message.createdAt);
-            const showDay = key !== lastDay;
-            lastDay = key;
-            const mine = message.senderId === me.id;
-            const grouped = !showDay && lastSender === message.senderId;
-            lastSender = message.senderId;
-            const read = mine && partnerLastRead >= message.id;
-
-            return (
-              <div key={message.id}>
-                {showDay ? (
-                  <div className="my-3 flex justify-center">
-                    <span
-                      className="rounded-full px-3 py-1 text-[11.5px] font-medium"
-                      style={{ background: "var(--panel-3)", color: "var(--text)" }}
-                    >
-                      {day}
-                    </span>
-                  </div>
-                ) : null}
-                <MessageBubble
-                  message={message}
-                  mine={mine}
-                  grouped={grouped}
-                  isGroup={isGroup}
-                  read={read}
-                  settings={settings}
-                  highlight={highlightId === message.id}
-                  onReply={() => {
-                    setEditing(null);
-                    setReplyTo(message);
-                  }}
-                  onReact={(emojiValue) => void messageAction("react", message, emojiValue)}
-                  onEdit={() => void messageAction("edit", message)}
-                  onDeleteMe={() => void messageAction("delete-me", message)}
-                  onDeleteAll={() => void messageAction("delete-all", message)}
-                  onJump={() => jumpTo(message.replyToId ?? message.id)}
-                />
-              </div>
-            );
-          })}
-
-          {typing.length > 0 && settings.typingStatus ? (
-            <div className="mt-1 flex items-center gap-2 pl-1">
-              <div
-                className="flex items-center gap-1 rounded-2xl px-3 py-2.5"
-                style={{ background: "var(--bubble-in)" }}
-              >
-                {[0, 1, 2].map((i) => (
-                  <span
-                    key={i}
-                    className="typing-dot block h-2 w-2 rounded-full"
-                    style={{ background: "var(--muted)", animationDelay: `${i * 0.15}s` }}
-                  />
-                ))}
-              </div>
-            </div>
-          ) : null}
-          <div ref={bottomRef} />
-        </div>
-      </div>
-
-      {!pinnedToBottom ? null : null}
-
-      {blocked ? (
-        <div
-          className="px-4 pb-1 text-center text-[12.5px]"
-          style={{ color: "var(--muted)" }}
-        >
-          {details?.blockState.blocked
-            ? "Вы заблокировали этого пользователя — разблокируйте в меню чата"
-            : "Этот пользователь ограничил общение с вами"}
-        </div>
-      ) : null}
-
-      <Composer
-        chatId={chat.id}
-        settings={settings}
-        disabled={!!blocked}
-        disabledHint={
-          details?.blockState.blocked
-            ? "Вы заблокировали пользователя. Разблокируйте, чтобы писать."
-            : "Пользователь ограничил общение с вами."
-        }
-        replyTo={replyTo}
-        onCancelReply={() => setReplyTo(null)}
-        editing={editing}
-        onCancelEdit={() => setEditing(null)}
-        onSent={() => {
-          void loadMessages("poll");
-          pinnedToBottom.current = true;
-          onChanged();
-        }}
-        onTyping={handleTyping}
-        onNotify={onNotify}
-      />
-
-      {infoOpen ? (
-        <div
-          className="animate-pulse-in absolute top-0 right-0 z-30 h-full w-full max-w-sm border-l p-5"
-          style={{ background: "var(--panel-solid)", borderColor: "var(--border)", boxShadow: "var(--shadow)" }}
-        >
-          <div className="mb-4 flex items-center justify-between">
-            <h3 className="text-[14px] font-semibold">Профиль</h3>
-            <button onClick={() => setInfoOpen(false)} style={{ color: "var(--muted)" }}>
-              <IconClose size={18} />
-            </button>
+        {dragOver && (
+          <div className="pointer-events-none absolute inset-2 z-20 flex items-center justify-center rounded-3xl border-2 border-dashed border-violet-400/60 bg-violet-500/10 backdrop-blur-sm">
+            <p className="rounded-2xl bg-black/60 px-5 py-3 text-sm font-medium text-white/90">
+              Отпустите — прикрепим к сообщению
+            </p>
           </div>
-          <div className="flex flex-col items-center text-center">
-            <Avatar name={title} emoji={emoji} accent={accent} fileId={avatarFileId} size={84} ring />
-            <div className="mt-3 text-[17px] font-bold">{title}</div>
-            <div className="text-[12.5px]" style={{ color: "var(--muted)" }}>
-              {isGroup ? "Групповой чат" : `@${partner?.handle ?? ""}`}
-            </div>
-            {!isGroup && partner ? (
-              <div className="mt-2 text-[12.5px]" style={{ color: "var(--muted)" }}>
-                {partner.about}
-              </div>
-            ) : null}
+        )}
+        {!loaded ? (
+          <div className="flex h-full items-center justify-center">
+            <Loader2 className="h-6 w-6 animate-spin text-white/30" />
           </div>
-
-          <div className="mt-5 space-y-2">
-            <InfoAction icon={<IconWallpaper size={17} />} onClick={onOpenWallpaper}>
-              Обои чата
-            </InfoAction>
-            <InfoAction
-              icon={muted ? <IconBellOff size={17} /> : <IconBell size={17} />}
-              onClick={() => void patchChat({ muted: !muted })}
-            >
-              {muted ? "Включить уведомления" : "Отключить уведомления"}
-            </InfoAction>
-            {partner ? (
-              <InfoAction
-                icon={<IconBan size={17} />}
-                danger={!details?.blockState.blocked}
-                onClick={() => void toggleBlock()}
-              >
-                {details?.blockState.blocked ? "Разблокировать пользователя" : "Заблокировать пользователя"}
-              </InfoAction>
-            ) : null}
-            <InfoAction icon={<IconTrash size={17} />} danger onClick={() => setConfirmDelete(true)}>
-              Удалить чат
-            </InfoAction>
+        ) : messages.length === 0 ? (
+          <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
+            <Avatar name={title} src={avatar} size={72} />
+            <p className="font-display text-lg font-bold">{title}</p>
+            <p className="max-w-xs text-sm leading-relaxed text-white/40">
+              {isSpace
+                ? kind === "channel"
+                  ? "Канал создан. Опубликуйте первый пост — и позовите людей ссылкой"
+                  : "Группа создана. Напишите первое сообщение или начните групповой звонок 👋"
+                : "Здесь пока пусто. Напишите первое сообщение — или запишите голосовое 👋"}
+            </p>
           </div>
+        ) : (
+          <div className="mx-auto flex max-w-2xl flex-col gap-0.5">
+            {messages.map((m, i) => {
+              const prev = messages[i - 1];
+              const showDay = !prev || !sameDay(prev.createdAt, m.createdAt);
+              const grouped =
+                !!prev &&
+                !showDay &&
+                prev.senderId === m.senderId &&
+                prev.type !== "call" &&
+                m.type !== "call" &&
+                new Date(m.createdAt).getTime() - new Date(prev.createdAt).getTime() < 5 * 60_000;
+              const own = m.senderId === me.id;
+              const canDelete = own || (isSpace && (meta?.myRole === "owner" || meta?.myRole === "admin"));
 
-          {isGroup && details ? (
-            <div className="mt-6">
-              <div className="mb-2 flex items-center gap-2 text-[12.5px] font-semibold" style={{ color: "var(--muted)" }}>
-                <IconUsers size={16} /> Участники ({details.members.length})
-              </div>
-              <div className="pulse-scroll max-h-52">
-                {details.members.map((m) => (
-                  <div key={m.userId} className="mb-1.5 flex items-center gap-2.5 rounded-2xl px-2 py-1.5" style={{ background: "var(--panel-2)" }}>
-                    <Avatar name={m.name} emoji={m.emoji} accent={m.accent} fileId={m.avatarFileId} size={34} />
-                    <div className="min-w-0 flex-1">
-                      <div className="truncate text-[13px] font-medium">{m.name}{m.userId === me.id ? " (вы)" : ""}</div>
-                      <div className="truncate text-[11.5px]" style={{ color: "var(--muted)" }}>
-                        {m.role === "owner" ? "создатель" : m.role === "admin" ? "админ" : "участник"}
-                      </div>
+              return (
+                <div key={m.id} data-mid={m.id}>
+                  {unreadBefore === m.id && (
+                    <div className="flex items-center gap-3 py-2">
+                      <span className="h-px flex-1 bg-rose-400/30" />
+                      <span className="rounded-full bg-rose-500/15 px-3 py-1 text-[11px] font-semibold text-rose-300">
+                        Непрочитанные
+                      </span>
+                      <span className="h-px flex-1 bg-rose-400/30" />
                     </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          ) : null}
-
-          {details ? (
-            <div className="mt-6 rounded-2xl p-3 text-[12px]" style={{ background: "var(--panel-2)", color: "var(--muted)" }}>
-              <div className="mb-1 flex items-center gap-2 font-semibold" style={{ color: "var(--text)" }}>
-                <IconStorage size={15} /> Медиа чата
-              </div>
-              {messages.filter((m) => m.attachments.length > 0).length} сообщений с вложениями
-            </div>
-          ) : null}
-        </div>
-      ) : null}
-
-      <Modal open={confirmDelete} onClose={() => setConfirmDelete(false)} title="Удалить чат" width="max-w-sm">
-        <p className="mb-4 text-[13.5px]" style={{ color: "var(--muted)" }}>
-          {isGroup
-            ? "Удаление для всех возможно только для создателя группы."
-            : "«Удалить для всех» удалит переписку у обоих собеседников."}
-        </p>
-        <div className="space-y-2">
-          <button
-            onClick={() => void deleteChat("me")}
-            className="w-full rounded-2xl py-3 text-[13.5px] font-semibold"
-            style={{ background: "var(--panel-2)" }}
-          >
-            Удалить у меня
-          </button>
-          <button
-            onClick={() => void deleteChat("all")}
-            className="w-full rounded-2xl py-3 text-[13.5px] font-semibold text-white"
-            style={{ background: "#ef4444" }}
-          >
-            Удалить для всех
-          </button>
-        </div>
-      </Modal>
-    </section>
-  );
-}
-
-function MenuItem({
-  icon,
-  children,
-  onClick,
-  danger,
-}: {
-  icon: React.ReactNode;
-  children: React.ReactNode;
-  onClick: () => void;
-  danger?: boolean;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-[13.5px] font-medium transition hover:brightness-125"
-      style={{ color: danger ? "#f87171" : "var(--text)" }}
-    >
-      {icon}
-      {children}
-    </button>
-  );
-}
-
-function InfoAction({
-  icon,
-  children,
-  onClick,
-  danger,
-}: {
-  icon: React.ReactNode;
-  children: React.ReactNode;
-  onClick: () => void;
-  danger?: boolean;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      className="flex w-full items-center gap-3 rounded-2xl px-3 py-2.5 text-left text-[13px] font-medium transition hover:brightness-125"
-      style={{ background: "var(--panel-2)", color: danger ? "#f87171" : "var(--text)" }}
-    >
-      {icon}
-      {children}
-    </button>
-  );
-}
-
-function MessageBubble({
-  message,
-  mine,
-  grouped,
-  isGroup,
-  read,
-  settings,
-  highlight,
-  onReply,
-  onReact,
-  onEdit,
-  onDeleteMe,
-  onDeleteAll,
-  onJump,
-}: {
-  message: MessagePayload;
-  mine: boolean;
-  grouped: boolean;
-  isGroup: boolean;
-  read: boolean;
-  settings: SettingsPayload;
-  highlight: boolean;
-  onReply: () => void;
-  onReact: (emoji: string) => void;
-  onEdit: () => void;
-  onDeleteMe: () => void;
-  onDeleteAll: () => void;
-  onJump: () => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const [picker, setPicker] = useState(false);
-  const hasAttachments = message.attachments.length > 0;
-  const bigEmoji = settings.largeEmoji && isEmojiOnly(message.body);
-  const isStickerLike = hasAttachments && !message.body;
-
-  if (message.kind === "system") {
-    return (
-      <div className="my-2 flex justify-center">
-        <span className="rounded-full px-3 py-1 text-[11.5px]" style={{ background: "var(--panel-3)", color: "var(--muted)" }}>
-          {message.body}
-        </span>
+                  )}
+                  {showDay && (
+                    <div className="flex justify-center py-4">
+                      <span className="glass rounded-full px-3.5 py-1.5 text-[11px] font-medium text-white/50">
+                        {dayLabel(m.createdAt)}
+                      </span>
+                    </div>
+                  )}
+                  {m.type === "call" ? (
+                    <CallLogBubble message={m} meId={me.id} onJoin={activeCall ? () => onJoinCall(activeCall.id, activeCall.media) : null} />
+                  ) : (
+                    <MessageBubble
+                      message={m}
+                      meId={me.id}
+                      own={own}
+                      space={isSpace}
+                      grouped={grouped}
+                      read={own && new Date(m.createdAt).getTime() <= readUpTo}
+                      canDelete={canDelete}
+                      canPin={canPinMessage(m)}
+                      highlighted={highlight === m.id}
+                      onOpenImage={setLightbox}
+                      onDelete={() => void removeMessage(m.id)}
+                      onReply={() => startReply(m)}
+                      onEdit={() => startEdit(m)}
+                      onPin={() => void togglePin(m)}
+                      onReact={(emoji) => void toggleReaction(m.id, emoji)}
+                      onMenu={openContextMenu}
+                      onJump={jumpTo}
+                      onViewUser={onViewUser}
+                    />
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
-    );
-  }
 
-  const deleted = !!message.deletedForAllAt;
+      {/* Ответ / редактирование / поле ввода */}
+      <div className="glass-strong relative z-10 border-t border-white/8 px-4 py-3">
+        <div className="mx-auto max-w-2xl">
+          {/* Черновик файлов: превью + подпись + кнопка «Отправить» */}
+          <AnimatePresence>
+            {draftFiles.length > 0 && (
+              <motion.div
+                key="draft"
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: "auto" }}
+                exit={{ opacity: 0, height: 0 }}
+                className="overflow-hidden"
+              >
+                <div className="mb-2 rounded-2xl border border-white/8 bg-white/[0.04] p-2.5">
+                  <p className="mb-2 px-1 text-[11px] font-semibold tracking-wide text-white/40 uppercase">
+                    К отправке · {draftFiles.length} шт.
+                    {uploading ? " · загрузка…" : ""}
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    {draftFiles.map((d) => (
+                      <div
+                        key={d.id}
+                        className="group/draft relative flex items-center gap-2.5 rounded-xl border border-white/10 bg-black/25 p-2 pr-3"
+                      >
+                        {d.preview ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img src={d.preview} alt={d.file.name} className="h-12 w-12 rounded-lg object-cover" />
+                        ) : (
+                          <span className="flex h-12 w-12 items-center justify-center rounded-lg bg-white/8">
+                            <DraftFileIcon mime={d.file.type} />
+                          </span>
+                        )}
+                        <span className="max-w-36">
+                          <span className="block truncate text-xs font-medium text-white/85">{d.file.name}</span>
+                          <span className="block text-[11px] text-white/35">{formatBytes(d.file.size)}</span>
+                        </span>
+                        <button
+                          onClick={() => removeDraftFile(d.id)}
+                          className="rounded-full bg-black/60 p-1 text-white/70 transition-colors hover:text-rose-300"
+                          title="Убрать"
+                        >
+                          <X className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
 
-  return (
-    <div
-      id={`msg-${message.id}`}
-      className={`group flex items-end gap-2 ${mine ? "justify-end" : "justify-start"} ${grouped ? "mt-0.5" : "mt-2"}`}
-    >
-      {!mine ? (
-        <div className="w-8 shrink-0">
-          {!grouped && isGroup ? (
-            <Avatar name={message.sender.name} emoji={message.sender.emoji} accent={message.sender.accent} fileId={message.sender.avatarFileId} size={32} />
-          ) : null}
-        </div>
-      ) : null}
+          <AnimatePresence>
+            {(replyTo || editing) && (
+              <motion.div
+                key={editing ? "editing" : "reply"}
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: "auto" }}
+                exit={{ opacity: 0, height: 0 }}
+                className="overflow-hidden"
+              >
+                <div className="mb-2 flex items-center gap-2.5 rounded-2xl border border-white/8 bg-white/[0.04] px-3 py-2">
+                  {editing ? (
+                    <Pencil className="h-4 w-4 shrink-0 text-amber-300" />
+                  ) : (
+                    <Reply className="h-4 w-4 shrink-0 text-violet-300" />
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <p className={`truncate text-[11px] font-semibold ${editing ? "text-amber-300" : "text-violet-300"}`}>
+                      {editing
+                        ? "Редактирование сообщения"
+                        : replyTo!.senderId === me.id
+                          ? "Вы"
+                          : (replyTo!.sender?.displayName ?? "Сообщение")}
+                    </p>
+                    <p className="truncate text-xs text-white/45">
+                      {editing
+                        ? messagePreview(editing.type, editing.content)
+                        : messagePreview(replyTo!.type, replyTo!.content)}
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => {
+                      if (editing) {
+                        setEditing(null);
+                        setText("");
+                      } else setReplyTo(null);
+                    }}
+                    className="shrink-0 rounded-full p-1 text-white/40 hover:text-white"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
 
-      <div className={`relative max-w-[78%] min-w-0 ${mine ? "items-end" : "items-start"}`}>
-        <div
-          className={`relative rounded-[var(--radius-bubble)] px-3.5 py-2 ${
-            settings.bubbleStyle === "solid" ? "" : settings.bubbleStyle === "outline" ? "border" : ""
-          }`}
-          style={{
-            background: deleted
-              ? "var(--panel-2)"
-              : mine
-                ? "var(--bubble-out)"
-                : settings.bubbleStyle === "outline"
-                  ? "transparent"
-                  : "var(--bubble-in)",
-            borderColor: "var(--border)",
-            color: deleted ? "var(--muted)" : mine ? "var(--bubble-out-text)" : "var(--bubble-in-text)",
-            boxShadow: highlight ? `0 0 0 2px var(--accent)` : "0 6px 18px rgba(0,0,0,.18)",
-            borderTopLeftRadius: !mine && !grouped ? 6 : undefined,
-            borderTopRightRadius: mine && !grouped ? 6 : undefined,
-            maxWidth: 460,
-          }}
-        >
-          {!grouped && isGroup && !mine ? (
-            <div className="mb-1 text-[12px] font-semibold" style={{ color: "var(--accent)" }}>
-              {message.sender.name}
+          {!canPost ? (
+            <div className="flex items-center justify-center gap-2 rounded-2xl border border-white/8 bg-white/[0.03] py-3.5 text-sm text-white/40">
+              <Lock className="h-4 w-4" />
+              В этом канале писать могут только администраторы
             </div>
-          ) : null}
-
-          {message.replyTo ? (
-            <button
-              onClick={onJump}
-              className="mb-1.5 flex w-full items-center gap-2 rounded-xl px-2.5 py-1.5 text-left"
-              style={{
-                background: mine ? "rgba(0,0,0,.16)" : "rgba(127,127,127,.18)",
-                borderLeft: `3px solid ${mine ? "#fff" : "var(--accent)"}`,
-              }}
-            >
-              <IconReply size={13} />
-              <span className="min-w-0">
-                <span className="block text-[11.5px] font-semibold" style={{ opacity: 0.9 }}>
-                  {message.replyTo.senderName}
-                </span>
-                <span className="block truncate text-[12px]" style={{ opacity: 0.8 }}>
-                  {message.replyTo.deleted
-                    ? "Сообщение удалено"
-                    : message.replyTo.body ||
-                      (message.replyTo.attachmentKind === "image"
-                        ? "Фото"
-                        : message.replyTo.attachmentKind === "video"
-                          ? "Видео"
-                          : message.replyTo.attachmentKind === "audio"
-                            ? "Голосовое"
-                            : message.replyTo.attachmentKind
-                              ? "Файл"
-                              : "")}
-                </span>
+          ) : voiceRecActive ? (
+            /* Запись голосового: таймер + отмена + отправка */
+            <div className="flex items-center gap-3 rounded-2xl border border-rose-400/25 bg-rose-500/10 px-4 py-3">
+              <span className="relative flex h-3 w-3 shrink-0">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-rose-400 opacity-70" />
+                <span className="relative inline-flex h-3 w-3 rounded-full bg-rose-500" />
               </span>
-            </button>
-          ) : null}
-
-          {deleted ? (
-            <div className="flex items-center gap-2 py-0.5 text-[13px] italic" style={{ color: "var(--muted)" }}>
-              <IconTrash size={13} /> Сообщение удалено
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-semibold text-rose-200 tabular-nums">{formatDuration(recSecs)}</p>
+                <p className="text-[11px] text-white/40">Запись голосового сообщения…</p>
+              </div>
+              <button
+                onClick={() => stopVoiceRecording(false)}
+                title="Отменить запись"
+                className="glass flex h-11 w-11 items-center justify-center rounded-2xl text-white/70 transition-colors hover:text-rose-300"
+              >
+                <Ban className="h-4.5 w-4.5" />
+              </button>
+              <button
+                onClick={() => stopVoiceRecording(true)}
+                disabled={uploading}
+                title="Закончить и отправить"
+                className="btn-gradient flex h-11 items-center gap-2 rounded-2xl px-4 text-sm font-semibold text-white"
+              >
+                {uploading ? <Loader2 className="h-4.5 w-4.5 animate-spin" /> : <Send className="h-4.5 w-4.5" />}
+                Отправить
+              </button>
             </div>
           ) : (
-            <>
-              {hasAttachments ? <AttachmentView attachments={message.attachments} /> : null}
-              {message.body ? (
-                <div
-                  className={`whitespace-pre-wrap break-words ${hasAttachments ? "mt-1.5" : ""} ${isStickerLike ? "" : ""}`}
-                  style={{ fontSize: bigEmoji ? "calc(var(--msg-size) * 2.4)" : "var(--msg-size)", lineHeight: bigEmoji ? 1.2 : 1.45 }}
-                >
-                  {message.body}
-                </div>
-              ) : null}
-            </>
+            <div className="flex items-end gap-2.5">
+              <button
+                onClick={() => fileRef.current?.click()}
+                disabled={uploading || sending}
+                title="Прикрепить файл (до 500 МБ)"
+                className="glass flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl text-white/70 transition-colors hover:text-white disabled:opacity-50"
+              >
+                {uploading ? <Loader2 className="h-4.5 w-4.5 animate-spin" /> : <Paperclip className="h-4.5 w-4.5" />}
+              </button>
+              <button
+                onClick={() => void startVoiceRecording()}
+                disabled={uploading || sending || noteRecorder}
+                title="Записать голосовое сообщение"
+                className="glass flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl text-white/70 transition-colors hover:text-white disabled:opacity-50"
+              >
+                <Mic className="h-4.5 w-4.5" />
+              </button>
+              <button
+                onClick={() => setNoteRecorder(true)}
+                disabled={uploading || sending || voiceRecActive}
+                title="Записать видеосообщение (кружок)"
+                className="glass hidden h-11 w-11 shrink-0 items-center justify-center rounded-2xl text-white/70 transition-colors hover:text-white sm:flex disabled:opacity-50"
+              >
+                <VideoNoteIcon />
+              </button>
+              <input
+                ref={fileRef}
+                type="file"
+                multiple
+                className="hidden"
+                onChange={(e) => {
+                  addDraftFiles(Array.from(e.target.files ?? []));
+                  e.target.value = "";
+                }}
+              />
+              <textarea
+                ref={inputRef}
+                value={text}
+                onChange={(e) => {
+                  setText(e.target.value);
+                  sendTyping();
+                }}
+                onPaste={(e) => {
+                  const files = Array.from(e.clipboardData?.files ?? []);
+                  if (files.length > 0) {
+                    e.preventDefault();
+                    addDraftFiles(files);
+                  }
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    void send();
+                  }
+                  if (e.key === "Escape") {
+                    if (editing) {
+                      setEditing(null);
+                      setText("");
+                    } else if (replyTo) setReplyTo(null);
+                  }
+                }}
+                rows={1}
+                maxLength={4000}
+                placeholder={draftFiles.length > 0 ? "Подпись к файлам (необязательно)…" : kind === "channel" ? "Написать в канал…" : "Сообщение…"}
+                className="ring-focus nice-scroll max-h-32 min-h-11 flex-1 resize-none rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3 text-[15px] transition-all placeholder:text-white/30"
+              />
+              <button
+                ref={emojiBtnRef}
+                onClick={() => setEmojiOpen((v) => !v)}
+                title="Эмодзи"
+                className={`glass flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl transition-colors hover:text-white ${
+                  emojiOpen ? "text-amber-300" : "text-white/70"
+                }`}
+              >
+                <Smile className="h-4.5 w-4.5" />
+              </button>
+              <button
+                onClick={() => void send()}
+                disabled={(!canSendSomething && !editing) || sending || uploading}
+                title="Отправить"
+                className="btn-gradient flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl text-white"
+              >
+                {sending ? <Loader2 className="h-4.5 w-4.5 animate-spin" /> : <Send className="h-4.5 w-4.5" />}
+              </button>
+            </div>
           )}
 
-          <div className="mt-1 flex items-center justify-end gap-1.5" style={{ opacity: 0.75 }}>
-            {message.editedAt ? <span className="text-[10.5px]">изм.</span> : null}
-            <span className="text-[10.5px] tabular-nums">{formatTime(message.createdAt)}</span>
-            {mine ? (
-              read ? (
-                <IconCheckDouble size={14} className="text-sky-300" />
-              ) : (
-                <IconCheck size={13} />
-              )
-            ) : null}
-          </div>
-        </div>
-
-        {message.reactions.length > 0 ? (
-          <div className={`mt-1 flex flex-wrap gap-1 ${mine ? "justify-end" : "justify-start"}`}>
-            {message.reactions.map((r) => (
-              <button
-                key={r.emoji}
-                onClick={() => onReact(r.emoji)}
-                className="flex items-center gap-1 rounded-full px-2 py-0.5 text-[12px] transition hover:brightness-125"
-                style={{
-                  background: r.users.includes(message.senderId) || r.users.length > 1 ? "var(--panel-3)" : "var(--panel-2)",
-                  border: `1px solid ${r.users.length > 0 ? "var(--border)" : "transparent"}`,
-                }}
+          {/* Эмодзи-пикер */}
+          <AnimatePresence>
+            {emojiOpen && (
+              <motion.div
+                key="emoji-picker"
+                ref={emojiPickRef}
+                initial={{ opacity: 0, y: 8, scale: 0.98 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: 8, scale: 0.98 }}
+                transition={{ duration: 0.15 }}
+                className="absolute right-0 bottom-[calc(100%+8px)] z-30 w-[min(92vw,420px)]"
               >
-                <span>{r.emoji}</span>
-                <span style={{ color: "var(--muted)" }}>{r.users.length}</span>
-              </button>
-            ))}
-          </div>
-        ) : null}
+                <EmojiPicker onPick={insertEmoji} onClose={() => setEmojiOpen(false)} />
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
       </div>
 
-      {!deleted ? (
-        <div className={`relative shrink-0 ${mine ? "order-first" : ""}`}>
-          <div className="flex items-center gap-0.5 opacity-0 transition group-hover:opacity-100">
-            <BubbleAction title="Реакция" onClick={() => setPicker((v) => !v)}>
-              <IconSmile size={15} />
-            </BubbleAction>
-            <BubbleAction title="Ответить" onClick={onReply}>
-              <IconReply size={15} />
-            </BubbleAction>
-            <BubbleAction title="Ещё" onClick={() => setOpen((v) => !v)}>
-              <IconMore size={15} />
-            </BubbleAction>
-          </div>
-          {picker ? (
-            <>
-              <div className="fixed inset-0 z-30" onClick={() => setPicker(false)} />
-              <div
-                className="animate-pulse-in absolute bottom-full z-40 mb-1 flex gap-1 rounded-2xl border p-1.5"
-                style={{
-                  background: "var(--panel-solid)",
-                  borderColor: "var(--border)",
-                  boxShadow: "var(--shadow)",
-                  left: mine ? "auto" : 0,
-                  right: mine ? 0 : "auto",
-                }}
-              >
-                {REACTION_EMOJI.map((e) => (
-                  <button
-                    key={e}
-                    onClick={() => {
-                      onReact(e);
-                      setPicker(false);
-                    }}
-                    className="rounded-lg px-1.5 py-1 text-[17px] transition hover:brightness-125"
-                  >
-                    {e}
-                  </button>
-                ))}
-              </div>
-            </>
-          ) : null}
-          {open ? (
-            <>
-              <div className="fixed inset-0 z-30" onClick={() => setOpen(false)} />
-              <div
-                className="animate-pulse-in absolute top-full z-40 mt-1 w-48 overflow-hidden rounded-2xl border p-1.5"
-                style={{
-                  background: "var(--panel-solid)",
-                  borderColor: "var(--border)",
-                  boxShadow: "var(--shadow)",
-                  left: mine ? "auto" : 0,
-                  right: mine ? 0 : "auto",
-                }}
-              >
-                {mine && !hasAttachments ? (
-                  <MenuItem icon={<IconEdit size={16} />} onClick={() => { setOpen(false); onEdit(); }}>
-                    Изменить
-                  </MenuItem>
-                ) : null}
-                {mine ? (
-                  <MenuItem icon={<IconTrash size={16} />} danger onClick={() => { setOpen(false); onDeleteAll(); }}>
-                    Удалить у всех
-                  </MenuItem>
-                ) : null}
-                <MenuItem icon={<IconTrash size={16} />} onClick={() => { setOpen(false); onDeleteMe(); }}>
-                  Удалить у меня
-                </MenuItem>
-                {hasAttachments ? (
-                  <a
-                    href={`/api/files/${message.attachments[0].fileId}`}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-[13.5px]"
-                  >
-                    <IconDownload size={16} /> Скачать ({formatBytes(message.attachments[0].size)})
-                  </a>
-                ) : null}
-              </div>
-            </>
-          ) : null}
-        </div>
-      ) : null}
+      {/* Модалки */}
+      <AnimatePresence>
+        {showWallpaper && (
+          <WallpaperModal
+            key="wallpaper"
+            conversationId={conversationId}
+            current={wallpaper}
+            onClose={() => setShowWallpaper(false)}
+            onSaved={(w) => {
+              setWallpaper(w);
+              setShowWallpaper(false);
+            }}
+            notify={notify}
+          />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {noteRecorder && (
+          <VideoNoteRecorder
+            key="note-recorder"
+            notify={notify}
+            onClose={() => setNoteRecorder(false)}
+            onSend={(blob, duration) => {
+              setNoteRecorder(false);
+              void sendAttachment(blob, duration, "video_note", "Видеосообщение");
+            }}
+          />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {forwarding && (
+          <ForwardModal
+            key="forward"
+            message={forwarding}
+            onClose={() => setForwarding(null)}
+            notify={notify}
+          />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {lightbox && (
+          <motion.div
+            key="lightbox"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={() => setLightbox(null)}
+            className="fixed inset-0 z-[75] flex items-center justify-center bg-black/90 p-6 backdrop-blur-sm"
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={lightbox} alt="Фото" className="max-h-full max-w-full rounded-2xl object-contain shadow-2xl" />
+            <a
+              href={lightbox}
+              download
+              onClick={(e) => e.stopPropagation()}
+              className="glass absolute top-5 left-5 flex items-center gap-2 rounded-xl px-3.5 py-2.5 text-sm text-white/85 transition-colors hover:text-white"
+            >
+              <Download className="h-4 w-4" />
+              Скачать
+            </a>
+            <button
+              onClick={() => setLightbox(null)}
+              className="absolute top-5 right-5 rounded-full bg-white/10 p-2.5 text-white/80 transition-colors hover:bg-white/20"
+            >
+              <X className="h-5 w-5" />
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Контекстное меню сообщения (ПКМ / долгое нажатие) */}
+      <AnimatePresence>
+        {ctxMenu && (
+          <MessageContextMenu
+            key="ctx"
+            state={ctxMenu}
+            meId={me.id}
+            isSpace={isSpace}
+            myRole={meta?.myRole ?? "member"}
+            onClose={() => setCtxMenu(null)}
+            onReact={(emoji) => void toggleReaction(ctxMenu.message.id, emoji)}
+            onReply={() => {
+              startReply(ctxMenu.message);
+              setCtxMenu(null);
+            }}
+            onEdit={() => {
+              startEdit(ctxMenu.message);
+              setCtxMenu(null);
+            }}
+            onPin={() => {
+              void togglePin(ctxMenu.message);
+              setCtxMenu(null);
+            }}
+            onCopy={() => {
+              void copyMessage(ctxMenu.message);
+              setCtxMenu(null);
+            }}
+            onForward={() => {
+              setForwarding(ctxMenu.message);
+              setCtxMenu(null);
+            }}
+            onDelete={() => {
+              void removeMessage(ctxMenu.message.id);
+              setCtxMenu(null);
+            }}
+          />
+        )}
+      </AnimatePresence>
     </div>
   );
 }
 
-function BubbleAction({
-  children,
-  onClick,
-  title,
+/* ─────────────────────────── мелкие иконки ─────────────────────────── */
+
+/** Кнопка «кружок»: круг с треугольником записи. */
+function VideoNoteIcon() {
+  return (
+    <span className="relative flex h-7 w-7 items-center justify-center">
+      <span className="absolute inset-0 rounded-full border-[1.6px] border-current opacity-70" />
+      <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="currentColor">
+        <path d="M8 6.5v11l9-5.5-9-5.5Z" />
+      </svg>
+    </span>
+  );
+}
+
+function DraftFileIcon({ mime }: { mime: string }) {
+  const cls = "h-5 w-5 text-white/60";
+  if (mime.startsWith("video/")) return <Film className={cls} />;
+  if (mime.startsWith("audio/")) return <Music className={cls} />;
+  if (mime.startsWith("image/")) return <ImagePlus className={cls} />;
+  if (mime.includes("pdf") || mime.includes("word") || mime.startsWith("text/")) return <FileText className={cls} />;
+  return <FileIcon className={cls} />;
+}
+
+function MenuItem({ icon, label, onClick }: { icon: React.ReactNode; label: string; onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm text-white/80 transition-colors hover:bg-white/8 hover:text-white"
+    >
+      {icon}
+      {label}
+    </button>
+  );
+}
+
+/* ─────────────────────────── меню сообщения ─────────────────────────── */
+
+function MessageContextMenu({
+  state,
+  meId,
+  isSpace,
+  myRole,
+  onClose,
+  onReact,
+  onReply,
+  onEdit,
+  onPin,
+  onCopy,
+  onForward,
+  onDelete,
 }: {
-  children: React.ReactNode;
+  state: ContextMenuState;
+  meId: string;
+  isSpace: boolean;
+  myRole: MemberRole;
+  onClose: () => void;
+  onReact: (emoji: string) => void;
+  onReply: () => void;
+  onEdit: () => void;
+  onPin: () => void;
+  onCopy: () => void;
+  onForward: () => void;
+  onDelete: () => void;
+}) {
+  const m = state.message;
+  const own = m.senderId === meId;
+  const att = parseAttachment(m.type, m.content);
+  const isEditable = own && !m.deletedAt && (m.type === "text" || m.type === "image" || m.type === "file");
+  const hasText = m.type === "text" ? !!m.content : !!(att?.caption || att?.url);
+  const canDelete = own || (isSpace && (myRole === "owner" || myRole === "admin"));
+  const canPin = !isSpace || myRole === "owner" || myRole === "admin" || own;
+
+  // чтобы меню не вылезало за край экрана
+  const W = 236;
+  const H = 372;
+  const x = Math.min(Math.max(8, state.x), Math.max(8, window.innerWidth - W - 8));
+  const y = Math.min(Math.max(8, state.y), Math.max(8, window.innerHeight - H - 8));
+
+  return (
+    <>
+      {/* Прозрачный фон: клик мимо меню закрывает его */}
+      <div className="fixed inset-0 z-[84]" onClick={onClose} />
+      <motion.div
+        initial={{ opacity: 0, scale: 0.94 }}
+        animate={{ opacity: 1, scale: 1 }}
+        exit={{ opacity: 0, scale: 0.96 }}
+        transition={{ duration: 0.12 }}
+        onClick={(e) => e.stopPropagation()}
+        className="glass-strong fixed z-[85] w-[236px] overflow-hidden rounded-2xl p-1.5 shadow-2xl"
+        style={{ left: x, top: y }}
+      >
+      {/* быстрые реакции */}
+      <div className="grid grid-cols-5 gap-0.5 border-b border-white/8 p-1">
+        {QUICK_EMOJIS.map((e) => (
+          <button
+            key={e}
+            onClick={onReact.bind(null, e)}
+            className="rounded-lg py-1.5 text-lg transition-transform hover:scale-125 active:scale-95"
+            title={`Реакция ${e}`}
+          >
+            {e}
+          </button>
+        ))}
+      </div>
+      <ContextItem icon={<Reply className="h-4 w-4 text-violet-300" />} label="Ответить" onClick={onReply} />
+      {canPin && (
+        <ContextItem
+          icon={
+            m.pinned ? (
+              <PinOff className="h-4 w-4 text-rose-300" />
+            ) : (
+              <Pin className="h-4 w-4 text-emerald-300" />
+            )
+          }
+          label={m.pinned ? "Открепить" : "Закрепить"}
+          onClick={onPin}
+        />
+      )}
+      {hasText && (
+        <ContextItem icon={<Copy className="h-4 w-4 text-cyan-300" />} label="Копировать" onClick={onCopy} />
+      )}
+      {isEditable && (
+        <ContextItem icon={<Pencil className="h-4 w-4 text-amber-300" />} label="Изменить" onClick={onEdit} />
+      )}
+      <ContextItem
+        icon={<ChevronRight className="h-4 w-4 text-emerald-300" />}
+        label="Переслать"
+        onClick={onForward}
+      />
+      {canDelete && (
+        <ContextItem icon={<Trash2 className="h-4 w-4 text-rose-300" />} label="Удалить" onClick={onDelete} danger />
+      )}
+      </motion.div>
+    </>
+  );
+}
+
+function ContextItem({
+  icon,
+  label,
+  onClick,
+  danger,
+}: {
+  icon: React.ReactNode;
+  label: string;
   onClick: () => void;
-  title: string;
+  danger?: boolean;
 }) {
   return (
     <button
       onClick={onClick}
-      title={title}
-      className="rounded-full p-1.5 transition hover:brightness-125"
-      style={{ color: "var(--muted)" }}
+      className={`flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-sm transition-colors hover:bg-white/8 ${
+        danger ? "text-rose-300/90 hover:text-rose-200" : "text-white/80 hover:text-white"
+      }`}
     >
-      {children}
+      {icon}
+      {label}
     </button>
+  );
+}
+
+/* ─────────────────────────── пересылка ─────────────────────────── */
+
+function ForwardModal({
+  message,
+  onClose,
+  notify,
+}: {
+  message: ChatMessage;
+  onClose: () => void;
+  notify: (msg: string) => void;
+}) {
+  const [convs, setConvs] = useState<ConversationListItem[] | null>(null);
+  const [sendingTo, setSendingTo] = useState<string | null>(null);
+
+  useEffect(() => {
+    api<{ conversations: ConversationListItem[] }>("/api/conversations")
+      .then((d) => setConvs(d.conversations))
+      .catch(() => setConvs([]));
+  }, []);
+
+  const forwardTo = async (conv: ConversationListItem) => {
+    if (sendingTo) return;
+    setSendingTo(conv.id);
+    try {
+      await api("/api/messages", {
+        method: "POST",
+        body: JSON.stringify({
+          conversationId: conv.id,
+          type: message.type === "call" ? "text" : message.type,
+          content: message.content,
+          replyToId: null,
+        }),
+      });
+      notify(`Переслано в «${conv.title}»`);
+      onClose();
+    } catch (e) {
+      notify(e instanceof Error ? e.message : "Не удалось переслать");
+      setSendingTo(null);
+    }
+  };
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      onClick={onClose}
+      className="fixed inset-0 z-[80] grid place-items-center bg-black/70 p-4 backdrop-blur-sm"
+    >
+      <motion.div
+        initial={{ opacity: 0, scale: 0.94, y: 16 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        exit={{ opacity: 0, scale: 0.96, y: 12 }}
+        onClick={(e) => e.stopPropagation()}
+        className="glass-strong w-full max-w-md overflow-hidden rounded-[1.8rem] shadow-2xl"
+      >
+        <div className="flex items-center justify-between border-b border-white/8 px-6 py-4">
+          <h3 className="font-display text-lg font-bold">Переслать сообщение</h3>
+          <button onClick={onClose} className="rounded-full bg-white/5 p-2 text-white/60 transition-colors hover:bg-white/10">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        <p className="truncate px-6 pt-4 text-xs text-white/40">
+          {messagePreview(message.type, message.content)}
+        </p>
+        <div className="nice-scroll max-h-80 overflow-y-auto p-3">
+          {!convs ? (
+            <div className="flex justify-center py-10">
+              <Loader2 className="h-6 w-6 animate-spin text-white/40" />
+            </div>
+          ) : convs.length === 0 ? (
+            <p className="px-3 py-6 text-center text-sm text-white/40">Пока нет чатов</p>
+          ) : (
+            convs.map((c) => (
+              <button
+                key={c.id}
+                onClick={() => void forwardTo(c)}
+                disabled={sendingTo !== null}
+                className="flex w-full items-center gap-3 rounded-2xl px-3 py-2.5 text-left transition-colors hover:bg-white/8 disabled:opacity-50"
+              >
+                <Avatar
+                  name={c.title}
+                  src={c.kind === "direct" ? c.peer?.avatarUrl ?? null : c.avatarUrl}
+                  size={40}
+                />
+                <span className="min-w-0 flex-1">
+                  <span className="flex items-center gap-1.5 truncate text-sm font-medium">
+                    <span className="truncate">{c.title}</span>
+                    {c.saved && <Bookmark className="h-3 w-3 shrink-0 text-amber-300" />}
+                  </span>
+                  <span className="block text-[11px] text-white/35">
+                    {c.saved ? "избранное" : c.kind === "direct" ? "личный чат" : c.kind === "channel" ? "канал" : "группа"}
+                  </span>
+                </span>
+                {sendingTo === c.id && <Loader2 className="h-4 w-4 animate-spin text-white/50" />}
+              </button>
+            ))
+          )}
+        </div>
+      </motion.div>
+    </motion.div>
+  );
+}
+
+/* ─────────────────────────── запись «кружка» ─────────────────────────── */
+
+function VideoNoteRecorder({
+  notify,
+  onClose,
+  onSend,
+}: {
+  notify: (msg: string) => void;
+  onClose: () => void;
+  onSend: (blob: Blob, durationSec: number) => void;
+}) {
+  const [phase, setPhase] = useState<"camera" | "recording" | "review">("camera");
+  const [secs, setSecs] = useState(0);
+  const [reviewUrl, setReviewUrl] = useState<string | null>(null);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const reviewRef = useRef<HTMLVideoElement | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const recRef = useRef<{ recorder: MediaRecorder; chunks: Blob[]; startedAt: number } | null>(null);
+  const blobRef = useRef<Blob | null>(null);
+  /** Текущий blob:-URL предпросмотра — cleanup эффектов всегда видит актуальный. */
+  const reviewUrlRef = useRef<string | null>(null);
+  reviewUrlRef.current = reviewUrl;
+
+  useEffect(() => {
+    let cancelled = false;
+    const start = async () => {
+      if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
+        notify("Запись видео не поддерживается этим браузером");
+        onClose();
+        return;
+      }
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 640 } },
+          audio: true,
+        });
+        if (cancelled) {
+          stream.getTracks().forEach((t) => t.stop());
+          return;
+        }
+        streamRef.current = stream;
+        if (videoRef.current) videoRef.current.srcObject = stream;
+      } catch {
+        notify("Нужен доступ к камере и микрофону");
+        onClose();
+      }
+    };
+    void start();
+    return () => {
+      cancelled = true;
+      streamRef.current?.getTracks().forEach((t) => t.stop());
+      streamRef.current = null;
+      if (reviewUrlRef.current) URL.revokeObjectURL(reviewUrlRef.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // таймер записи (автостоп на 60 секундах, как в Telegram)
+  useEffect(() => {
+    if (phase !== "recording") return;
+    const t = setInterval(() => setSecs((s) => s + 1), 1000);
+    return () => clearInterval(t);
+  }, [phase]);
+  useEffect(() => {
+    if (phase === "recording" && secs >= 60) stopRecording();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [secs, phase]);
+
+  const startRecording = () => {
+    const stream = streamRef.current;
+    if (!stream) return;
+    const mime = pickRecorderMime([
+      "video/webm;codecs=vp8,opus",
+      "video/webm;codecs=vp9,opus",
+      "video/webm",
+      "video/mp4",
+    ]);
+    const recorder = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+    const chunks: Blob[] = [];
+    recorder.ondataavailable = (e) => {
+      if (e.data.size > 0) chunks.push(e.data);
+    };
+    recorder.start(250);
+    recRef.current = { recorder, chunks, startedAt: Date.now() };
+    setSecs(0);
+    setPhase("recording");
+  };
+
+  function stopRecording() {
+    const rec = recRef.current;
+    if (!rec) return;
+    recRef.current = null;
+    const duration = (Date.now() - rec.startedAt) / 1000;
+    rec.recorder.onstop = () => {
+      const blob = new Blob(rec.chunks, { type: rec.recorder.mimeType || "video/webm" });
+      blobRef.current = blob;
+      if (blob.size === 0) {
+        notify("Запись не получилась — попробуйте ещё раз");
+        setPhase("camera");
+        return;
+      }
+      setReviewUrl(URL.createObjectURL(blob));
+      setPhase("review");
+      streamRef.current?.getTracks().forEach((t) => t.stop());
+      streamRef.current = null;
+      setTimeout(() => {
+        if (reviewRef.current) {
+          reviewRef.current.currentTime = 0;
+          void reviewRef.current.play().catch(() => {});
+        }
+      }, 60);
+    };
+    try {
+      rec.recorder.stop();
+    } catch {
+      setPhase("camera");
+    }
+  }
+
+  const send = () => {
+    const blob = blobRef.current;
+    if (!blob) return;
+    const duration = reviewRef.current?.duration && Number.isFinite(reviewRef.current.duration)
+      ? reviewRef.current.duration
+      : secs;
+    onSend(blob, duration || 1);
+  };
+
+  const rerecord = () => {
+    if (reviewUrl) URL.revokeObjectURL(reviewUrl);
+    setReviewUrl(null);
+    blobRef.current = null;
+    setSecs(0);
+    setPhase("camera");
+    void (async () => {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 640 } },
+          audio: true,
+        });
+        streamRef.current = stream;
+        if (videoRef.current) videoRef.current.srcObject = stream;
+      } catch {
+        notify("Нужен доступ к камере и микрофону");
+        onClose();
+      }
+    })();
+  };
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 z-[80] flex flex-col items-center justify-center gap-6 bg-black/90 p-6 backdrop-blur-md"
+    >
+      <div className="flex w-full max-w-sm items-center justify-between">
+        <p className="font-display text-lg font-bold">Видеосообщение</p>
+        <button
+          onClick={() => {
+            const rec = recRef.current;
+            if (rec && rec.recorder.state === "recording") {
+              try {
+                rec.recorder.stop();
+              } catch {
+                /* ignore */
+              }
+            }
+            onClose();
+          }}
+          className="rounded-full bg-white/10 p-2.5 text-white/80 transition-colors hover:bg-white/20"
+        >
+          <X className="h-5 w-5" />
+        </button>
+      </div>
+
+      {/* Круглое превью — как «кружок» в Telegram */}
+      <div className="relative h-[280px] w-[280px]">
+        <div
+          className={`h-full w-full overflow-hidden rounded-full bg-black/60 ring-4 ${
+            phase === "recording" ? "ring-rose-500" : "ring-white/15"
+          }`}
+        >
+          {phase === "review" && reviewUrl ? (
+            <video
+              ref={reviewRef}
+              src={reviewUrl}
+              playsInline
+              controls={false}
+              className="h-full w-full object-cover"
+            />
+          ) : (
+            <video ref={videoRef} autoPlay playsInline muted className="h-full w-full scale-x-[-1] object-cover" />
+          )}
+        </div>
+        {phase === "recording" && (
+          <span className="absolute top-4 left-4 flex items-center gap-1.5 rounded-full bg-black/70 px-3 py-1 text-xs font-bold text-rose-300 tabular-nums">
+            <span className="h-2 w-2 animate-pulse rounded-full bg-rose-500" />
+            {formatDuration(secs)} / 1:00
+          </span>
+        )}
+        {phase === "camera" && (
+          <span className="absolute bottom-4 left-1/2 -translate-x-1/2 rounded-full bg-black/70 px-3 py-1 text-[11px] text-white/70">
+            до 60 секунд
+          </span>
+        )}
+      </div>
+
+      {/* Управление */}
+      <div className="flex items-center gap-6">
+        {phase === "camera" && (
+          <button
+            onClick={startRecording}
+            className="flex h-16 w-16 items-center justify-center rounded-full bg-rose-500 text-white shadow-[0_10px_30px_-6px_rgba(244,63,94,0.6)] transition-transform hover:scale-105 active:scale-95"
+            title="Начать запись"
+          >
+            <span className="flex h-8 w-8 items-center justify-center rounded-full bg-white">
+              <VideoNoteIcon />
+            </span>
+          </button>
+        )}
+        {phase === "recording" && (
+          <button
+            onClick={stopRecording}
+            className="flex h-16 w-16 items-center justify-center rounded-full bg-white text-black transition-transform hover:scale-105 active:scale-95"
+            title="Закончить запись"
+          >
+            <span className="h-5 w-5 rounded-[4px] bg-rose-500" />
+          </button>
+        )}
+        {phase === "review" && (
+          <>
+            <button
+              onClick={rerecord}
+              title="Перезаписать"
+              className="glass flex h-12 w-12 items-center justify-center rounded-full text-white/80 transition-colors hover:text-white"
+            >
+              <RotateCcw className="h-5 w-5" />
+            </button>
+            <button
+              onClick={send}
+              className="btn-gradient flex h-16 w-16 items-center justify-center rounded-full text-white shadow-[0_10px_30px_-6px_rgba(139,92,246,0.6)] transition-transform hover:scale-105 active:scale-95"
+              title="Отправить кружок"
+            >
+              <Send className="h-6 w-6" />
+            </button>
+          </>
+        )}
+      </div>
+      <p className="text-xs text-white/40">
+        {phase === "camera"
+          ? "Наведите камеру и нажмите запись"
+          : phase === "recording"
+            ? "Говорите — нажмите кнопку, чтобы закончить"
+            : "Проверьте запись и отправьте"}
+      </p>
+    </motion.div>
+  );
+}
+
+/* ─────────────────────────── пузырь сообщения ─────────────────────────── */
+
+function MessageBubble({
+  message,
+  meId,
+  own,
+  space,
+  grouped,
+  read,
+  canDelete,
+  canPin,
+  highlighted,
+  onOpenImage,
+  onDelete,
+  onReply,
+  onEdit,
+  onPin,
+  onReact,
+  onMenu,
+  onJump,
+  onViewUser,
+}: {
+  message: ChatMessage;
+  /** id текущего пользователя — чтобы в цитате писать «Вы», а не имя. */
+  meId: string;
+  own: boolean;
+  space: boolean;
+  grouped: boolean;
+  read: boolean;
+  canDelete: boolean;
+  canPin: boolean;
+  highlighted: boolean;
+  onOpenImage: (url: string) => void;
+  onDelete: () => void;
+  onReply: () => void;
+  onEdit: () => void;
+  onPin: () => void;
+  onReact: (emoji: string) => void;
+  onMenu: (x: number, y: number, message: ChatMessage) => void;
+  onJump: (id: string) => void;
+  onViewUser: (u: PublicUser) => void;
+}) {
+  const sender = message.sender;
+  const alignRight = own && !space;
+  const canEdit = own && (message.type === "text" || message.type === "image" || message.type === "file");
+
+  // долгое нажатие на телефоне = контекстное меню
+  const longPress = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const touchStart = useRef<{ x: number; y: number } | null>(null);
+  const suppressClick = useRef(false);
+  const onTouchStart = (e: React.TouchEvent) => {
+    const t = e.touches[0];
+    if (!t) return;
+    touchStart.current = { x: t.clientX, y: t.clientY };
+    suppressClick.current = false;
+    longPress.current = setTimeout(() => {
+      longPress.current = null;
+      suppressClick.current = true;
+      onMenu(t.clientX, t.clientY, message);
+    }, 480);
+  };
+  const cancelLongPress = () => {
+    if (longPress.current) clearTimeout(longPress.current);
+    longPress.current = null;
+  };
+  const onTouchMove = (e: React.TouchEvent) => {
+    const t = e.touches[0];
+    const s = touchStart.current;
+    if (t && s && (Math.abs(t.clientX - s.x) > 12 || Math.abs(t.clientY - s.y) > 12)) cancelLongPress();
+  };
+  const onTouchEnd = (e: React.TouchEvent) => {
+    const fired = suppressClick.current;
+    cancelLongPress();
+    if (fired) {
+      // не даём браузеру сгенерировать click — он мгновенно закрыл бы меню
+      e.preventDefault();
+      suppressClick.current = false;
+    }
+  };
+
+  if (message.deletedAt) {
+    return (
+      <div className={`flex py-0.5 ${alignRight ? "justify-end" : "justify-start"}`}>
+        <div className="flex items-center gap-2 rounded-2xl border border-dashed border-white/12 px-3.5 py-2 text-[13px] italic text-white/35">
+          <Trash2 className="h-3 w-3" />
+          Сообщение удалено
+        </div>
+      </div>
+    );
+  }
+
+  // вложение (для старых «сломанных» text-сообщений тоже распознаётся)
+  const att = parseAttachment(message.type, message.content);
+  const legacyKind = message.type === "text" ? legacyAttachmentKind(att) : null;
+  const isVoice = message.type === "voice" || legacyKind === "voice";
+  const isNote = message.type === "video_note" || legacyKind === "video_note";
+  const isImage = message.type === "image" && !legacyKind;
+  const isFile = message.type === "file" && !legacyKind;
+
+  // голосовые и кружки не группируем вплотную — им нужен воздух
+  const media = isVoice || isNote || isImage || isFile;
+
+  return (
+    <div
+      className={`group no-callout flex items-start gap-2 ${media ? "py-1.5" : "py-0.5"} ${
+        alignRight ? "justify-end" : "justify-start"
+      } ${highlighted ? "animate-pulse-dot" : ""}`}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        onMenu(e.clientX, e.clientY, message);
+      }}
+      onTouchStart={onTouchStart}
+      onTouchMove={onTouchMove}
+      onTouchEnd={onTouchEnd}
+      onTouchCancel={cancelLongPress}
+    >
+      {space && !alignRight && (
+        <button
+          onClick={() => sender && onViewUser(sender)}
+          className="mt-1 shrink-0"
+          title={sender ? "Открыть профиль" : undefined}
+        >
+          {grouped ? (
+            <span className="block h-8 w-8" />
+          ) : (
+            <Avatar name={sender?.displayName ?? "?"} src={sender?.avatarUrl ?? null} size={32} />
+          )}
+        </button>
+      )}
+
+      <div className={`relative max-w-[80%] min-w-0 sm:max-w-[72%] ${alignRight ? "order-1" : ""}`}>
+        {space && !grouped && !alignRight && sender && (
+          <button
+            onClick={() => onViewUser(sender)}
+            className="mb-1 block text-left text-[12px] font-semibold text-violet-300/90 hover:text-violet-200"
+          >
+            {sender.displayName}
+          </button>
+        )}
+
+        <div
+          className={`relative overflow-hidden ${
+            media ? "" : own && !space ? "bubble-own text-white" : "bubble-peer text-white/90"
+          } ${media ? "" : "rounded-3xl px-4 py-2.5"} ${
+            own && !space ? "rounded-br-lg" : space || !own ? "rounded-bl-lg" : ""
+          } ${highlighted ? "ring-2 ring-violet-400/60" : ""}`}
+        >
+          {/* Цитата (ответ на сообщение) */}
+          {message.replyTo && (
+            <button
+              onClick={() => onJump(message.replyTo!.id)}
+              className="mb-1.5 flex w-full gap-2 rounded-xl border-l-2 border-violet-300/70 bg-black/20 px-2.5 py-1.5 text-left"
+            >
+              <CornerUpLeft className="mt-0.5 h-3 w-3 shrink-0 text-violet-300/80" />
+              <span className="min-w-0">
+                <span className="block truncate text-[11px] font-semibold text-violet-200">
+                  {message.replyTo.senderId === meId ? "Вы" : message.replyTo.senderName}
+                </span>
+                <span className="block truncate text-[12px] text-white/50">
+                  {message.replyTo.deleted
+                    ? "Сообщение удалено"
+                    : messagePreview(message.replyTo.type, message.replyTo.content)}
+                </span>
+              </span>
+            </button>
+          )}
+
+          {isVoice && att ? (
+            <VoiceBubble url={att.url} duration={att.duration ?? 0} own={own && !space} />
+          ) : isNote && att ? (
+            <VideoNoteBubble url={att.url} duration={att.duration ?? 0} />
+          ) : isImage && att ? (
+            <div>
+              <button
+                onClick={() => onOpenImage(att.url)}
+                className="block overflow-hidden rounded-3xl ring-1 ring-white/10 transition-transform hover:scale-[1.01]"
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={att.url}
+                  alt={att.caption || "Фото"}
+                  className="max-h-80 w-full max-w-xs object-cover"
+                  draggable={false}
+                />
+              </button>
+              {att.caption && (
+                <p className="px-1 pt-2 pb-1 text-[15px] leading-relaxed break-words whitespace-pre-wrap">
+                  {renderRichText(att.caption)}
+                </p>
+              )}
+            </div>
+          ) : isFile && att ? (
+            <FileCard att={att} />
+          ) : (
+            <p className="text-[15px] leading-relaxed break-words whitespace-pre-wrap">
+              {renderRichText(message.content)}
+            </p>
+          )}
+        </div>
+
+        {/* Реакции */}
+        {message.reactions && message.reactions.length > 0 && (
+          <div className={`mt-1 flex flex-wrap gap-1 ${alignRight ? "justify-end" : ""}`}>
+            {message.reactions.map((r) => (
+              <button
+                key={r.emoji}
+                onClick={() => onReact(r.emoji)}
+                title={r.mine ? "Убрать реакцию" : "Поставить реакцию"}
+                className={`flex items-center gap-1 rounded-full px-2 py-0.5 text-xs transition-colors ${
+                  r.mine
+                    ? "bg-violet-500/30 text-violet-100 ring-1 ring-violet-400/50"
+                    : "bg-white/8 text-white/70 hover:bg-white/12"
+                }`}
+              >
+                <span>{r.emoji}</span>
+                {r.count > 1 && <span className="text-[10px] font-semibold tabular-nums">{r.count}</span>}
+              </button>
+            ))}
+          </div>
+        )}
+
+        <div className={`mt-1 flex items-center gap-1 text-[10px] text-white/30 ${alignRight ? "justify-end" : ""}`}>
+          <span>{timeHHmm(message.createdAt)}</span>
+          {message.pinned && (
+            <span title="Закреплено" className="flex items-center">
+              <Pin className="h-3 w-3 text-violet-300" />
+            </span>
+          )}
+          {message.editedAt && <span className="italic">изменено</span>}
+          {own &&
+            (read ? <CheckCheck className="h-3.5 w-3.5 text-cyan-300" /> : <Check className="h-3.5 w-3.5" />)}
+        </div>
+      </div>
+
+      {/* Действия: ответить / реакция / изменить / удалить.
+          На телефоне hover нет — поэтому там кнопки всегда чуть видны. */}
+      <div
+        className={`flex shrink-0 items-center gap-0.5 self-center opacity-60 transition-opacity group-hover:opacity-100 max-md:opacity-60 ${
+          alignRight ? "order-0" : ""
+        }`}
+      >
+        <button
+          onClick={onReply}
+          title="Ответить"
+          className="rounded-full p-1 text-white/30 hover:text-violet-300"
+        >
+          <Reply className="h-3.5 w-3.5" />
+        </button>
+        {canPin && (
+          <button
+            onClick={onPin}
+            title={message.pinned ? "Открепить" : "Закрепить"}
+            className={`rounded-full p-1 ${message.pinned ? "text-violet-300 hover:text-rose-300" : "text-white/30 hover:text-emerald-300"}`}
+          >
+            {message.pinned ? <PinOff className="h-3.5 w-3.5" /> : <Pin className="h-3.5 w-3.5" />}
+          </button>
+        )}
+        <button
+          onClick={(e) => {
+            const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+            onMenu(rect.left - 100, rect.bottom + 6, message);
+          }}
+          title="Реакция"
+          className="rounded-full p-1 text-white/30 hover:text-amber-300"
+        >
+          <SmilePlus className="h-3.5 w-3.5" />
+        </button>
+        {canEdit && (
+          <button onClick={onEdit} title="Изменить" className="rounded-full p-1 text-white/30 hover:text-cyan-300">
+            <Pencil className="h-3.5 w-3.5" />
+          </button>
+        )}
+        {canDelete && (
+          <button onClick={onDelete} title="Удалить" className="rounded-full p-1 text-white/30 hover:text-rose-300">
+            <Trash2 className="h-3.5 w-3.5" />
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ─────────────────────────── голосовое сообщение ─────────────────────────── */
+
+const WAVE_BARS = [
+  8, 14, 20, 11, 26, 18, 9, 22, 30, 14, 10, 24, 16, 28, 12, 19, 25, 9, 15, 27, 11, 21, 17, 29, 13, 23, 10, 18,
+];
+
+function VoiceBubble({ url, duration, own }: { url: string; duration: number; own: boolean }) {
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const [playing, setPlaying] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [speedIdx, setSpeedIdx] = useState(0);
+  const [total, setTotal] = useState(duration || 0);
+  const speeds = [1, 1.5, 2];
+
+  const toggle = () => {
+    const a = audioRef.current;
+    if (!a) return;
+    if (a.paused) void a.play().catch(() => {});
+    else a.pause();
+  };
+
+  return (
+    <div className="flex w-64 min-w-52 items-center gap-3 py-0.5">
+      <audio
+        ref={audioRef}
+        src={url}
+        preload="metadata"
+        onPlay={() => setPlaying(true)}
+        onPause={() => setPlaying(false)}
+        onEnded={() => {
+          setPlaying(false);
+          setProgress(0);
+        }}
+        onLoadedMetadata={(e) => {
+          const d = e.currentTarget.duration;
+          if (Number.isFinite(d) && d > 0) setTotal(d);
+        }}
+        onTimeUpdate={(e) => {
+          const a = e.currentTarget;
+          const t = Number.isFinite(a.duration) && a.duration > 0 ? a.duration : total;
+          setProgress(t > 0 ? Math.min(1, a.currentTime / t) : 0);
+        }}
+      />
+      <button
+        onClick={toggle}
+        title={playing ? "Пауза" : "Воспроизвести"}
+        className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full transition-transform hover:scale-105 active:scale-95 ${
+          own ? "bg-white/20 text-white" : "btn-gradient text-white"
+        }`}
+      >
+        {playing ? <Pause className="h-5 w-5" /> : <Play className="ml-0.5 h-5 w-5" />}
+      </button>
+
+      <div className="min-w-0 flex-1">
+        {/* «Волна»: бары закрашиваются по мере проигрывания */}
+        <button
+          onClick={(e) => {
+            const a = audioRef.current;
+            if (a && total > 0) {
+              const rect = e.currentTarget.getBoundingClientRect();
+              a.currentTime = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width)) * total;
+              void a.play().catch(() => {});
+            }
+          }}
+          className="flex h-8 w-full items-center gap-[2px]"
+          title="Перемотать"
+        >
+          {WAVE_BARS.map((h, i) => {
+            const filled = i / WAVE_BARS.length <= progress;
+            return (
+              <span
+                key={i}
+                className={`w-[3px] rounded-full transition-colors ${filled ? "bg-violet-300" : "bg-white/20"}`}
+                style={{ height: `${h}px` }}
+              />
+            );
+          })}
+        </button>
+        <div className="flex items-center justify-between text-[11px] text-white/45 tabular-nums">
+          <span>{formatDuration(Math.round(total))}</span>
+          <button
+            onClick={() => {
+              const next = (speedIdx + 1) % speeds.length;
+              setSpeedIdx(next);
+              if (audioRef.current) audioRef.current.playbackRate = speeds[next];
+            }}
+            title="Скорость воспроизведения"
+            className="rounded-full bg-white/8 px-2 py-0.5 text-[10px] font-semibold text-white/70 transition-colors hover:bg-white/15"
+          >
+            {speeds[speedIdx]}x
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ─────────────────────────── кружок (видеосообщение) ─────────────────────────── */
+
+function VideoNoteBubble({ url, duration }: { url: string; duration: number }) {
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const [playing, setPlaying] = useState(false);
+  const [started, setStarted] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [total, setTotal] = useState(duration || 0);
+
+  const toggle = () => {
+    const v = videoRef.current;
+    if (!v) return;
+    if (v.paused) {
+      setStarted(true);
+      void v.play().catch(() => {});
+    } else {
+      v.pause();
+    }
+  };
+
+  const R = 108; // радиус кольца прогресса
+  const C = 2 * Math.PI * R;
+
+  return (
+    <div className="relative h-[224px] w-[224px] select-none">
+      <video
+        ref={videoRef}
+        src={url}
+        playsInline
+        preload="metadata"
+        className="h-full w-full rounded-full object-cover"
+        onPlay={() => setPlaying(true)}
+        onPause={() => setPlaying(false)}
+        onEnded={() => {
+          setPlaying(false);
+          setProgress(0);
+        }}
+        onLoadedMetadata={(e) => {
+          const d = e.currentTarget.duration;
+          if (Number.isFinite(d) && d > 0) setTotal(d);
+        }}
+        onTimeUpdate={(e) => {
+          const v = e.currentTarget;
+          const t = Number.isFinite(v.duration) && v.duration > 0 ? v.duration : total;
+          setProgress(t > 0 ? Math.min(1, v.currentTime / t) : 0);
+        }}
+        onClick={toggle}
+      />
+      {/* Кольцо прогресса */}
+      <svg viewBox="0 0 224 224" className="pointer-events-none absolute inset-0 h-full w-full -rotate-90">
+        <circle cx="112" cy="112" r={R} fill="none" stroke="rgba(255,255,255,0.12)" strokeWidth="3" />
+        <circle
+          cx="112"
+          cy="112"
+          r={R}
+          fill="none"
+          stroke="rgb(167 139 250)"
+          strokeWidth="3"
+          strokeLinecap="round"
+          strokeDasharray={C}
+          strokeDashoffset={C * (1 - progress)}
+        />
+      </svg>
+      {!playing && (
+        <button
+          onClick={toggle}
+          className="absolute inset-0 flex items-center justify-center rounded-full transition-colors hover:bg-black/25"
+          title={started ? "Продолжить" : "Воспроизвести"}
+        >
+          <span className="flex h-14 w-14 items-center justify-center rounded-full bg-black/55 backdrop-blur-sm">
+            <Play className="ml-1 h-6 w-6 text-white" />
+          </span>
+        </button>
+      )}
+      <span className="pointer-events-none absolute right-3 bottom-3 rounded-full bg-black/70 px-2 py-0.5 text-[10px] text-white/80 tabular-nums">
+        {formatDuration(Math.round(total))}
+      </span>
+    </div>
+  );
+}
+
+/* ─────────────────────────── карточка файла ─────────────────────────── */
+
+function FileCard({ att }: { att: AttachmentInfo }) {
+  const mime = att.mimeType ?? "";
+  return (
+    <div className="w-72 min-w-60">
+      <div className="flex items-center gap-3">
+        <span className="glass flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl">
+          <DraftFileIcon mime={mime} />
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-sm font-medium text-white/90">{att.name ?? "Файл"}</p>
+          <p className="text-[11px] text-white/40">
+            {formatBytes(att.size)}
+            {mime ? ` · ${mime.split("/")[1]?.split(";")[0] ?? mime}` : ""}
+          </p>
+        </div>
+        <a
+          href={att.url}
+          download={att.name ?? undefined}
+          onClick={(e) => e.stopPropagation()}
+          title="Скачать"
+          className="glass flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-white/75 transition-colors hover:text-white"
+        >
+          <Download className="h-4.5 w-4.5" />
+        </a>
+      </div>
+      {(mime.startsWith("audio/") || mime.startsWith("video/")) && (
+        <div className="mt-2">
+          {mime.startsWith("audio/") ? (
+            <audio src={att.url} controls preload="metadata" className="h-9 w-full" />
+          ) : (
+            <video src={att.url} controls preload="metadata" className="mt-1 max-h-64 w-full rounded-xl" />
+          )}
+        </div>
+      )}
+      {att.caption && (
+        <p className="mt-2 text-[15px] leading-relaxed break-words whitespace-pre-wrap">{att.caption}</p>
+      )}
+    </div>
+  );
+}
+
+/* ─────────────────────────── лог звонка ─────────────────────────── */
+
+function CallLogBubble({
+  message,
+  meId,
+  onJoin,
+}: {
+  message: ChatMessage;
+  meId: string;
+  onJoin: (() => void) | null;
+}) {
+  const info = parseCallContent(message.content);
+  if (!info) return null;
+
+  const mineOutgoing = info.callerId === meId;
+  const missed = info.status === "missed" || info.status === "declined" || info.status === "cancelled";
+  const group = (info.participants ?? 0) > 2;
+
+  const icon =
+    info.status === "missed" ? (
+      <PhoneMissed className="h-4 w-4" />
+    ) : mineOutgoing ? (
+      <PhoneOutgoing className="h-4 w-4" />
+    ) : (
+      <PhoneIncoming className="h-4 w-4" />
+    );
+
+  return (
+    <div className="flex justify-center py-1.5">
+      <div
+        className={`glass flex items-center gap-2.5 rounded-full px-4 py-2 text-[13px] ${
+          missed ? "text-rose-300" : "text-emerald-300"
+        }`}
+      >
+        {icon}
+        <span className="text-white/80">
+          {group ? "Групповой звонок" : callLogLabel(info)}
+          {group && info.durationSec > 0 ? ` · ${formatDuration(info.durationSec)}` : ""}
+          {group && info.participants ? ` · ${info.participants} чел.` : ""}
+        </span>
+        {!group && info.durationSec > 0 && (
+          <span className="text-white/40">· {formatDuration(info.durationSec)}</span>
+        )}
+        <span className="text-white/25">{timeHHmm(message.createdAt)}</span>
+        {info.media === "video" && <Video className="h-3.5 w-3.5 text-white/35" />}
+        {onJoin && (
+          <button onClick={onJoin} className="ml-1 rounded-full bg-emerald-500/90 px-2.5 py-1 text-[11px] font-semibold text-white">
+            войти
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ─────────────────────────── эмодзи-пикер ─────────────────────────── */
+
+function EmojiPicker({ onPick, onClose }: { onPick: (emoji: string) => void; onClose: () => void }) {
+  const [catIdx, setCatIdx] = useState(0);
+  const cats = EMOJI_CATEGORIES;
+  const cat = cats[Math.min(catIdx, cats.length - 1)];
+  const gridRef = useRef<HTMLDivElement | null>(null);
+
+  // при смене категории прокручиваем сетку наверх
+  useEffect(() => {
+    const el = gridRef.current;
+    if (!el) return;
+    if (typeof el.scrollTo === "function") el.scrollTo({ top: 0 });
+    else el.scrollTop = 0;
+  }, [catIdx]);
+
+  return (
+    <div className="glass-strong overflow-hidden rounded-[1.4rem] shadow-2xl">
+      {/* категории */}
+      <div className="flex items-center gap-0.5 border-b border-white/8 px-2.5 py-2">
+        {cats.map((c, i) => (
+          <button
+            key={c.name}
+            onClick={() => setCatIdx(i)}
+            title={c.name}
+            className={`flex h-8 flex-1 items-center justify-center rounded-xl text-base transition-colors ${
+              i === catIdx ? "bg-white/12" : "hover:bg-white/6 opacity-60 hover:opacity-100"
+            }`}
+          >
+            {c.emojis[0]}
+          </button>
+        ))}
+        <button
+          onClick={onClose}
+          title="Закрыть"
+          className="ml-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-xl text-white/40 transition-colors hover:text-white"
+        >
+          <X className="h-4 w-4" />
+        </button>
+      </div>
+      {/* сетка эмодзи */}
+      <div ref={gridRef} className="nice-scroll grid max-h-64 grid-cols-8 gap-0.5 overflow-y-auto p-2 max-sm:grid-cols-7">
+        {cat.emojis.map((e) => (
+          <button
+            key={e}
+            onClick={() => onPick(e)}
+            className="flex h-9 items-center justify-center rounded-xl text-xl transition-transform hover:scale-125 hover:bg-white/8 active:scale-95"
+          >
+            {e}
+          </button>
+        ))}
+      </div>
+      <p className="border-t border-white/8 px-3 py-1.5 text-[10px] text-white/30">
+        {cat.name} · нажмите, чтобы вставить
+      </p>
+    </div>
   );
 }

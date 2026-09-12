@@ -1,28 +1,22 @@
-import { redirect } from "next/navigation";
-import Messenger from "@/components/Messenger";
-import { ensureSeed, getSessionUser, getSettings, loadChats, settingsToPayload } from "@/lib/server";
+import { getSessionUser, publicUser } from "@/lib/auth";
+import { createLogger } from "@/lib/logger";
+import MessengerApp from "@/components/MessengerApp";
+import AuthScreen from "@/components/AuthScreen";
+import DbConnecting from "@/components/DbConnecting";
+
+const log = createLogger("page");
 
 export const dynamic = "force-dynamic";
 
-export default async function Page() {
-  await ensureSeed();
-  const me = await getSessionUser();
-  if (!me) redirect("/login");
-
-  const [chats, settings] = await Promise.all([loadChats(me.id), getSettings(me.id)]);
-
-  return (
-    <Messenger
-      me={{
-        id: me.id,
-        name: me.name,
-        handle: me.handle,
-        emoji: me.emoji,
-        accent: me.accent,
-        about: me.about,
-      }}
-      initialChats={chats}
-      initialSettings={settingsToPayload(settings)}
-    />
-  );
+export default async function Home() {
+  try {
+    const me = await getSessionUser();
+    if (me) return <MessengerApp me={publicUser(me)} />;
+    return <AuthScreen />;
+  } catch (err) {
+    // Чаще всего это «база ещё поднимается» (Railway): не роняем сервер,
+    // показываем экран-заглушку, который сам обновит страницу.
+    log.error("Не удалось загрузить страницу (возможно, БД ещё поднимается)", { err });
+    return <DbConnecting />;
+  }
 }

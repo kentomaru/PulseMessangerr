@@ -1,60 +1,113 @@
+import { NextResponse } from "next/server";
 import { db } from "@/db";
-import { hiddenMessages, messages } from "@/db/schema";
+import { conversationMembers, messages } from "@/db/schema";
 import { and, eq } from "drizzle-orm";
-import { assertMembership, getMessageById, getSessionUser } from "@/lib/server";
+import { isUuid, withApi } from "@/lib/api-helpers";
 
-export const dynamic = "force-dynamic";
+/**
+ * PATCH /api/messages/[id] — редактирование своего сообщения.
+ *  — text: новый текст (до 4000 символов);
+ *  — image/file: новая подпись (content — JSON, url сохраняется);
+ *  — voice/video_note/call: редактировать нельзя.
+ */
+export const PATCH = withApi<{ id: string }>("messages:edit", async ({ req, params, me }) => {
+  const { id } = params;
+  if (!isUuid(id)) return NextResponse.json({ error: "Сообщение не найдено" }, { status: 404 });
 
-type Ctx = { params: Promise<{ id: string }> };
+  const body = await req.json().catch(() => ({}));
+  const newText = String(body.content ?? "").trim();
 
-export async function PATCH(request: Request, context: Ctx) {
-  const me = await getSessionUser();
-  if (!me) return Response.json({ error: "unauthorized" }, { status: 401 });
-  const { id } = await context.params;
-  const messageId = Number(id);
-  const rows = await db.select().from(messages).where(eq(messages.id, messageId)).limit(1);
-  const message = rows[0];
-  if (!message) return Response.json({ error: "not_found" }, { status: 404 });
-  if (message.senderId !== me.id) return Response.json({ error: "forbidden" }, { status: 403 });
-  const payload = (await request.json().catch(() => ({}))) as { body?: string };
-  const body = (payload.body ?? "").slice(0, 4000);
-  if (!body.trim()) return Response.json({ error: "empty" }, { status: 400 });
+  const rows = await db.select().from(messages).where(eq(messages.id, id)).limit(1);
+  const msg = rows[0];
+  if (!msg || msg.deletedAt) return NextResponse.json({ error: "Сообщение не найдено" }, { status: 404 });
+  if (msg.senderId !== me.id)
+    return NextResponse.json({ error: "Редактировать можно только свои сообщения" }, { status: 403 });
+
+  // доступ к чату всё ещё должен быть
+  const membership = await db
+    .select({ userId: conversationMembers.userId })
+    .from(conversationMembers)
+    .where(
+      and(
+        eq(conversationMembers.conversationId, msg.conversationId),
+        eq(conversationMembers.userId, me.id),
+      ),
+    )
+    .limit(1);
+  if (!membership[0]) return NextResponse.json({ error: "Нет доступа" }, { status: 403 });
+
+  if (newText.length > 4000)
+    return NextResponse.json({ error: "Слишком длинное сообщение" }, { status: 400 });
+
+  let content = newText;
+  if (msg.type === "image" || msg.type === "file") {
+    // сохраняем вложение, меняем только подпись
+    let parsed: { url?: unknown } = {};
+    if (msg.content.trimStart().startsWith("{")) {
+      try {
+        parsed = JSON.parse(msg.content);
+      } catch {
+        parsed = {};
+      }
+    }
+    const url = typeof parsed.url === "string" ? parsed.url : msg.content.startsWith("/api/files/") ? msg.content : null;
+    if (!url) return NextResponse.json({ error: "Не удалось изменить вложение" }, { status: 400 });
+    content = JSON.stringify({
+      ...(parsed as Record<string, unknown>),
+      url,
+      caption: newText,
+    });
+  } else if (msg.type !== "text") {
+    return NextResponse.json({ error: "Это сообщение нельзя редактировать" }, { status: 400 });
+  }
+
+  if (!content) return NextResponse.json({ error: "Пустое сообщение" }, { status: 400 });
+
+  const [updated] = await db
+    .update(messages)
+    .set({ content, editedAt: new Date() })
+    .where(eq(messages.id, id))
+    .returning();
+
+  return NextResponse.json({
+    message: {
+      id: updated.id,
+      content: updated.content,
+      editedAt: updated.editedAt ? new Date(updated.editedAt).toISOString() : null,
+    },
+  });
+});
+
+/** DELETE /api/messages/[id] — удалить своё сообщение (или менеджеру группы). */
+export const DELETE = withApi<{ id: string }>("messages:delete", async ({ params, me }) => {
+  const { id } = params;
+  if (!isUuid(id)) return NextResponse.json({ error: "Сообщение не найдено" }, { status: 404 });
+
+  const rows = await db.select().from(messages).where(eq(messages.id, id)).limit(1);
+  const msg = rows[0];
+  if (!msg) return NextResponse.json({ error: "Сообщение не найдено" }, { status: 404 });
+
+  const membership = await db
+    .select()
+    .from(conversationMembers)
+    .where(
+      and(
+        eq(conversationMembers.conversationId, msg.conversationId),
+        eq(conversationMembers.userId, me.id),
+      ),
+    )
+    .limit(1);
+  const my = membership[0];
+  if (!my) return NextResponse.json({ error: "Нет доступа" }, { status: 403 });
+
+  const isManager = my.role === "owner" || my.role === "admin";
+  if (msg.senderId !== me.id && !isManager)
+    return NextResponse.json({ error: "Нет прав на удаление" }, { status: 403 });
+
   await db
     .update(messages)
-    .set({ body, editedAt: new Date(), updatedAt: new Date() })
-    .where(eq(messages.id, messageId));
-  const hydrated = await getMessageById(messageId);
-  return Response.json({ message: hydrated });
-}
+    .set({ deletedAt: new Date(), content: "" })
+    .where(eq(messages.id, id));
 
-export async function DELETE(request: Request, context: Ctx) {
-  const me = await getSessionUser();
-  if (!me) return Response.json({ error: "unauthorized" }, { status: 401 });
-  const { id } = await context.params;
-  const messageId = Number(id);
-  const rows = await db.select().from(messages).where(eq(messages.id, messageId)).limit(1);
-  const message = rows[0];
-  if (!message) return Response.json({ error: "not_found" }, { status: 404 });
-  if (!(await assertMembership(message.chatId, me.id))) {
-    return Response.json({ error: "forbidden" }, { status: 403 });
-  }
-  const url = new URL(request.url);
-  const scope = url.searchParams.get("scope") ?? "me";
-
-  if (scope === "all") {
-    if (message.senderId !== me.id) {
-      return Response.json({ error: "forbidden" }, { status: 403 });
-    }
-    await db
-      .update(messages)
-      .set({ deletedForAllAt: new Date(), body: "", updatedAt: new Date() })
-      .where(eq(messages.id, messageId));
-    return Response.json({ ok: true, scope: "all" });
-  }
-
-  await db
-    .insert(hiddenMessages)
-    .values({ messageId, userId: me.id })
-    .onConflictDoNothing();
-  return Response.json({ ok: true, scope: "me" });
-}
+  return NextResponse.json({ ok: true });
+});

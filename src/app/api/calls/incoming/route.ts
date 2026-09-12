@@ -1,43 +1,38 @@
 import { NextResponse } from "next/server";
 import { db } from "@/db";
-import { calls, chatMembers, users } from "@/db/schema";
-import { and, desc, eq, inArray, ne } from "drizzle-orm";
-import { getSessionUser } from "@/lib/server";
-import { callPeerFrom, expireIfStale } from "@/lib/calls-server";
+import { calls, conversationMembers } from "@/db/schema";
+import { and, eq } from "drizzle-orm";
+import { withApi } from "@/lib/api-helpers";
+import { endCall, listIncomingFor, sweepStaleCalls, RING_TIMEOUT_MS } from "@/lib/calls";
 
-export async function GET() {
-  const me = await getSessionUser();
-  if (!me) return NextResponse.json({ error: "Не авторизован" }, { status: 401 });
+/**
+ * GET /api/calls/incoming[?token=...] — звонки, в которые я могу войти,
+ * но ещё не вошёл: активные комнаты в моих диалогах, личные приглашения
+ * («добавить человека») и звонок по ссылке-приглашению из URL.
+ * Клиент опрашивает роут раз в ~3 секунды.
+ */
+export const GET = withApi("calls:incoming", async ({ req, me }) => {
+  const token = req.nextUrl.searchParams.get("token")?.trim() || null;
 
-  const myChats = await db
-    .select({ chatId: chatMembers.chatId })
-    .from(chatMembers)
-    .where(eq(chatMembers.userId, me.id));
+  const myConvs = await db
+    .select({ conversationId: conversationMembers.conversationId })
+    .from(conversationMembers)
+    .where(eq(conversationMembers.userId, me.id));
+  // Заодно убираем «мёртвые» комнаты и просроченные дозвоны в моих диалогах
+  await sweepStaleCalls(myConvs.map((c) => c.conversationId));
 
-  if (myChats.length === 0) return NextResponse.json({ call: null });
-  const ids = myChats.map((c) => c.chatId);
-
-  const ringing = await db
-    .select({ call: calls, caller: users })
-    .from(calls)
-    .innerJoin(users, eq(calls.callerId, users.id))
-    .where(
-      and(
-        inArray(calls.chatId, ids),
-        eq(calls.status, "ringing"),
-        ne(calls.callerId, me.id),
-      ),
-    )
-    .orderBy(desc(calls.createdAt))
-    .limit(5);
-
-  for (const row of ringing) {
-    const fresh = await expireIfStale(row.call);
-    if (fresh.status === "ringing") {
-      return NextResponse.json({
-        call: { ...fresh, caller: callPeerFrom(row.caller) },
-      });
+  if (token) {
+    const rows = await db
+      .select()
+      .from(calls)
+      .where(and(eq(calls.joinToken, token), eq(calls.status, "ringing")))
+      .limit(1);
+    const c = rows[0];
+    if (c && Date.now() - new Date(c.startedAt).getTime() > RING_TIMEOUT_MS) {
+      await endCall(c, "missed");
     }
   }
-  return NextResponse.json({ call: null });
-}
+
+  const list = await listIncomingFor(me.id, token);
+  return NextResponse.json({ calls: list });
+});

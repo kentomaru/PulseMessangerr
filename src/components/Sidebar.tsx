@@ -1,240 +1,485 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import type { ChatPayload, SettingsPayload } from "@/lib/pulse";
-import { ACCENTS, formatTime, isOnline } from "@/lib/pulse";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { AnimatePresence, motion } from "framer-motion";
 import {
-  Avatar,
-  IconArchive,
-  IconBellOff,
-  IconLogout,
-  IconPin,
-  IconPlus,
-  IconSearch,
-  IconSettings,
-  PulseLogo,
-} from "./ui";
+  Bookmark,
+  Compass,
+  Hash,
+  Loader2,
+  Lock,
+  LogOut,
+  Megaphone,
+  Plus,
+  Radio,
+  Search,
+  SearchX,
+  Sparkles,
+  UserPlus,
+  Users,
+  Video,
+  Volume2,
+  VolumeX,
+} from "lucide-react";
+import Avatar from "./Avatar";
+import StoriesRow from "./StoriesRow";
+import { api } from "@/lib/api";
+import { messagePreview, timeHHmm } from "@/lib/format";
+import type { ConversationListItem, DiscoverItem, PublicUser, StoryGroup } from "@/lib/types";
 
-export type Person = {
-  id: number;
-  name: string;
-  handle: string;
-  emoji: string;
-  accent: string;
-  about: string;
+type Props = {
+  me: PublicUser;
+  conversations: ConversationListItem[];
+  activeId: string | null;
+  storyGroups: StoryGroup[];
+  /** Звук уведомлений о новых сообщениях. */
+  soundOn: boolean;
+  onSelect: (id: string) => void;
+  onOpenProfile: () => void;
+  onOpenChat: (user: PublicUser) => void;
+  onLogout: () => void;
+  onOpenStories: (groupIndex: number) => void;
+  onAddStory: () => void;
+  onCreateGroup: (kind: "group" | "channel") => void;
+  onDiscover: () => void;
+  /** Открыть «Избранное» (чат с самим собой). */
+  onOpenSaved: () => void;
+  /** Включить/выключить звук уведомлений. */
+  onToggleSound: () => void;
+  /** Вход по ссылке-приглашению в группу/канал (#group=<token>). */
+  onJoinByToken: (token: string) => void;
 };
 
-const FILTERS = [
-  { id: "all", label: "Все" },
-  { id: "unread", label: "Непрочитанные" },
-  { id: "groups", label: "Группы" },
-  { id: "archived", label: "Архив" },
-] as const;
+function previewText(conv: ConversationListItem, meId: string) {
+  const lm = conv.lastMessage;
+  if (!lm) return "Нет сообщений";
+  const body = messagePreview(lm.type, lm.content);
+  const prefix = lm.senderId === meId ? "Вы: " : conv.kind === "direct" ? "" : `${lm.senderName ?? ""}: `;
+  return prefix + body;
+}
 
-type Filter = (typeof FILTERS)[number]["id"];
-
-function previewText(chat: ChatPayload, meId: number): string {
-  const last = chat.lastMessage;
-  if (!last) return "Нет сообщений";
-  if (last.deletedForAllAt) return "Сообщение удалено";
-  if (last.kind === "system") return last.body;
-  const prefix = last.senderId === meId ? "Вы: " : "";
-  return prefix + (last.body || "Вложение");
+/** Из вставленной ссылки/токена достаём token. */
+function extractToken(value: string): string | null {
+  const v = value.trim();
+  if (!v) return null;
+  const m = v.match(/#group=([A-Za-z0-9_-]+)/);
+  if (m) return m[1];
+  if (/^[A-Za-z0-9_-]{8,32}$/.test(v)) return v;
+  return null;
 }
 
 export default function Sidebar({
   me,
-  chats,
+  conversations,
   activeId,
-  settings,
+  storyGroups,
+  soundOn,
   onSelect,
-  onNewChat,
-  onOpenSettings,
+  onOpenProfile,
+  onOpenChat,
   onLogout,
-}: {
-  me: Person;
-  chats: ChatPayload[];
-  activeId: number | null;
-  settings: SettingsPayload;
-  onSelect: (id: number) => void;
-  onNewChat: () => void;
-  onOpenSettings: () => void;
-  onLogout: () => void;
-}) {
+  onOpenStories,
+  onAddStory,
+  onCreateGroup,
+  onDiscover,
+  onOpenSaved,
+  onToggleSound,
+  onJoinByToken,
+}: Props) {
   const [query, setQuery] = useState("");
-  const [filter, setFilter] = useState<Filter>("all");
+  const [users, setUsers] = useState<PublicUser[]>([]);
+  const [groups, setGroups] = useState<DiscoverItem[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [createOpen, setCreateOpen] = useState(false);
+  const searchBoxRef = useRef<HTMLDivElement | null>(null);
+  const createRef = useRef<HTMLDivElement | null>(null);
 
-  const visible = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    return chats.filter((c) => {
-      if (filter === "archived" ? !c.archived : c.archived) return false;
-      if (filter === "unread" && c.unread === 0) return false;
-      if (filter === "groups" && c.kind !== "group") return false;
-      if (!q) return true;
-      const title = c.kind === "group" ? c.title : (c.partner?.name ?? "");
-      return (
-        title.toLowerCase().includes(q) ||
-        (c.lastMessage?.body ?? "").toLowerCase().includes(q) ||
-        (c.partner?.handle ?? "").toLowerCase().includes(q)
-      );
-    });
-  }, [chats, filter, query]);
+  useEffect(() => {
+    const q = query.trim();
+    if (q.length < 1) {
+      setUsers([]);
+      setGroups([]);
+      setSearching(false);
+      return;
+    }
+    setSearching(true);
+    const t = setTimeout(async () => {
+      try {
+        const [u, g] = await Promise.all([
+          api<{ users: PublicUser[] }>(`/api/users/search?q=${encodeURIComponent(q)}`),
+          api<{ items: DiscoverItem[] }>(`/api/discover?q=${encodeURIComponent(q)}`),
+        ]);
+        setUsers(u.users);
+        setGroups(g.items);
+      } catch {
+        setUsers([]);
+        setGroups([]);
+      } finally {
+        setSearching(false);
+      }
+    }, 280);
+    return () => clearTimeout(t);
+  }, [query]);
 
-  const pinned = visible.filter((c) => c.pinned);
-  const rest = visible.filter((c) => !c.pinned);
-  const totalUnread = chats.reduce((sum, c) => sum + (c.archived ? 0 : c.unread), 0);
-  const grad = ACCENTS[me.accent] ?? ACCENTS.violet;
+  // Клик вне поиска / меню создания — закрыть
+  useEffect(() => {
+    const onClick = (e: MouseEvent) => {
+      if (createRef.current && !createRef.current.contains(e.target as Node)) setCreateOpen(false);
+    };
+    document.addEventListener("mousedown", onClick);
+    return () => document.removeEventListener("mousedown", onClick);
+  }, []);
+
+  const spaces = useMemo(() => conversations.filter((c) => c.kind !== "direct"), [conversations]);
+  const dms = useMemo(() => conversations.filter((c) => c.kind === "direct"), [conversations]);
+
+  const linkToken = extractToken(query);
 
   return (
-    <aside
-      className="flex h-full w-full flex-col border-r"
-      style={{ background: "var(--panel-solid)", borderColor: "var(--border)" }}
-    >
-      <div className="flex items-center gap-3 px-4 pt-4 pb-3">
-        <PulseLogo size={36} />
-        <div className="min-w-0 flex-1">
-          <div className="truncate text-[15px] leading-tight font-bold">Pulse</div>
-          <div className="text-[11.5px]" style={{ color: "var(--muted)" }}>
-            {totalUnread > 0 ? `${totalUnread} новых` : "всё прочитано"}
-          </div>
-        </div>
-        <button
-          onClick={onNewChat}
-          className="rounded-2xl p-2.5 text-white transition hover:brightness-110"
-          style={{ background: `linear-gradient(135deg, ${grad.from}, ${grad.to})` }}
-          title="Новый чат"
-        >
-          <IconPlus size={18} />
+    <aside className="flex h-full w-full flex-col border-r border-white/8 bg-[#0c0c17]/80 backdrop-blur-xl">
+      {/* Шапка */}
+      <div className="flex items-center gap-3 px-5 pt-5 pb-3">
+        <button onClick={onOpenProfile} className="transition-transform hover:scale-105 active:scale-95">
+          <Avatar name={me.displayName} src={me.avatarUrl} size={44} online={me.showOnline} />
         </button>
-      </div>
-
-      <div className="px-4 pb-3">
-        <div
-          className="flex items-center gap-2 rounded-2xl px-3 py-2.5"
-          style={{ background: "var(--panel-2)", border: "1px solid var(--border)" }}
-        >
-          <IconSearch size={17} className="shrink-0" />
-          <input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Поиск чатов и сообщений"
-            className="w-full bg-transparent text-[13.5px] outline-none placeholder:text-[13px]"
-            style={{ color: "var(--text)" }}
-          />
-        </div>
-        <div className="mt-2.5 flex gap-1.5 overflow-x-auto pb-0.5">
-          {FILTERS.map((f) => (
-            <button
-              key={f.id}
-              onClick={() => setFilter(f.id)}
-              className="shrink-0 rounded-full px-3 py-1.5 text-[12px] font-medium transition"
-              style={{
-                background: filter === f.id ? "var(--accent)" : "var(--panel-2)",
-                color: filter === f.id ? "#fff" : "var(--muted)",
-              }}
-            >
-              {f.label}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <div className="pulse-scroll flex-1 px-2 pb-2">
-        {[...pinned, ...rest].map((chat) => {
-          const partner = chat.partner;
-          const name = chat.kind === "group" ? chat.title : (partner?.name ?? "Чат");
-          const emoji = chat.kind === "group" ? chat.emoji : (partner?.emoji ?? "💬");
-          const accent = chat.kind === "group" ? chat.accent : (partner?.accent ?? "violet");
-          const online = partner ? isOnline(partner.lastSeenAt) : false;
-          const active = chat.id === activeId;
-          return (
-            <button
-              key={chat.id}
-              onClick={() => onSelect(chat.id)}
-              className="mb-1 flex w-full items-center gap-3 rounded-2xl px-2.5 py-2.5 text-left transition"
-              style={{
-                background: active ? "var(--panel-3)" : "transparent",
-                boxShadow: active ? `inset 3px 0 0 var(--accent)` : undefined,
-              }}
-            >
-              <Avatar
-                name={name}
-                emoji={emoji}
-                accent={accent}
-                fileId={chat.kind === "group" ? chat.avatarFileId : partner?.avatarFileId}
-                size={46}
-                online={online}
-              />
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-1.5">
-                  <span className="truncate text-[14px] font-semibold">{name}</span>
-                  {chat.pinned ? <IconPin size={12} style={{ color: "var(--muted)" }} /> : null}
-                  {chat.muted ? <IconBellOff size={13} style={{ color: "var(--muted)" }} /> : null}
-                  {chat.archived ? <IconArchive size={13} style={{ color: "var(--muted)" }} /> : null}
-                  {chat.blocked || chat.blockedBy ? (
-                    <span className="text-[11px]" style={{ color: "var(--muted)" }}>
-                      🚫
-                    </span>
-                  ) : null}
-                  <span className="ml-auto shrink-0 text-[11px]" style={{ color: "var(--muted)" }}>
-                    {chat.lastMessage ? formatTime(chat.lastMessage.createdAt) : ""}
-                  </span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span
-                    className="truncate text-[12.5px]"
-                    style={{ color: chat.unread > 0 ? "var(--text)" : "var(--muted)" }}
-                  >
-                    {settings.messagePreview ? previewText(chat, me.id) : "Сообщение скрыто"}
-                  </span>
-                  {chat.unread > 0 ? (
-                    <span
-                      className="ml-auto flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full px-1.5 text-[11px] font-bold text-white"
-                      style={{
-                        background: chat.muted ? "var(--panel-3)" : "var(--accent)",
-                        color: chat.muted ? "var(--muted)" : "#fff",
-                      }}
-                    >
-                      {chat.unread}
-                    </span>
-                  ) : null}
-                </div>
-              </div>
-            </button>
-          );
-        })}
-        {visible.length === 0 ? (
-          <div className="mt-8 px-4 text-center text-[13px]" style={{ color: "var(--muted)" }}>
-            {query ? "Ничего не найдено" : "Пока нет чатов — создайте новый ⚡"}
-          </div>
-        ) : null}
-      </div>
-
-      <div className="flex items-center gap-2 border-t px-3 py-3" style={{ borderColor: "var(--border)" }}>
-        <Avatar name={me.name} emoji={me.emoji} accent={me.accent} size={38} />
         <div className="min-w-0 flex-1">
-          <div className="truncate text-[13px] font-semibold">{me.name}</div>
-          <div className="truncate text-[11.5px]" style={{ color: "var(--muted)" }}>
-            @{me.handle}
+          <div className="flex items-center gap-2">
+            <span className="font-display text-lg font-bold tracking-[0.18em]">PULSE</span>
+            <Sparkles className="h-3.5 w-3.5 text-violet-300/80" />
           </div>
+          <p className="truncate text-xs text-white/35">@{me.username}</p>
         </div>
+
+        <div ref={createRef} className="relative">
+          <button
+            onClick={() => setCreateOpen((v) => !v)}
+            title="Создать группу или канал"
+            className="btn-gradient flex h-9 w-9 items-center justify-center rounded-xl text-white"
+          >
+            <Plus className="h-4 w-4" />
+          </button>
+          <AnimatePresence>
+            {createOpen && (
+              <motion.div
+                key="create-menu"
+                initial={{ opacity: 0, y: -6, scale: 0.96 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: -4, scale: 0.97 }}
+                className="glass-strong absolute right-0 z-40 mt-2 w-56 overflow-hidden rounded-2xl p-1.5 shadow-2xl"
+              >
+                <CreateItem
+                  icon={<Users className="h-4 w-4 text-violet-300" />}
+                  title="Создать группу"
+                  hint="Общий чат и звонки"
+                  onClick={() => {
+                    setCreateOpen(false);
+                    onCreateGroup("group");
+                  }}
+                />
+                <CreateItem
+                  icon={<Megaphone className="h-4 w-4 text-cyan-300" />}
+                  title="Создать канал"
+                  hint="Пишут админы"
+                  onClick={() => {
+                    setCreateOpen(false);
+                    onCreateGroup("channel");
+                  }}
+                />
+                <CreateItem
+                  icon={<Compass className="h-4 w-4 text-emerald-300" />}
+                  title="Обзор"
+                  hint="Публичные группы и каналы"
+                  onClick={() => {
+                    setCreateOpen(false);
+                    onDiscover();
+                  }}
+                />
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
+
         <button
-          onClick={onOpenSettings}
-          className="rounded-xl p-2.5 transition hover:brightness-125"
-          style={{ background: "var(--panel-2)", color: "var(--muted)" }}
-          title="Настройки"
+          onClick={onOpenSaved}
+          title="Избранное — сохранить сообщение можно через «Переслать»"
+          className="glass flex h-9 w-9 items-center justify-center rounded-xl text-white/50 transition-colors hover:text-amber-300"
         >
-          <IconSettings size={18} />
+          <Bookmark className="h-4 w-4" />
+        </button>
+        <button
+          onClick={onToggleSound}
+          title={soundOn ? "Выключить звук уведомлений" : "Включить звук уведомлений"}
+          className={`glass flex h-9 w-9 items-center justify-center rounded-xl transition-colors ${
+            soundOn ? "text-white/50 hover:text-emerald-300" : "text-white/30 hover:text-white/70"
+          }`}
+        >
+          {soundOn ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}
         </button>
         <button
           onClick={onLogout}
-          className="rounded-xl p-2.5 transition hover:brightness-125"
-          style={{ background: "var(--panel-2)", color: "var(--muted)" }}
-          title="Сменить профиль"
+          title="Выйти"
+          className="glass flex h-9 w-9 items-center justify-center rounded-xl text-white/50 transition-colors hover:text-rose-300"
         >
-          <IconLogout size={18} />
+          <LogOut className="h-4 w-4" />
+        </button>
+      </div>
+
+      {/* Поиск */}
+      <div ref={searchBoxRef} className="relative px-5 pb-3">
+        <label className="ring-focus flex items-center gap-2.5 rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-2.5 transition-all">
+          <Search className="h-4 w-4 shrink-0 text-white/35" />
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Люди, группы, каналы или ссылка"
+            className="w-full bg-transparent text-sm placeholder:text-white/30"
+          />
+          {searching && <Loader2 className="h-3.5 w-3.5 animate-spin text-white/40" />}
+        </label>
+
+        <AnimatePresence>
+          {query.trim().length > 0 && (
+            <motion.div
+              key="search-results"
+              initial={{ opacity: 0, y: -6 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -6 }}
+              className="glass-strong nice-scroll absolute inset-x-5 top-full z-30 max-h-80 overflow-y-auto rounded-2xl p-1.5 shadow-2xl"
+            >
+              {linkToken && (
+                <button
+                  onClick={() => {
+                    onJoinByToken(linkToken);
+                    setQuery("");
+                  }}
+                  className="mb-1 flex w-full items-center gap-3 rounded-xl bg-violet-500/15 px-3 py-2.5 text-left"
+                >
+                  <span className="glass flex h-8 w-8 items-center justify-center rounded-lg">
+                    <Lock className="h-3.5 w-3.5 text-violet-300" />
+                  </span>
+                  <span className="min-w-0">
+                    <span className="block truncate text-sm font-medium">Войти по ссылке</span>
+                    <span className="block truncate text-[11px] text-white/40">
+                      приватная группа, канал или звонок
+                    </span>
+                  </span>
+                </button>
+              )}
+
+              {groups.length > 0 && (
+                <p className="px-3 pt-2 pb-1 text-[10px] font-semibold tracking-widest text-white/25 uppercase">
+                  Группы и каналы
+                </p>
+              )}
+              {groups.map((g) => (
+                <button
+                  key={g.id}
+                  onClick={() => {
+                    if (g.joined) {
+                      onSelect(g.id);
+                    }
+                    setQuery("");
+                  }}
+                  disabled={!g.joined}
+                  className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left transition-colors hover:bg-white/8 disabled:opacity-60"
+                >
+                  <Avatar name={g.name} src={g.avatarUrl} size={34} />
+                  <div className="min-w-0 flex-1">
+                    <p className="flex items-center gap-1.5 truncate text-sm font-medium">
+                      {g.kind === "channel" ? (
+                        <Megaphone className="h-3 w-3 text-cyan-300" />
+                      ) : (
+                        <Hash className="h-3 w-3 text-violet-300" />
+                      )}
+                      {g.name}
+                    </p>
+                    <p className="truncate text-xs text-white/35">{g.memberCount} участников</p>
+                  </div>
+                  {!g.joined && <span className="text-[11px] text-white/30">в обзоре</span>}
+                </button>
+              ))}
+
+              {users.length > 0 && (
+                <p className="px-3 pt-2 pb-1 text-[10px] font-semibold tracking-widest text-white/25 uppercase">
+                  Люди
+                </p>
+              )}
+              {users.map((u) => (
+                <button
+                  key={u.id}
+                  onClick={() => {
+                    onOpenChat(u);
+                    setQuery("");
+                  }}
+                  className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left transition-colors hover:bg-white/8"
+                >
+                  <Avatar name={u.displayName} src={u.avatarUrl} size={34} online={u.online} />
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-medium">{u.displayName}</p>
+                    <p className="truncate text-xs text-white/35">@{u.username}</p>
+                  </div>
+                  <UserPlus className="h-3.5 w-3.5 text-white/25" />
+                </button>
+              ))}
+
+              {users.length === 0 && groups.length === 0 && !searching && !linkToken && (
+                <p className="flex items-center gap-2 px-3 py-3 text-sm text-white/40">
+                  <SearchX className="h-4 w-4" />
+                  Ничего не нашли
+                </p>
+              )}
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
+
+      {/* Истории */}
+      <StoriesRow me={me} groups={storyGroups} onOpen={onOpenStories} onAdd={onAddStory} />
+
+      {/* Список диалогов */}
+      <div className="nice-scroll min-h-0 flex-1 overflow-y-auto px-3 pb-4">
+        {spaces.length > 0 && (
+          <SectionLabel>Группы и каналы</SectionLabel>
+        )}
+        <div className="space-y-1">
+          {spaces.map((conv) => (
+            <ConvRow key={conv.id} conv={conv} active={conv.id === activeId} meId={me.id} onSelect={onSelect} />
+          ))}
+        </div>
+
+        <SectionLabel>Личные чаты</SectionLabel>
+        {dms.length === 0 && spaces.length === 0 ? (
+          <div className="mt-8 px-6 text-center">
+            <div className="glass mx-auto flex h-14 w-14 items-center justify-center rounded-2xl">
+              <Search className="h-6 w-6 text-white/30" />
+            </div>
+            <p className="mt-4 text-sm leading-relaxed text-white/40">
+              Пока никого. Найдите человека по @имени в поиске выше — или создайте группу кнопкой «+»
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-1">
+            {dms.map((conv) => (
+              <ConvRow key={conv.id} conv={conv} active={conv.id === activeId} meId={me.id} onSelect={onSelect} />
+            ))}
+          </div>
+        )}
+
+        <button
+          onClick={onDiscover}
+          className="mt-4 flex w-full items-center justify-center gap-2 rounded-2xl border border-dashed border-white/12 py-3 text-[13px] text-white/40 transition-colors hover:border-violet-400/40 hover:text-white/70"
+        >
+          <Compass className="h-4 w-4" />
+          Найти публичные группы и каналы
         </button>
       </div>
     </aside>
+  );
+}
+
+function SectionLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <p className="px-2 pt-3 pb-2 text-[11px] font-semibold tracking-widest text-white/25 uppercase">
+      {children}
+    </p>
+  );
+}
+
+function ConvRow({
+  conv,
+  active,
+  meId,
+  onSelect,
+}: {
+  conv: ConversationListItem;
+  active: boolean;
+  meId: string;
+  onSelect: (id: string) => void;
+}) {
+  const lm = conv.lastMessage;
+  const call = conv.activeCall;
+  const isSpace = conv.kind !== "direct";
+
+  return (
+    <button
+      onClick={() => onSelect(conv.id)}
+      className={`relative flex w-full items-center gap-3 rounded-2xl px-3 py-3 text-left transition-colors ${
+        active ? "bg-white/10" : "hover:bg-white/5"
+      }`}
+    >
+      <div className="relative">
+        <Avatar
+          name={isSpace ? conv.title : conv.peer.displayName}
+          src={isSpace ? conv.avatarUrl : conv.peer.avatarUrl}
+          size={48}
+          online={isSpace ? undefined : conv.peer.online}
+        />
+        {isSpace && (
+          <span className="glass-strong absolute -right-1 -bottom-1 flex h-5 w-5 items-center justify-center rounded-full">
+            {conv.kind === "channel" ? (
+              <Megaphone className="h-3 w-3 text-cyan-300" />
+            ) : (
+              <Users className="h-3 w-3 text-violet-300" />
+            )}
+          </span>
+        )}
+      </div>
+
+      <div className="min-w-0 flex-1">
+        <div className="flex items-baseline justify-between gap-2">
+          <p className="flex min-w-0 items-center gap-1.5 truncate text-[15px] font-semibold">
+            <span className="truncate">{conv.title}</span>
+            {conv.isPrivate && isSpace && <Lock className="h-3 w-3 shrink-0 text-white/25" />}
+          </p>
+          {lm && <span className="shrink-0 text-[11px] text-white/30">{timeHHmm(lm.createdAt)}</span>}
+        </div>
+
+        <div className="mt-0.5 flex items-center justify-between gap-2">
+          {call && call.status === "live" ? (
+            <p className="flex min-w-0 items-center gap-1.5 truncate text-[13px] text-emerald-300">
+              <Radio className="h-3.5 w-3.5 shrink-0 animate-pulse-dot" />
+              <span className="truncate">
+                Звонок идёт · {call.participantCount}
+                {call.media === "video" && <Video className="ml-1 inline h-3 w-3" />}
+              </span>
+            </p>
+          ) : (
+            <p className="truncate text-[13px] text-white/40">
+              {previewText(conv, meId)}
+            </p>
+          )}
+          {conv.unreadCount > 0 && (
+            <span className="btn-gradient flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full px-1.5 text-[11px] font-bold text-white">
+              {conv.unreadCount > 99 ? "99+" : conv.unreadCount}
+            </span>
+          )}
+        </div>
+      </div>
+    </button>
+  );
+}
+
+function CreateItem({
+  icon,
+  title,
+  hint,
+  onClick,
+}: {
+  icon: React.ReactNode;
+  title: string;
+  hint: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left transition-colors hover:bg-white/8"
+    >
+      <span className="glass flex h-8 w-8 shrink-0 items-center justify-center rounded-lg">{icon}</span>
+      <span className="min-w-0">
+        <span className="block truncate text-sm font-medium">{title}</span>
+        <span className="block truncate text-[11px] text-white/35">{hint}</span>
+      </span>
+    </button>
   );
 }
