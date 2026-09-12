@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { ChevronLeft, ChevronRight, Eye, Loader2, Trash2, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Eye, ImageOff, Loader2, Trash2, X } from "lucide-react";
 import Avatar from "./Avatar";
 import { api } from "@/lib/api";
 import { timeAgo } from "@/lib/format";
@@ -38,11 +38,18 @@ export default function StoryViewer({
   const [paused, setPaused] = useState(false);
   const [showViewers, setShowViewers] = useState(false);
   const [viewers, setViewers] = useState<Viewer[] | null>(null);
+  /** Файл истории побит (404) — показываем заглушку вместо «сломанной картинки». */
+  const [mediaBroken, setMediaBroken] = useState(false);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const group = groups[gi];
   const story: StoryItem | undefined = group?.stories[si];
   const isMine = group?.user.id === me.id;
+
+  // Новая история — сбрасываем флаг «файл побит»
+  useEffect(() => {
+    setMediaBroken(false);
+  }, [story?.id]);
 
   const next = useCallback(() => {
     setSi((curSi) => {
@@ -203,7 +210,18 @@ export default function StoryViewer({
 
         {/* Изображение или видео */}
         <div className="relative min-h-0 flex-1 px-3 pb-4">
-          <div className="relative h-full overflow-hidden rounded-3xl bg-white/5">
+          <div className="relative h-full overflow-hidden rounded-3xl bg-black/40">
+            {/* Подложка: то же фото, растянутое и размытое — кадр заполняет
+                экран целиком и не выглядит «маленькой картинкой в пустоте». */}
+            {!storyIsVideo && !mediaBroken && (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={story.mediaUrl}
+                alt=""
+                aria-hidden
+                className="absolute inset-0 h-full w-full scale-110 object-cover opacity-60 blur-xl"
+              />
+            )}
             {storyIsVideo ? (
               <video
                 src={story.mediaUrl}
@@ -215,11 +233,25 @@ export default function StoryViewer({
                   if (v.paused) void v.play().catch(() => {});
                   else v.pause();
                 }}
-                className="h-full w-full cursor-pointer object-contain"
+                className="relative h-full w-full cursor-pointer object-contain"
               />
+            ) : mediaBroken ? (
+              <div className="relative flex h-full w-full flex-col items-center justify-center gap-3 text-center">
+                <ImageOff className="h-8 w-8 text-white/30" />
+                <p className="text-sm text-white/40">
+                  Изображение недоступно
+                  <br />
+                  <span className="text-xs text-white/25">Файл мог быть удалён</span>
+                </p>
+              </div>
             ) : (
               /* eslint-disable-next-line @next/next/no-img-element */
-              <img src={story.mediaUrl} alt="История" className="h-full w-full object-contain" />
+              <img
+                src={story.mediaUrl}
+                alt="История"
+                onError={() => setMediaBroken(true)}
+                className="relative h-full w-full object-contain"
+              />
             )}
             {story.caption && (
               <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent p-5 pt-12">

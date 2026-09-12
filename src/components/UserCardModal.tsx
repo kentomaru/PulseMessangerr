@@ -1,6 +1,7 @@
 "use client";
 
-import { CalendarDays, MessageSquareText } from "lucide-react";
+import { useEffect, useState } from "react";
+import { CalendarDays, MessageSquareLock, MessageSquareText, PhoneOff } from "lucide-react";
 import Avatar, { paletteFor } from "./Avatar";
 import { ModalShell } from "./ProfileModal";
 import type { PublicUser } from "@/lib/types";
@@ -13,16 +14,29 @@ type Props = {
 };
 
 export default function UserCardModal({ user, onClose, onMessage }: Props) {
+  // Баннер мог не дожить до текущего запуска (битый файл) — тогда градиент
+  // вместо «сломанной картинки».
+  const [bannerBroken, setBannerBroken] = useState(false);
+  useEffect(() => {
+    setBannerBroken(false);
+  }, [user.bannerUrl]);
+  const showBanner = !!user.bannerUrl && !bannerBroken;
+
   return (
     <ModalShell onClose={onClose}>
       <div
         className={`relative h-32 w-full overflow-hidden ${
-          user.bannerUrl ? "" : `bg-gradient-to-br ${paletteFor(user.username)}`
+          showBanner ? "" : `bg-gradient-to-br ${paletteFor(user.username)}`
         }`}
       >
-        {user.bannerUrl && (
+        {showBanner && (
           // eslint-disable-next-line @next/next/no-img-element
-          <img src={user.bannerUrl} alt="Баннер" className="h-full w-full object-cover" />
+          <img
+            src={user.bannerUrl ?? undefined}
+            alt="Баннер"
+            className="h-full w-full object-cover"
+            onError={() => setBannerBroken(true)}
+          />
         )}
         <div className="absolute inset-0 bg-gradient-to-t from-black/55 to-transparent" />
       </div>
@@ -39,6 +53,24 @@ export default function UserCardModal({ user, onClose, onMessage }: Props) {
         <p className={`mt-1.5 text-xs font-medium ${user.online ? "text-emerald-400" : "text-white/35"}`}>
           {lastSeenLabel(user.lastSeenAt, user.online)}
         </p>
+
+        {/* Подсказки о приватности собеседника */}
+        {(!user.allowCalls || !user.allowMessages) && (
+          <div className="mt-2.5 flex flex-wrap justify-center gap-1.5">
+            {!user.allowCalls && (
+              <span className="flex items-center gap-1.5 rounded-full border border-white/8 bg-white/5 px-2.5 py-1 text-[11px] text-white/50">
+                <PhoneOff className="h-3 w-3" />
+                Не принимает звонки
+              </span>
+            )}
+            {!user.allowMessages && (
+              <span className="flex items-center gap-1.5 rounded-full border border-white/8 bg-white/5 px-2.5 py-1 text-[11px] text-white/50">
+                <MessageSquareLock className="h-3 w-3" />
+                Новые чаты закрыты
+              </span>
+            )}
+          </div>
+        )}
 
         {user.bio && (
           <p className="mx-auto mt-4 max-w-xs text-sm leading-relaxed text-white/65">{user.bio}</p>

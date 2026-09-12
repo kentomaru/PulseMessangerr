@@ -142,23 +142,54 @@ export function legacyAttachmentKind(att: AttachmentInfo | null): "voice" | "vid
   return null;
 }
 
-/** Короткая строка-превью сообщения (сайдбар, цитаты, пересылка). */
-export function messagePreview(type: string, content: string): string {
+/** Тип превью для иконки (вместо эмодзи — SVG в компоненте PreviewLabel). */
+export type PreviewKind = "call" | "image" | "voice" | "video" | "file" | null;
+
+/** Разобрать сообщение на «иконку» и чистый текст превью (без эмодзи). */
+export function previewInfo(type: string, content: string): { kind: PreviewKind; text: string } {
   if (type === "call") {
     const info = parseCallContent(content);
-    return info ? `📞 ${callLogLabel(info)}` : "📞 Звонок";
+    return { kind: "call", text: info ? callLogLabel(info) : "Звонок" };
   }
   const att = parseAttachment(type, content);
   if (att) {
     const caption = att.caption ? ` ${att.caption.replace(/\n/g, " ").slice(0, 40)}` : "";
-    if (type === "image") return `🖼 Фото${caption}`;
+    if (type === "image") return { kind: "image", text: `Фото${caption}` };
     if (type === "voice" || legacyAttachmentKind(att) === "voice")
-      return `🎤 Голосовое${att.duration ? ` · ${formatDuration(Math.round(att.duration))}` : ""}`;
+      return {
+        kind: "voice",
+        text: `Голосовое${att.duration ? ` · ${formatDuration(Math.round(att.duration))}` : ""}`,
+      };
     if (type === "video_note" || legacyAttachmentKind(att) === "video_note")
-      return `🎬 Видеосообщение${att.duration ? ` · ${formatDuration(Math.round(att.duration))}` : ""}`;
-    if (type === "file") return `📎 ${att.name ?? "Файл"}${caption}`;
+      return {
+        kind: "video",
+        text: `Видеосообщение${att.duration ? ` · ${formatDuration(Math.round(att.duration))}` : ""}`,
+      };
+    if (type === "file") return { kind: "file", text: `${att.name ?? "Файл"}${caption}` };
   }
-  return content.replace(/\n/g, " ").slice(0, 80);
+  return { kind: null, text: content.replace(/\n/g, " ").slice(0, 80) };
+}
+
+/** Короткая строка-превью сообщения (уведомления, title — только текст, без эмодзи). */
+export function messagePreview(type: string, content: string): string {
+  return previewInfo(type, content).text;
+}
+
+/**
+ * Текст состоит только из 1–3 эмодзи? Такие сообщения рисуем как «стикеры» —
+ * крупно и без пузыря.
+ */
+export function emojiOnly(text: string): boolean {
+  const t = text.trim();
+  if (!t || t.length > 32) return false;
+  const emojis = t.match(/\p{Extended_Pictographic}/gu);
+  if (!emojis || emojis.length < 1 || emojis.length > 3) return false;
+  // кроме эмодзи допускаем только вариаторы/модификаторы и пробелы
+  const rest = t
+    .replace(/\p{Extended_Pictographic}/gu, "")
+    .replace(/[\uFE0F\u200D\u20E3\u{1F1E6}-\u{1F1FF}\u{1F3FB}-\u{1F3FF}]/gu, "")
+    .replace(/\s/g, "");
+  return rest.length === 0;
 }
 
 /** «2,4 МБ» / «500 МБ» — размер файла для карточек. */

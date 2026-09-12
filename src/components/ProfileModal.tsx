@@ -4,6 +4,7 @@ import { useRef, useState } from "react";
 import { motion } from "framer-motion";
 import {
   Camera,
+  CircleDot,
   ImageIcon,
   Loader2,
   LogOut,
@@ -202,7 +203,7 @@ export default function ProfileModal({ me, onClose, onSaved, onDeletedAccount }:
             <Toggle
               checked={showOnline}
               onChange={setShowOnline}
-              icon={<span className="text-xs">🟢</span>}
+              icon={<CircleDot className="h-4 w-4 text-emerald-300" />}
               label="Показывать статус «в сети»"
               hint="Скрывает онлайн и время последнего визита"
             />

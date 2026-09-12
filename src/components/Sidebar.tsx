@@ -26,9 +26,10 @@ import {
   VolumeX,
 } from "lucide-react";
 import Avatar from "./Avatar";
+import PreviewLabel from "./PreviewLabel";
 import StoriesRow from "./StoriesRow";
 import { api } from "@/lib/api";
-import { messagePreview, timeHHmm } from "@/lib/format";
+import { timeHHmm } from "@/lib/format";
 import type { ConversationListItem, DiscoverItem, PublicUser, StoryGroup } from "@/lib/types";
 
 type Props = {
@@ -62,12 +63,17 @@ type Props = {
   onJoinByToken: (token: string) => void;
 };
 
-function previewText(conv: ConversationListItem, meId: string) {
+/** Превью последнего сообщения: префикс + иконка типа (SVG) + текст. */
+function PreviewNode({ conv, meId }: { conv: ConversationListItem; meId: string }) {
   const lm = conv.lastMessage;
-  if (!lm) return "Нет сообщений";
-  const body = messagePreview(lm.type, lm.content);
+  if (!lm) return <>Нет сообщений</>;
   const prefix = lm.senderId === meId ? "Вы: " : conv.kind === "direct" ? "" : `${lm.senderName ?? ""}: `;
-  return prefix + body;
+  return (
+    <span className="inline-flex min-w-0 items-center gap-1.5">
+      {prefix && <span className="shrink-0">{prefix}</span>}
+      <PreviewLabel type={lm.type} content={lm.content} iconClassName="h-3.5 w-3.5" />
+    </span>
+  );
 }
 
 /** Из вставленной ссылки/токена достаём token. */
@@ -507,7 +513,7 @@ function ConvRow({
             </p>
           ) : (
             <p className="truncate text-[13px] text-white/40">
-              {previewText(conv, meId)}
+              <PreviewNode conv={conv} meId={meId} />
             </p>
           )}
           {conv.unreadCount > 0 && (

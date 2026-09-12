@@ -2,7 +2,19 @@
 
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Lock, User, AtSign, Loader2, PhoneCall, MessagesSquare, Sparkles, Eye, EyeOff } from "lucide-react";
+import {
+  AlertCircle,
+  AtSign,
+  CheckCircle2,
+  Eye,
+  EyeOff,
+  Loader2,
+  Lock,
+  MessagesSquare,
+  PhoneCall,
+  Sparkles,
+  User,
+} from "lucide-react";
 import { api } from "@/lib/api";
 
 type Mode = "login" | "register";
@@ -12,13 +24,37 @@ export default function AuthScreen() {
   const [username, setUsername] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [password, setPassword] = useState("");
+  const [password2, setPassword2] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
+  /** Подсказка надёжности пароля при регистрации. */
+  const strength = (() => {
+    let s = 0;
+    if (password.length >= 6) s++;
+    if (password.length >= 10) s++;
+    if (/[A-ZА-Я]/.test(password) && /[a-zа-я]/.test(password)) s++;
+    if (/\d/.test(password)) s++;
+    if (/[^\w\sа-яА-Яa-zA-Z0-9]/.test(password)) s++;
+    return Math.min(s, 4);
+  })();
+  const strengthLabel = ["", "Слабый", "Средний", "Хороший", "Надёжный"][strength];
+  const strengthColor = ["", "bg-rose-400", "bg-amber-400", "bg-emerald-400", "bg-emerald-300"][strength];
+
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setError("");
+    if (mode === "register") {
+      if (password !== password2) {
+        setError("Пароли не совпадают");
+        return;
+      }
+      if (password.length < 6) {
+        setError("Пароль — не менее 6 символов");
+        return;
+      }
+    }
     setLoading(true);
     try {
       await api(`/api/auth/${mode}`, {
@@ -176,6 +212,49 @@ export default function AuthScreen() {
                   {showPassword ? <EyeOff className="h-4.5 w-4.5" /> : <Eye className="h-4.5 w-4.5" />}
                 </button>
               </label>
+
+              {/* Индикатор надёжности — только при регистрации */}
+              {mode === "register" && password.length > 0 && (
+                <div className="-mt-1 flex items-center gap-2 px-1">
+                  <div className="flex h-1 flex-1 gap-1">
+                    {[0, 1, 2, 3].map((i) => (
+                      <span
+                        key={i}
+                        className={`h-full flex-1 rounded-full transition-colors ${
+                          i < strength ? strengthColor : "bg-white/10"
+                        }`}
+                      />
+                    ))}
+                  </div>
+                  {strengthLabel && (
+                    <span className="text-[11px] text-white/35">{strengthLabel}</span>
+                  )}
+                </div>
+              )}
+
+              {mode === "register" && (
+                <label className="ring-focus flex items-center gap-3 rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3.5 transition-all">
+                  <Lock className="h-4.5 w-4.5 shrink-0 text-white/35" />
+                  <input
+                    value={password2}
+                    onChange={(e) => setPassword2(e.target.value)}
+                    placeholder="Повторите пароль"
+                    type={showPassword ? "text" : "password"}
+                    autoComplete="new-password"
+                    required
+                    className="w-full bg-transparent text-[15px] placeholder:text-white/30"
+                  />
+                  {password2.length > 0 && (
+                    <span className="shrink-0">
+                      {password === password2 ? (
+                        <CheckCircle2 className="h-4.5 w-4.5 text-emerald-400" />
+                      ) : (
+                        <AlertCircle className="h-4.5 w-4.5 text-rose-400" />
+                      )}
+                    </span>
+                  )}
+                </label>
+              )}
 
               <AnimatePresence>
                 {error && (

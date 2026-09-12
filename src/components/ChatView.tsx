@@ -43,6 +43,7 @@ import {
   Send,
   Smile,
   SmilePlus,
+  Sticker,
   Trash2,
   UserRound,
   Users,
@@ -50,19 +51,20 @@ import {
   X,
 } from "lucide-react";
 import Avatar from "./Avatar";
+import PreviewLabel from "./PreviewLabel";
 import WallpaperModal from "./WallpaperModal";
 import { api, ApiError, copyToClipboard, uploadFile } from "@/lib/api";
 import { audioConstraints } from "@/lib/audioSettings";
-import { EMOJI_CATEGORIES } from "@/lib/emojis";
+import { EMOJI_CATEGORIES, STICKERS } from "@/lib/emojis";
 import { renderRichText } from "@/lib/richText";
 import {
   callLogLabel,
   dayLabel,
   formatBytes,
   formatDuration,
+  emojiOnly,
   lastSeenLabel,
   legacyAttachmentKind,
-  messagePreview,
   parseCallContent,
   parseAttachment,
   sameDay,
@@ -399,8 +401,40 @@ export default function ChatView({
 
   /* ─────────────────────────── отправка ─────────────────────────── */
 
-  const send = async () => {
+  /**
+   * Отправка сообщения. `directText` — отправить сразу (например, стикер),
+   * минуя поле ввода.
+   */
+  const send = async (directText?: string) => {
     if (sending || uploading || !canPost) return;
+
+    // Стикер/текст напрямую — без редактирования и черновиков
+    if (directText !== undefined) {
+      const content = directText.trim();
+      if (!content) return;
+      setSending(true);
+      const reply = replyTo;
+      setReplyTo(null);
+      try {
+        await api("/api/messages", {
+          method: "POST",
+          body: JSON.stringify({
+            conversationId,
+            type: "text",
+            content,
+            replyToId: reply?.id ?? null,
+          }),
+        });
+        await load();
+        refreshConversations();
+      } catch (e) {
+        setReplyTo(reply);
+        notify(e instanceof Error ? e.message : "Не удалось отправить");
+      } finally {
+        setSending(false);
+      }
+      return;
+    }
 
     // Редактирование своего сообщения
     if (editing) {
@@ -1060,7 +1094,7 @@ export default function ChatView({
                 <span className="font-semibold text-violet-300">
                   {pinnedCurrent.senderId === me.id ? "Вы" : (pinnedCurrent.sender?.displayName ?? "")}:{" "}
                 </span>
-                {messagePreview(pinnedCurrent.type, pinnedCurrent.content)}
+                <PreviewLabel type={pinnedCurrent.type} content={pinnedCurrent.content} />
               </button>
               {pinned.length > 1 && (
                 <span className="flex shrink-0 items-center gap-0.5 text-[11px] text-white/40 tabular-nums">
@@ -1368,9 +1402,10 @@ export default function ChatView({
                           : (replyTo!.sender?.displayName ?? "Сообщение")}
                     </p>
                     <p className="truncate text-xs text-white/45">
-                      {editing
-                        ? messagePreview(editing.type, editing.content)
-                        : messagePreview(replyTo!.type, replyTo!.content)}
+                      <PreviewLabel
+                        type={editing ? editing.type : replyTo!.type}
+                        content={editing ? editing.content : replyTo!.content}
+                      />
                     </p>
                   </div>
                   <button
@@ -1522,7 +1557,14 @@ export default function ChatView({
                 transition={{ duration: 0.15 }}
                 className="absolute right-0 bottom-[calc(100%+8px)] z-30 w-[min(92vw,420px)]"
               >
-                <EmojiPicker onPick={insertEmoji} onClose={() => setEmojiOpen(false)} />
+                <EmojiPicker
+                  onPick={insertEmoji}
+                  onSendSticker={(s) => {
+                    setEmojiOpen(false);
+                    void send(s);
+                  }}
+                  onClose={() => setEmojiOpen(false)}
+                />
               </motion.div>
             )}
           </AnimatePresence>
@@ -1883,7 +1925,7 @@ function ForwardModal({
           </button>
         </div>
         <p className="truncate px-6 pt-4 text-xs text-white/40">
-          {messagePreview(message.type, message.content)}
+          <PreviewLabel type={message.type} content={message.content} />
         </p>
         <div className="nice-scroll max-h-80 overflow-y-auto p-3">
           {!convs ? (
@@ -1958,7 +2000,8 @@ function VideoNoteRecorder({
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
           video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 640 } },
-          audio: true,
+          // Шумоподавление/эхоподавление из настроек — и для видеокружков тоже
+          audio: audioConstraints(),
         });
         if (cancelled) {
           stream.getTracks().forEach((t) => t.stop());
@@ -2062,7 +2105,7 @@ function VideoNoteRecorder({
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
           video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 640 } },
-          audio: true,
+          audio: audioConstraints(),
         });
         streamRef.current = stream;
         if (videoRef.current) videoRef.current.srcObject = stream;
@@ -2277,6 +2320,8 @@ function MessageBubble({
 
   // вложение (для старых «сломанных» text-сообщений тоже распознаётся)
   const att = parseAttachment(message.type, message.content);
+  /** «Стикер»: сообщение только из эмодзи рисуем крупно и без пузыря. */
+  const sticker = message.type === "text" && emojiOnly(message.content);
   const legacyKind = message.type === "text" ? legacyAttachmentKind(att) : null;
   const isVoice = message.type === "voice" || legacyKind === "voice";
   const isNote = message.type === "video_note" || legacyKind === "video_note";
@@ -2326,8 +2371,8 @@ function MessageBubble({
 
         <div
           className={`relative overflow-hidden ${
-            media ? "" : own && !space ? "bubble-own text-white" : "bubble-peer text-white/90"
-          } ${media ? "" : "rounded-3xl px-4 py-2.5"} ${
+            media || sticker ? "" : own && !space ? "bubble-own text-white" : "bubble-peer text-white/90"
+          } ${media || sticker ? "" : "rounded-3xl px-4 py-2.5"} ${
             own && !space ? "rounded-br-lg" : space || !own ? "rounded-bl-lg" : ""
           } ${highlighted ? "ring-2 ring-violet-400/60" : ""}`}
         >
@@ -2343,9 +2388,11 @@ function MessageBubble({
                   {message.replyTo.senderId === meId ? "Вы" : message.replyTo.senderName}
                 </span>
                 <span className="block truncate text-[12px] text-white/50">
-                  {message.replyTo.deleted
-                    ? "Сообщение удалено"
-                    : messagePreview(message.replyTo.type, message.replyTo.content)}
+                  {message.replyTo.deleted ? (
+                    "Сообщение удалено"
+                  ) : (
+                    <PreviewLabel type={message.replyTo.type} content={message.replyTo.content} />
+                  )}
                 </span>
               </span>
             </button>
@@ -2377,6 +2424,9 @@ function MessageBubble({
             </div>
           ) : isFile && att ? (
             <FileCard att={att} />
+          ) : sticker ? (
+            /* «Стикер»: только эмодзи — крупно, без пузыря (как в мессенджерах) */
+            <p className="py-0.5 text-[52px] leading-none select-none">{message.content.trim()}</p>
           ) : (
             <p className="text-[15px] leading-relaxed break-words whitespace-pre-wrap">
               {renderRichText(message.content)}
@@ -2753,21 +2803,13 @@ function ConfirmDeleteModal({
   onConfirm: () => void;
   onCancel: () => void;
 }) {
-  const preview = (() => {
-    switch (message.type) {
-      case "image":
-        return "🖼 Фото";
-      case "file":
-        return "📎 Файл";
-      case "voice":
-        return "🎤 Голосовое сообщение";
-      case "video_note":
-        return "🎥 Видеосообщение";
-      default: {
-        const t = message.content.trim();
-        return t.length > 90 ? `${t.slice(0, 90)}…` : t;
-      }
+  const isAttachment = ["image", "file", "voice", "video_note"].includes(message.type);
+  const previewText = (() => {
+    if (!isAttachment) {
+      const t = message.content.trim();
+      return t.length > 90 ? `${t.slice(0, 90)}…` : t;
     }
+    return "";
   })();
 
   return (
@@ -2789,7 +2831,15 @@ function ConfirmDeleteModal({
           <Trash2 className="h-5 w-5 text-rose-300" />
         </div>
         <h3 className="font-display text-lg font-bold">Удалить сообщение?</h3>
-        {preview && <p className="mx-auto mt-2 line-clamp-2 max-w-xs text-sm text-white/45">{preview}</p>}
+        {isAttachment ? (
+          <p className="mx-auto mt-2 flex max-w-xs items-center justify-center text-sm text-white/45">
+            <PreviewLabel type={message.type} content={message.content} iconClassName="h-4 w-4" />
+          </p>
+        ) : (
+          previewText && (
+            <p className="mx-auto mt-2 line-clamp-2 max-w-xs text-sm text-white/45">{previewText}</p>
+          )
+        )}
         <p className="mt-1.5 text-xs text-white/35">Это действие нельзя отменить</p>
         <div className="mt-5 flex gap-2.5">
           <button
@@ -2812,10 +2862,20 @@ function ConfirmDeleteModal({
 
 /* ─────────────────────────── эмодзи-пикер ─────────────────────────── */
 
-function EmojiPicker({ onPick, onClose }: { onPick: (emoji: string) => void; onClose: () => void }) {
+function EmojiPicker({
+  onPick,
+  onSendSticker,
+  onClose,
+}: {
+  onPick: (emoji: string) => void;
+  /** Отправить стикер отдельным сообщением. */
+  onSendSticker: (sticker: string) => void;
+  onClose: () => void;
+}) {
+  /** catIdx === -1 — вкладка стикеров, остальное — категории эмодзи. */
   const [catIdx, setCatIdx] = useState(0);
   const cats = EMOJI_CATEGORIES;
-  const cat = cats[Math.min(catIdx, cats.length - 1)];
+  const cat = cats[Math.min(Math.max(catIdx, 0), cats.length - 1)];
   const gridRef = useRef<HTMLDivElement | null>(null);
 
   // при смене категории прокручиваем сетку наверх
@@ -2830,6 +2890,15 @@ function EmojiPicker({ onPick, onClose }: { onPick: (emoji: string) => void; onC
     <div className="glass-strong overflow-hidden rounded-[1.4rem] shadow-2xl">
       {/* категории */}
       <div className="flex items-center gap-0.5 border-b border-white/8 px-2.5 py-2">
+        <button
+          onClick={() => setCatIdx(-1)}
+          title="Стикеры — отправляются отдельным сообщением"
+          className={`flex h-8 w-9 shrink-0 items-center justify-center rounded-xl transition-colors ${
+            catIdx === -1 ? "bg-white/12 text-white" : "text-white/45 hover:bg-white/6 hover:text-white/80"
+          }`}
+        >
+          <Sticker className="h-4 w-4" />
+        </button>
         {cats.map((c, i) => (
           <button
             key={c.name}
@@ -2850,21 +2919,48 @@ function EmojiPicker({ onPick, onClose }: { onPick: (emoji: string) => void; onC
           <X className="h-4 w-4" />
         </button>
       </div>
-      {/* сетка эмодзи */}
-      <div ref={gridRef} className="nice-scroll grid max-h-64 grid-cols-8 gap-0.5 overflow-y-auto p-2 max-sm:grid-cols-7">
-        {cat.emojis.map((e) => (
-          <button
-            key={e}
-            onClick={() => onPick(e)}
-            className="flex h-9 items-center justify-center rounded-xl text-xl transition-transform hover:scale-125 hover:bg-white/8 active:scale-95"
+
+      {catIdx === -1 ? (
+        /* Стикеры: нажатие сразу отправляет их в чат крупным сообщением */
+        <>
+          <div className="nice-scroll grid max-h-64 grid-cols-6 gap-1 overflow-y-auto p-2.5 max-sm:grid-cols-5">
+            {STICKERS.map((s) => (
+              <button
+                key={s}
+                onClick={() => onSendSticker(s)}
+                title="Отправить стикер"
+                className="flex h-14 items-center justify-center rounded-2xl text-[34px] transition-transform hover:scale-110 hover:bg-white/8 active:scale-95"
+              >
+                {s}
+              </button>
+            ))}
+          </div>
+          <p className="border-t border-white/8 px-3 py-1.5 text-[10px] text-white/30">
+            Стикеры · нажмите, чтобы отправить
+          </p>
+        </>
+      ) : (
+        <>
+          {/* сетка эмодзи */}
+          <div
+            ref={gridRef}
+            className="nice-scroll grid max-h-64 grid-cols-8 gap-0.5 overflow-y-auto p-2 max-sm:grid-cols-7"
           >
-            {e}
-          </button>
-        ))}
-      </div>
-      <p className="border-t border-white/8 px-3 py-1.5 text-[10px] text-white/30">
-        {cat.name} · нажмите, чтобы вставить
-      </p>
+            {cat.emojis.map((e) => (
+              <button
+                key={e}
+                onClick={() => onPick(e)}
+                className="flex h-9 items-center justify-center rounded-xl text-xl transition-transform hover:scale-125 hover:bg-white/8 active:scale-95"
+              >
+                {e}
+              </button>
+            ))}
+          </div>
+          <p className="border-t border-white/8 px-3 py-1.5 text-[10px] text-white/30">
+            {cat.name} · нажмите, чтобы вставить
+          </p>
+        </>
+      )}
     </div>
   );
 }

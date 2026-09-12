@@ -1,5 +1,7 @@
 "use client";
 
+import { useEffect, useState } from "react";
+
 const PALETTES = [
   "from-violet-500 to-fuchsia-500",
   "from-cyan-500 to-blue-600",
@@ -40,15 +42,23 @@ export default function Avatar({
   online?: boolean;
   className?: string;
 }) {
+  // Если файл аватара побился (404) — показываем градиент с инициалами,
+  // а не «сломанную картинку». Сбрасывается при смене адреса картинки.
+  const [broken, setBroken] = useState(false);
+  useEffect(() => {
+    setBroken(false);
+  }, [src]);
+  const showImg = !!src && !broken;
   return (
     <div className={`relative shrink-0 ${className}`} style={{ width: size, height: size }}>
-      {src ? (
+      {showImg ? (
         // eslint-disable-next-line @next/next/no-img-element
         <img
-          src={src}
+          src={src ?? undefined}
           alt={name}
           className="h-full w-full rounded-full object-cover ring-1 ring-white/15"
           draggable={false}
+          onError={() => setBroken(true)}
         />
       ) : (
         <div

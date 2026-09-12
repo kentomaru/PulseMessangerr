@@ -22,9 +22,11 @@ import {
   Check,
   Copy,
   Expand,
+  Maximize,
   Maximize2,
   Mic,
   MicOff,
+  Minimize,
   Minimize2,
   MonitorOff,
   MonitorUp,
@@ -332,6 +334,8 @@ function CallWindow(props: WindowProps) {
   const prefs = useRef(loadCallWindowPrefs()).current;
   const [sizeKey, setSizeKey] = useState<SizeKey>(prefs.sizeKey);
   const [pos, setPos] = useState<{ x: number; y: number } | null>(prefs.pos);
+  /** Полноэкранный режим окна звонка (пункт ТЗ №8). */
+  const [fullscreen, setFullscreen] = useState(false);
   const dragRef = useRef<{ dx: number; dy: number; pointerId: number } | null>(null);
   const windowRef = useRef<HTMLDivElement | null>(null);
 
@@ -358,8 +362,10 @@ function CallWindow(props: WindowProps) {
 
   if (!session) return null;
 
-  /** Захват перетаскивания: pointer capture, чтобы окно не «срывалось». */
+  /** Захват перетаскивания: pointer capture, чтобы окно не «срывалось».
+      В полноэкранном режиме перетаскивание не нужно. */
   const onHeaderPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (fullscreen) return;
     // Кнопки в шапке перетаскивание не начинают
     if ((e.target as HTMLElement).closest("button")) return;
     const rect = windowRef.current?.getBoundingClientRect();
@@ -397,23 +403,32 @@ function CallWindow(props: WindowProps) {
         animate={{ opacity: 1, scale: 1 }}
         exit={{ opacity: 0, scale: 0.95 }}
         transition={{ type: "spring", bounce: 0.18, duration: 0.4 }}
-        className="fixed z-[80] hidden overflow-hidden rounded-[1.6rem] border border-white/12 bg-[#0b0b16]/95 shadow-[0_40px_120px_-30px_rgba(0,0,0,1)] backdrop-blur-2xl md:flex md:flex-col"
-        style={{
-          width: size.w,
-          height: size.h,
-          left: pos ? pos.x : undefined,
-          top: pos ? pos.y : undefined,
-          right: pos ? undefined : 24,
-          bottom: pos ? undefined : 24,
-        }}
+        className={`fixed z-[80] hidden overflow-hidden rounded-[1.6rem] border border-white/12 bg-[#0b0b16]/95 shadow-[0_40px_120px_-30px_rgba(0,0,0,1)] backdrop-blur-2xl md:flex md:flex-col ${
+          fullscreen ? "inset-2" : ""
+        }`}
+        style={
+          fullscreen
+            ? { width: "auto", height: "auto" }
+            : {
+                width: size.w,
+                height: size.h,
+                left: pos ? pos.x : undefined,
+                top: pos ? pos.y : undefined,
+                right: pos ? undefined : 24,
+                bottom: pos ? undefined : 24,
+              }
+        }
       >
         <div
           onPointerDown={onHeaderPointerDown}
           onPointerMove={onHeaderPointerMove}
           onPointerUp={onHeaderPointerUp}
           onPointerCancel={onHeaderPointerUp}
+          onDoubleClick={() => setFullscreen((v) => !v)}
           style={{ touchAction: "none" }}
-          className="flex cursor-grab items-center gap-2 border-b border-white/8 px-4 py-2.5 select-none active:cursor-grabbing"
+          className={`flex items-center gap-2 border-b border-white/8 px-4 py-2.5 select-none ${
+            fullscreen ? "cursor-default" : "cursor-grab active:cursor-grabbing"
+          }`}
         >
           <LiveDot />
           <p className="min-w-0 flex-1 truncate text-sm font-semibold">{session.title}</p>
@@ -425,14 +440,26 @@ function CallWindow(props: WindowProps) {
             {session.participants.length}
           </span>
           <div className="flex shrink-0 items-center gap-0.5">
+            {!fullscreen && (
+              <IconBtn
+                title="Размер окна"
+                onClick={() => setSizeKey((k) => (k === "sm" ? "md" : k === "md" ? "lg" : "sm"))}
+              >
+                {sizeKey === "lg" ? (
+                  <Shrink className="h-3.5 w-3.5" />
+                ) : (
+                  <Maximize2 className="h-3.5 w-3.5" />
+                )}
+              </IconBtn>
+            )}
             <IconBtn
-              title="Размер окна"
-              onClick={() => setSizeKey((k) => (k === "sm" ? "md" : k === "md" ? "lg" : "sm"))}
+              title={fullscreen ? "Выйти из полноэкранного режима" : "На весь экран (двойной клик по шапке)"}
+              onClick={() => setFullscreen((v) => !v)}
             >
-              {sizeKey === "lg" ? (
-                <Shrink className="h-3.5 w-3.5" />
+              {fullscreen ? (
+                <Minimize className="h-3.5 w-3.5" />
               ) : (
-                <Maximize2 className="h-3.5 w-3.5" />
+                <Maximize className="h-3.5 w-3.5" />
               )}
             </IconBtn>
             <IconBtn title="Свернуть — можно писать в чат" onClick={props.onMinimize}>
@@ -575,28 +602,37 @@ function CallBody({
           {people.length > 0 && (
             <div className="flex max-w-full flex-wrap justify-center gap-2">
               {people.map((p) => (
-                <button
+                <span
                   key={p.userId}
-                  onClick={() => p.userId !== meId && onViewUser(p.user)}
-                  className="glass flex items-center gap-2 rounded-full py-1 pr-3 pl-1 text-xs transition-colors hover:bg-white/10"
+                  className="glass flex items-center gap-2 rounded-full py-1 pr-1.5 pl-1 text-xs"
                 >
-                  <Avatar name={p.user.displayName} src={p.user.avatarUrl} size={22} />
-                  <span className="max-w-24 truncate">
-                    {p.userId === meId ? "Вы" : p.user.displayName.split(" ")[0]}
-                  </span>
+                  <button
+                    onClick={() => p.userId !== meId && onViewUser(p.user)}
+                    className="flex min-w-0 items-center gap-2 transition-opacity hover:opacity-80"
+                    title="Открыть профиль"
+                  >
+                    <Avatar name={p.user.displayName} src={p.user.avatarUrl} size={22} />
+                    <span className="max-w-24 truncate">
+                      {p.userId === meId ? "Вы" : p.user.displayName.split(" ")[0]}
+                    </span>
+                  </button>
                   {p.muted ? (
-                    <MicOff className="h-3 w-3 text-rose-300" />
+                    <MicOff className="h-3 w-3 shrink-0 text-rose-300" />
                   ) : (
-                    <Mic className="h-3 w-3 text-emerald-300" />
+                    <Mic className="h-3 w-3 shrink-0 text-emerald-300" />
                   )}
-                </button>
+                  {/* Громкость доступна всегда — даже в чисто голосовом звонке */}
+                  {p.userId !== meId && (
+                    <VolumeControl userId={p.userId} name={p.user.displayName} />
+                  )}
+                </span>
               ))}
             </div>
           )}
         </div>
       ) : null}
 
-      {/* Подписи аудио-участников под видео-сеткой */}
+      {/* Подписи аудио-участников под видео-сеткой (с регулировкой громкости) */}
       {videoPeople.length > 0 && people.some((p) => !hasVideo(p)) && (
         <div className="mt-2.5 flex flex-wrap gap-2">
           {people
@@ -604,11 +640,14 @@ function CallBody({
             .map((p) => (
               <span
                 key={p.userId}
-                className="glass flex items-center gap-2 rounded-full py-1 pr-3 pl-1 text-[11px]"
+                className="glass flex items-center gap-2 rounded-full py-1 pr-1.5 pl-1 text-[11px]"
               >
                 <Avatar name={p.user.displayName} src={p.user.avatarUrl} size={20} />
                 {p.userId === meId ? "Вы" : p.user.displayName.split(" ")[0]}
-                {p.muted && <MicOff className="h-3 w-3 text-rose-300" />}
+                {p.muted && <MicOff className="h-3 w-3 shrink-0 text-rose-300" />}
+                {p.userId !== meId && (
+                  <VolumeControl userId={p.userId} name={p.user.displayName} />
+                )}
               </span>
             ))}
         </div>
