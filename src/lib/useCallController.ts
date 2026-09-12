@@ -998,6 +998,49 @@ export function useCallController(
       }
     }
   }, [sendSignal]);
+  const renegotiateAllRef = useRef(renegotiateAll);
+  renegotiateAllRef.current = renegotiateAll;
+
+  /* ─────────────────────────────────────────────────────────────────────
+   * АВТО-ПЕРЕГОВОРЫ после старта звонка.
+   * Симптом был такой: звука нет, пока кто-то не включит демку/камеру
+   * (т.е. пока не случится повторное согласование). Значит ПЕРВОЕ
+   * согласование на некоторых сетях проходит «битым». Чтобы не заставлять
+   * человека включать демку, мы сами повторяем согласование дважды —
+   * на 2.5-й и 6-й секунде. Дёшево и без разрыва соединения.
+   * ───────────────────────────────────────────────────────────────────── */
+  useEffect(() => {
+    if (session?.status !== "live") return;
+    const t1 = setTimeout(() => void renegotiateAllRef.current(), 2_500);
+    const t2 = setTimeout(() => void renegotiateAllRef.current(), 6_000);
+    return () => {
+      clearTimeout(t1);
+      clearTimeout(t2);
+    };
+  }, [session?.status, session?.id]);
+
+  /**
+   * Принудительное переподключение медиа со всеми (кнопка «перезвук»):
+   * новые офферы с ICE-рестартом. Лечит «звук пропал / не было с самого
+   * начала» без выхода из звонка.
+   */
+  const reconnectMedia = useCallback(async () => {
+    for (const [peerId, l] of Array.from(linksRef.current.entries())) {
+      try {
+        l.lastIceRestart = Date.now();
+        l.offering = true;
+        l.offeringSince = Date.now();
+        const offer = await l.pc.createOffer({ iceRestart: true });
+        await l.pc.setLocalDescription(offer);
+        const s = sessionRef.current;
+        if (s) await sendSignal(s.id, peerId, "offer", { type: offer.type, sdp: offer.sdp });
+      } catch {
+        l.offering = false;
+        l.offeringSince = null;
+      }
+    }
+    notifyRef.current("Переподключаем звук и видео…");
+  }, [sendSignal]);
 
   /* ─────────── порог активации голоса (VOX) + уровень микрофона ─────────── */
 
@@ -1314,6 +1357,7 @@ export function useCallController(
     screenStreamRef,
     seconds,
     connQuality,
+    reconnectMedia,
     minimized,
     setMinimized,
     streamTick,

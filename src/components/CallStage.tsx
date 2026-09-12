@@ -30,8 +30,10 @@ import {
   Minimize2,
   MonitorOff,
   MonitorUp,
+  ExternalLink,
   Phone,
   PhoneOff,
+  RotateCw,
   Shrink,
   UserPlus,
   Users,
@@ -79,6 +81,8 @@ type Props = {
   onToggleMute: () => void;
   onToggleCamera: () => void;
   onToggleScreenShare: () => void;
+  /** Принудительно переподключить звук/видео со всеми участниками. */
+  onReconnectMedia: () => void;
   onCopyLink: () => Promise<string | null>;
   onInvite: (userIds: string[]) => Promise<number>;
   onViewUser: (user: PublicUser) => void;
@@ -180,6 +184,7 @@ export default function CallStage(props: Props) {
             key="window"
             {...props}
             onCopyLink={copyLink}
+            onShareLink={props.onCopyLink}
             copied={copied}
             onOpenInvite={() => setShowInvite(true)}
             onMinimize={() => setMinimized(true)}
@@ -316,6 +321,8 @@ function IncomingPrompt({ incoming, starting, onAccept, onDecline, onDismissInco
 
 type WindowProps = Omit<Props, "onCopyLink"> & {
   onCopyLink: () => void;
+  /** Оригинальный генератор ссылки (для «открыть звонок в отдельном окне»). */
+  onShareLink: () => Promise<string | null>;
   copied: boolean;
   onOpenInvite: () => void;
   onMinimize: () => void;
@@ -936,6 +943,9 @@ function Controls({
   meId,
   compact,
   onApplyAudioSettings,
+  onReconnectMedia,
+  onShareLink,
+  notify,
   micLevelRef,
 }: WindowProps & { compact?: boolean }) {
   const [audioPanel, setAudioPanel] = useState(false);
@@ -998,6 +1008,38 @@ function Controls({
         title="Настройки звука: шумоподавление, чувствительность микрофона"
       >
         <AudioLines className="h-4.5 w-4.5" />
+      </Control>
+      <Control
+        small={compact}
+        onClick={onReconnectMedia}
+        title="Переподключить звук и видео (если не слышно)"
+      >
+        <RotateCw className="h-4.5 w-4.5" />
+      </Control>
+      <Control
+        small={compact}
+        onClick={() => {
+          // Звонок в отдельном окне браузера — не зависит от этой вкладки:
+          // новое окно заходит в тот же звонок по ссылке, а эта вкладка
+          // через пару секунд передаёт эстафету и выходит.
+          void (async () => {
+            const url = await onShareLink();
+            if (!url) {
+              notify("Не удалось получить ссылку на звонок");
+              return;
+            }
+            const w = window.open(url, "pulse-call", "popup,width=980,height=720");
+            if (!w) {
+              notify("Браузер заблокировал окно — разрешите всплывающие окна для сайта");
+              return;
+            }
+            notify("Звонок открывается в отдельном окне…");
+            setTimeout(() => onLeave(), 4_000);
+          })();
+        }}
+        title="Открыть звонок в отдельном окне (переживёт закрытие вкладки)"
+      >
+        <ExternalLink className="h-4.5 w-4.5" />
       </Control>
       <button
         onClick={onLeave}
@@ -1379,9 +1421,11 @@ function RemoteAudio({ userId }: { userId: string }) {
       if (watch) clearInterval(watch);
       teardown();
     };
-    // volume намеренно не в зависимостях — он меняется отдельным эффектом
+    // volume намеренно не в зависимостях — он меняется отдельным эффектом.
+    // Длина списка АУДИО-дорожек — в зависимостях: если звук пришёл позже
+    // видео, граф пересоберётся и заиграет (раньше мог остаться немым).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [stream, tick]);
+  }, [stream, tick, stream ? stream.getAudioTracks().length : 0]);
 
   // Громкость меняется мгновенно, без пересборки графа.
   useEffect(() => {

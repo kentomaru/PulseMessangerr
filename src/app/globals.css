@@ -27,15 +27,15 @@ body {
   color: rgb(255 255 255 / 0.92);
   font-size: 15px;
   line-height: 1.45;
-  /* Фон мессенджера: глубокий сапфирово-фиолетовый градиент с мягкими
-     статичными свечениями. Никаких «плавающих» пятен — спокойный,
-     дорогой и ровный фон, на котором интерфейс читается идеально. */
-  background-color: #0a0915;
+  /* Фон мессенджера: «сумеречный аметист» — тёплый розово-фиолетовый
+     вечер сверху, холодный индиго справа и бирюзовое дыхание снизу.
+     Цвета мягкие, красивые и статичные — ничего не плавает. */
+  background-color: #0e0a1a;
   background-image:
-    linear-gradient(168deg, #131029 0%, #0a0915 48%, #0b0d1d 100%),
-    radial-gradient(52rem 34rem at 8% -8%, rgb(109 40 217 / 0.20), transparent 65%),
-    radial-gradient(44rem 30rem at 100% 0%, rgb(37 99 235 / 0.14), transparent 62%),
-    radial-gradient(48rem 32rem at 50% 112%, rgb(168 85 247 / 0.12), transparent 65%);
+    linear-gradient(168deg, #1d1238 0%, #0e0a1a 52%, #0c1224 100%),
+    radial-gradient(48rem 32rem at 10% -8%, rgb(236 72 153 / 0.17), transparent 64%),
+    radial-gradient(42rem 30rem at 98% 2%, rgb(99 102 241 / 0.20), transparent 62%),
+    radial-gradient(52rem 34rem at 48% 112%, rgb(45 212 191 / 0.11), transparent 66%);
   background-blend-mode: normal, screen, screen, screen;
   background-attachment: fixed;
   -webkit-font-smoothing: antialiased;
