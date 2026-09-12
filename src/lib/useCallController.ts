@@ -27,8 +27,25 @@ import type {
   PublicUser,
 } from "@/lib/types";
 
+/**
+ * ICE-серверы. Публичного STUN хватает почти всегда, но за симметричным NAT
+ * (корпоративные сети, мобильный оператор) соединение без TURN не установится.
+ * Если нужен TURN — задайте переменные окружения (NEXT_PUBLIC_ — они видны клиенту):
+ *   NEXT_PUBLIC_TURN_URL=turn:turn.example.com:3478
+ *   NEXT_PUBLIC_TURN_USERNAME=user
+ *   NEXT_PUBLIC_TURN_CREDENTIAL=secret
+ */
 const ICE_SERVERS: RTCIceServer[] = [
   { urls: ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"] },
+  ...(process.env.NEXT_PUBLIC_TURN_URL
+    ? [
+        {
+          urls: process.env.NEXT_PUBLIC_TURN_URL.split(",").map((u) => u.trim()),
+          username: process.env.NEXT_PUBLIC_TURN_USERNAME || undefined,
+          credential: process.env.NEXT_PUBLIC_TURN_CREDENTIAL || undefined,
+        },
+      ]
+    : []),
 ];
 
 const INCOMING_POLL_MS = 3_000;
