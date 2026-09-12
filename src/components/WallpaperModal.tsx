@@ -4,7 +4,7 @@ import { useRef, useState } from "react";
 import { Eraser, ImagePlus, Loader2, X } from "lucide-react";
 import { ModalShell } from "./ProfileModal";
 import { api, uploadFile } from "@/lib/api";
-import { WALLPAPER_PRESETS } from "@/lib/wallpapers";
+import { WALLPAPER_PRESETS, wallpaperStyle } from "@/lib/wallpapers";
 
 type Props = {
   conversationId: string;
@@ -73,8 +73,13 @@ export default function WallpaperModal({ conversationId, current, onClose, onSav
               onClick={() => setSelected(p.key)}
               className={`aspect-square rounded-2xl transition-all hover:scale-105 ${
                 selected === p.key ? "ring-2 ring-violet-400 ring-offset-2 ring-offset-[#0d0d18]" : ""
-              }`}
-              style={{ background: p.css, border: "1px solid rgba(255,255,255,0.08)" }}
+              } ${p.anim ? "relative overflow-hidden" : ""}`}
+              style={{
+                ...wallpaperStyle(p.key),
+                border: "1px solid rgba(255,255,255,0.08)",
+                // мини-плитка: фон без «разгона» размера, но с той же анимацией
+                backgroundSize: p.anim ? "220% 220%" : undefined,
+              }}
             />
           ))}
         </div>
@@ -86,7 +91,7 @@ export default function WallpaperModal({ conversationId, current, onClose, onSav
             className="glass flex flex-1 items-center justify-center gap-2 rounded-2xl py-3 text-sm font-medium text-white/85 transition-colors hover:bg-white/10"
           >
             {uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <ImagePlus className="h-4 w-4" />}
-            Своя картинка
+            Своя картинка или гифка (будет «живой»)
           </button>
           <button
             onClick={() => setSelected(null)}

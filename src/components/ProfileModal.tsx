@@ -15,6 +15,7 @@ import {
   X,
 } from "lucide-react";
 import Avatar, { paletteFor } from "./Avatar";
+import { PrivacySettings } from "./PrivacyModal";
 import { api, uploadFile } from "@/lib/api";
 import type { PublicUser } from "@/lib/types";
 
@@ -23,18 +24,15 @@ type Props = {
   onClose: () => void;
   onSaved: (u: PublicUser) => void;
   onDeletedAccount: () => void;
-  /** Открыть отдельную вкладку «Приватность». */
-  onOpenPrivacy?: () => void;
 };
 
-export default function ProfileModal({ me, onClose, onSaved, onDeletedAccount, onOpenPrivacy }: Props) {
+export default function ProfileModal({ me, onClose, onSaved, onDeletedAccount }: Props) {
+  /** Вкладки редактирования: «Профиль» и «Приватность» (пункт ТЗ №4). */
+  const [tab, setTab] = useState<"profile" | "privacy">("profile");
   const [displayName, setDisplayName] = useState(me.displayName);
   const [bio, setBio] = useState(me.bio);
   const [avatarUrl, setAvatarUrl] = useState<string | null>(me.avatarUrl);
   const [bannerUrl, setBannerUrl] = useState<string | null>(me.bannerUrl);
-  const [showOnline, setShowOnline] = useState(me.showOnline);
-  const [allowCalls, setAllowCalls] = useState(me.allowCalls);
-  const [allowMessages, setAllowMessages] = useState(me.allowMessages);
   const [saving, setSaving] = useState(false);
   const [busy, setBusy] = useState<"avatar" | "banner" | null>(null);
   const [error, setError] = useState("");
@@ -67,12 +65,10 @@ export default function ProfileModal({ me, onClose, onSaved, onDeletedAccount, o
           bio,
           avatarUrl,
           bannerUrl,
-          showOnline,
-          allowCalls,
-          allowMessages,
         }),
       });
       onSaved(d.user);
+      onClose();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Не удалось сохранить");
       setSaving(false);
@@ -163,8 +159,49 @@ export default function ProfileModal({ me, onClose, onSaved, onDeletedAccount, o
         />
       </div>
 
+      {/* Вкладки: Профиль / Приватность */}
+      <div className="flex gap-1 border-b border-white/8 px-7 pt-3">
+        {(
+          [
+            ["profile", "Профиль", null],
+            ["privacy", "Приватность", <Shield key="i" className="h-3.5 w-3.5" />],
+          ] as const
+        ).map(([t, label, icon]) => (
+          <button
+            key={t}
+            onClick={() => setTab(t)}
+            className={`relative flex items-center gap-2 px-4 py-2.5 text-sm font-medium transition-colors ${
+              tab === t ? "text-white" : "text-white/40 hover:text-white/70"
+            }`}
+          >
+            {icon}
+            {label}
+            {tab === t && (
+              <span className="absolute inset-x-3 -bottom-px h-0.5 rounded-full bg-gradient-to-r from-violet-400 to-fuchsia-400" />
+            )}
+          </button>
+        ))}
+      </div>
+
       <div className="nice-scroll max-h-[60vh] space-y-5 overflow-y-auto px-7 pt-4 pb-7">
+        {tab === "privacy" ? (
+          <>
+            <p className="text-xs leading-relaxed text-white/35">
+              Эти настройки применяются сразу после сохранения и действуют на всех, кто пытается
+              найти вас в Pulse.
+            </p>
+            <PrivacySettings
+              me={me}
+              onSaved={(u) => {
+                onSaved(u);
+              }}
+            />
+          </>
+        ) : (
+          <>
         <div className="text-center">
+          {/* Имя видно сразу при редактировании профиля */}
+          <p className="font-display text-lg font-bold">{displayName || me.username}</p>
           <p className="text-xs text-white/35">@{me.username}</p>
         </div>
 
@@ -194,56 +231,6 @@ export default function ProfileModal({ me, onClose, onSaved, onDeletedAccount, o
           />
           <span className="mt-1 block text-right text-[11px] text-white/25">{bio.length}/280</span>
         </label>
-
-        {/* Приватность */}
-        <div className="rounded-2xl border border-white/8 bg-white/[0.03] p-4">
-          <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-white/85">
-            <Shield className="h-4 w-4 text-violet-300" />
-            Приватность
-            {onOpenPrivacy && (
-              <button
-                onClick={() => {
-                  onClose();
-                  onOpenPrivacy();
-                }}
-                className="ml-auto text-[11px] font-medium text-violet-300/80 transition-colors hover:text-violet-200"
-              >
-                Отдельная вкладка →
-              </button>
-            )}
-          </div>
-          <div className="space-y-3.5">
-            <Toggle
-              checked={showOnline}
-              onChange={setShowOnline}
-              icon={<CircleDot className="h-4 w-4 text-emerald-300" />}
-              label="Показывать статус «в сети»"
-              hint="Скрывает онлайн и время последнего визита"
-            />
-            <Toggle
-              checked={allowCalls}
-              onChange={setAllowCalls}
-              icon={<PhoneOff className="h-4 w-4 text-white/50" />}
-              label="Разрешать звонки"
-              hint="Если выключить — вам никто не сможет позвонить"
-            />
-            <Toggle
-              checked={allowMessages}
-              onChange={setAllowMessages}
-              icon={<MessageSquareLock className="h-4 w-4 text-white/50" />}
-              label="Разрешать новые личные чаты"
-              hint="Существующие чаты продолжат работать"
-            />
-          </div>
-          <a
-            href="/privacy"
-            target="_blank"
-            rel="noreferrer"
-            className="mt-4 block text-center text-xs text-violet-300/80 transition-colors hover:text-violet-200"
-          >
-            Политика конфиденциальности →
-          </a>
-        </div>
 
         {error && (
           <p className="rounded-xl border border-rose-500/25 bg-rose-500/10 px-4 py-2.5 text-sm text-rose-300">
@@ -277,6 +264,19 @@ export default function ProfileModal({ me, onClose, onSaved, onDeletedAccount, o
             Удалить аккаунт
           </button>
         </div>
+          </>
+        )}
+
+        {tab === "privacy" && (
+          <a
+            href="/privacy"
+            target="_blank"
+            rel="noreferrer"
+            className="block text-center text-xs text-violet-300/80 transition-colors hover:text-violet-200"
+          >
+            Политика конфиденциальности →
+          </a>
+        )}
       </div>
     </ModalShell>
   );

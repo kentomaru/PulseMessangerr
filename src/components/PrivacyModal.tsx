@@ -21,8 +21,21 @@ type Props = {
   onSaved: (u: PublicUser) => void;
 };
 
-/** Отдельная вкладка «Приватность»: все настройки видимости в одном месте. */
-export default function PrivacyModal({ me, onClose, onSaved }: Props) {
+/**
+ * Панель настроек приватности — используется и как отдельная модалка,
+ * и как вкладка внутри профиля (пункт ТЗ: «приватность — отдельная
+ * вкладка при редактировании профиля»).
+ */
+export function PrivacySettings({
+  me,
+  onSaved,
+  onDone,
+}: {
+  me: PublicUser;
+  onSaved: (u: PublicUser) => void;
+  /** Вызывается после успешного сохранения (например, закрыть модалку). */
+  onDone?: () => void;
+}) {
   const [showOnline, setShowOnline] = useState(me.showOnline);
   const [allowCalls, setAllowCalls] = useState(me.allowCalls);
   const [allowMessages, setAllowMessages] = useState(me.allowMessages);
@@ -43,7 +56,7 @@ export default function PrivacyModal({ me, onClose, onSaved }: Props) {
         body: JSON.stringify({ showOnline, allowCalls, allowMessages }),
       });
       onSaved(d.user);
-      onClose();
+      onDone?.();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Не удалось сохранить");
       setSaving(false);
@@ -51,24 +64,8 @@ export default function PrivacyModal({ me, onClose, onSaved }: Props) {
   };
 
   return (
-    <ModalShell onClose={onClose}>
-      <div className="flex items-center gap-3 border-b border-white/8 px-6 py-4">
-        <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-violet-500/15">
-          <Shield className="h-4.5 w-4.5 text-violet-300" />
-        </div>
-        <div className="min-w-0 flex-1">
-          <h3 className="font-display text-base font-bold">Приватность</h3>
-          <p className="truncate text-xs text-white/35">Кто и что видит в вашем профиле</p>
-        </div>
-        <button
-          onClick={onClose}
-          className="rounded-full bg-white/10 p-2 text-white/80 transition-colors hover:bg-white/20"
-        >
-          <X className="h-4 w-4" />
-        </button>
-      </div>
-
-      <div className="space-y-4 px-6 py-5">
+    <div>
+      <div className="space-y-4">
         <Toggle
           checked={showOnline}
           onChange={setShowOnline}
@@ -104,15 +101,40 @@ export default function PrivacyModal({ me, onClose, onSaved }: Props) {
         )}
       </div>
 
-      <div className="border-t border-white/8 px-6 py-4">
+      <button
+        onClick={() => void save()}
+        disabled={!dirty || saving}
+        className="btn-gradient mt-5 flex w-full items-center justify-center gap-2 rounded-2xl py-3 text-[15px] font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        {saving && <Loader2 className="h-4 w-4 animate-spin" />}
+        Сохранить приватность
+      </button>
+    </div>
+  );
+}
+
+/** Отдельная модалка «Приватность» (используется как обёртка над панелью). */
+export default function PrivacyModal({ me, onClose, onSaved }: Props) {
+  return (
+    <ModalShell onClose={onClose}>
+      <div className="flex items-center gap-3 border-b border-white/8 px-6 py-4">
+        <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-violet-500/15">
+          <Shield className="h-4.5 w-4.5 text-violet-300" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <h3 className="font-display text-base font-bold">Приватность</h3>
+          <p className="truncate text-xs text-white/35">Кто и что видит в вашем профиле</p>
+        </div>
         <button
-          onClick={() => void save()}
-          disabled={!dirty || saving}
-          className="btn-gradient flex w-full items-center justify-center gap-2 rounded-2xl py-3 text-[15px] font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+          onClick={onClose}
+          className="rounded-full bg-white/10 p-2 text-white/80 transition-colors hover:bg-white/20"
         >
-          {saving && <Loader2 className="h-4 w-4 animate-spin" />}
-          Сохранить
+          <X className="h-4 w-4" />
         </button>
+      </div>
+
+      <div className="px-6 py-5">
+        <PrivacySettings me={me} onSaved={onSaved} onDone={onClose} />
       </div>
     </ModalShell>
   );

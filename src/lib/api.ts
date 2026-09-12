@@ -47,11 +47,23 @@ export async function uploadFile(file: File): Promise<string> {
     type: file.type || "application/octet-stream",
     size: String(file.size),
   });
-  const res = await fetch(`/api/upload?${params.toString()}`, {
-    method: "POST",
-    body: file,
-    credentials: "include",
-  });
+  let res: Response;
+  try {
+    res = await fetch(`/api/upload?${params.toString()}`, {
+      method: "POST",
+      body: file,
+      credentials: "include",
+    });
+  } catch {
+    // Сеть оборвалась / прокси отрезал тело запроса. Раньше здесь вылетало
+    // безликое «Failed to fetch» — объясняем, что делать.
+    throw new ApiError(
+      file.size > 5 * 1024 * 1024
+        ? "Файл не дошёл до сервера. Такое бывает с большими файлами при слабой сети или ограничении прокси — попробуйте файл поменьше или другую сеть"
+        : "Не удалось загрузить файл — проверьте интернет-соединение и попробуйте ещё раз",
+      0,
+    );
+  }
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new ApiError(data.error ?? "Не удалось загрузить файл", res.status);
   return data.url as string;

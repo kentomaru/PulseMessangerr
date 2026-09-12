@@ -10,7 +10,6 @@ import type { ConversationListItem, PublicUser, StoryGroup } from "@/lib/types";
 import { useCallController } from "@/lib/useCallController";
 import Sidebar from "./Sidebar";
 import ChatView from "./ChatView";
-import PrivacyModal from "./PrivacyModal";
 import ProfileModal from "./ProfileModal";
 import UserCardModal from "./UserCardModal";
 import CallStage from "./CallStage";
@@ -35,7 +34,6 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
   const [storyGroups, setStoryGroups] = useState<StoryGroup[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [showProfile, setShowProfile] = useState(false);
-  const [showPrivacy, setShowPrivacy] = useState(false);
   const [viewUser, setViewUser] = useState<PublicUser | null>(null);
   const [storyComposer, setStoryComposer] = useState(false);
   const [storyViewer, setStoryViewer] = useState<number | null>(null);
@@ -426,7 +424,6 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
           onCreateGroup={(kind) => setCreateKind(kind)}
           onDiscover={() => setDiscover(true)}
           onOpenSaved={() => void openSaved()}
-          onOpenPrivacy={() => setShowPrivacy(true)}
           onJoinByToken={(token) => void joinByToken(token)}
         />
       </div>
@@ -480,29 +477,19 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
             key="profile"
             me={me}
             onClose={() => setShowProfile(false)}
-            onOpenPrivacy={() => setShowPrivacy(true)}
             onSaved={(u: PublicUser) => {
+              // Приватность сохраняется во вкладке профиля и НЕ закрывает окно;
+              // само окно закрывает кнопка «Сохранить» вкладки профиля.
               setMe(u);
-              setShowProfile(false);
               void loadConversations();
-              notify("Профиль обновлён");
+              notify("Сохранено");
             }}
             onDeletedAccount={() => {
               window.location.href = "/";
             }}
           />
         )}
-        {showPrivacy && (
-          <PrivacyModal
-            key="privacy"
-            me={me}
-            onClose={() => setShowPrivacy(false)}
-            onSaved={(u: PublicUser) => {
-              setMe(u);
-              notify("Настройки приватности сохранены");
-            }}
-          />
-        )}
+
         {viewUser && (
           <UserCardModal
             key="user-card"

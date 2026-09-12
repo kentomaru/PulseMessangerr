@@ -18,7 +18,6 @@ import {
   Radio,
   Search,
   SearchX,
-  Shield,
   Sparkles,
   UserPlus,
   Users,
@@ -54,8 +53,6 @@ type Props = {
   onDiscover: () => void;
   /** Открыть «Избранное» (чат с самим собой). */
   onOpenSaved: () => void;
-  /** Открыть отдельную вкладку «Приватность». */
-  onOpenPrivacy: () => void;
   /** Включить/выключить звук уведомлений. */
   onToggleSound: () => void;
   /** Включить/выключить звук входящего звонка. */
@@ -106,7 +103,6 @@ export default function Sidebar({
   onCreateGroup,
   onDiscover,
   onOpenSaved,
-  onOpenPrivacy,
   onToggleSound,
   onToggleCallSound,
   onToggleNotify,
@@ -235,13 +231,6 @@ export default function Sidebar({
           className="glass flex h-9 w-9 items-center justify-center rounded-xl text-white/50 transition-colors hover:text-amber-300"
         >
           <Bookmark className="h-4 w-4" />
-        </button>
-        <button
-          onClick={onOpenPrivacy}
-          title="Приватность — кто видит ваш статус и может звонить/писать"
-          className="glass flex h-9 w-9 items-center justify-center rounded-xl text-white/50 transition-colors hover:text-violet-300"
-        >
-          <Shield className="h-4 w-4" />
         </button>
         {/* Настройки уведомлений: звук сообщений, рингтон, браузерные уведомления */}
         <div ref={notifyBoxRef} className="relative">
@@ -483,9 +472,15 @@ function ConvRow({
     <button
       onClick={() => onSelect(conv.id)}
       className={`relative flex w-full items-center gap-3 rounded-2xl px-3 py-3 text-left transition-colors ${
-        active ? "bg-white/10" : "hover:bg-white/5"
+        active
+          ? "bg-gradient-to-r from-violet-500/20 via-violet-500/10 to-transparent"
+          : "hover:bg-white/5"
       }`}
     >
+      {/* Акцентная полоска у активного чата */}
+      {active && (
+        <span className="absolute top-1/2 left-0 h-6 w-1 -translate-y-1/2 rounded-full bg-gradient-to-b from-violet-400 to-fuchsia-400" />
+      )}
       <div className="relative">
         <Avatar
           name={isSpace ? conv.title : conv.peer.displayName}
