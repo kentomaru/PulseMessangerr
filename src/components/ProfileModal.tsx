@@ -201,8 +201,8 @@ export default function ProfileModal({ me, onClose, onSaved, onDeletedAccount }:
         </div>
       )}
 
-      {/* аватар */}
-      <div className="relative -mt-10 flex justify-center">
+      {/* аватар: клик по нему ИЛИ по кнопке «Сменить фото» открывает выбор файла */}
+      <div className="relative -mt-10 flex flex-col items-center gap-2">
         <button
           onClick={() => avatarInput.current?.click()}
           className="group relative rounded-full ring-4 ring-[#0d0d18]"
@@ -212,10 +212,29 @@ export default function ProfileModal({ me, onClose, onSaved, onDeletedAccount }:
             {busy === "avatar" ? <Loader2 className="h-5 w-5 animate-spin text-white" /> : <Camera className="h-5 w-5 text-white" />}
           </span>
         </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => avatarInput.current?.click()}
+            disabled={busy === "avatar"}
+            className="glass flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[11px] font-medium text-white/85 transition-colors hover:bg-white/15 disabled:opacity-60"
+          >
+            {busy === "avatar" ? <Loader2 className="h-3 w-3 animate-spin" /> : <Camera className="h-3 w-3" />}
+            Сменить фото
+          </button>
+          {avatarUrl && (
+            <button
+              onClick={() => setAvatarUrl(null)}
+              className="flex items-center gap-1 rounded-full px-2 py-1.5 text-[11px] text-rose-300/90 transition-colors hover:bg-rose-500/10"
+              title="Убрать аватар"
+            >
+              <Trash2 className="h-3 w-3" /> убрать
+            </button>
+          )}
+        </div>
         <input
           ref={avatarInput}
           type="file"
-          accept="image/png,image/jpeg,image/webp,image/gif"
+          accept="image/*,.gif"
           className="hidden"
           onChange={(e) => {
             void pick(e.target.files?.[0] ?? null, "avatar");

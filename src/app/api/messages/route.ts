@@ -228,9 +228,35 @@ export const GET = withApi("messages", async ({ req, me }) => {
 });
 
 /** POST /api/messages — отправить сообщение { conversationId, type, content, replyToId }. */
+/**
+ * Идемпотентность отправки: клиент шлёт с сообщением случайный clientKey.
+ * Если прокси/браузер повторил POST (перезапрос по таймауту), мы не создаём
+ * ДУБЛЬ, а возвращаем уже созданное сообщение. Храним ключи 2 минуты.
+ */
+const recentKeys = new Map<string, { messageId: string; at: number }>();
+function rememberKey(key: string, messageId: string) {
+  recentKeys.set(key, { messageId, at: Date.now() });
+  if (recentKeys.size > 800) {
+    const cutoff = Date.now() - 120_000;
+    for (const [k, v] of recentKeys) if (v.at < cutoff) recentKeys.delete(k);
+  }
+}
+
 export const POST = withApi("messages:send", async ({ req, me, log }) => {
   const body = await req.json().catch(() => ({}));
   const conversationId = String(body.conversationId ?? "");
+  // Повторная доставка того же запроса — возвращаем существующее сообщение
+  const clientKey = typeof body.clientKey === "string" ? body.clientKey.slice(0, 64) : "";
+  if (clientKey) {
+    const seen = recentKeys.get(clientKey);
+    if (seen && Date.now() - seen.at < 120_000) {
+      const rows = await db.select().from(messages).where(eq(messages.id, seen.messageId)).limit(1);
+      if (rows[0]) {
+        const [serialized] = await serializeMessages([rows[0]], me.id);
+        return NextResponse.json({ message: serialized });
+      }
+    }
+  }
   const ALLOWED_TYPES = ["text", "image", "voice", "video_note", "file"] as const;
   const type = ALLOWED_TYPES.includes(body.type) ? (body.type as (typeof ALLOWED_TYPES)[number]) : "text";
   const replyToId = typeof body.replyToId === "string" && isUuid(body.replyToId) ? body.replyToId : null;
@@ -295,6 +321,7 @@ export const POST = withApi("messages:send", async ({ req, me, log }) => {
     .insert(messages)
     .values({ conversationId, senderId: me.id, type, content, replyToId })
     .returning();
+  if (clientKey) rememberKey(clientKey, msg.id);
 
   await db
     .update(conversationMembers)

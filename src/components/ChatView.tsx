@@ -325,7 +325,9 @@ export default function ChatView({
       const changed = fp !== msgFingerprintRef.current;
       msgFingerprintRef.current = fp;
       if (changed) {
-        setMessages(d.messages);
+        // Страховка от дублей (повторная доставка/кэш) — уникальный список по id
+        const seen = new Set<string>();
+        setMessages(d.messages.filter((m) => (seen.has(m.id) ? false : (seen.add(m.id), true))));
         setPinned(d.pinned ?? []);
       }
       setMeta(d.conversation);
@@ -1933,7 +1935,9 @@ function MessageContextMenu({
   const m = state.message;
   const own = m.senderId === meId;
   const att = parseAttachment(m.type, m.content);
-  const isEditable = own && !m.deletedAt && (m.type === "text" || m.type === "image" || m.type === "file");
+  // Правка по ПКМ — только для текстовых сообщений. Гифку/картинку/файл
+  // редактировать «как текст» нельзя (это ломало вложение).
+  const isEditable = own && !m.deletedAt && m.type === "text";
   const hasText = m.type === "text" ? !!m.content : !!(att?.caption || att?.url);
   const canDelete = own || (isSpace && (myRole === "owner" || myRole === "admin"));
   const canPin = !isSpace || myRole === "owner" || myRole === "admin" || own;
@@ -2539,9 +2543,9 @@ function MessageBubble({
         <div
           className={`relative overflow-hidden ${
             media || sticker ? "" : own && !space ? "bubble-own text-white" : "bubble-peer text-white/90"
-          } ${media || sticker ? "" : "rounded-3xl px-4 py-2.5"} ${
-            own && !space ? "rounded-br-lg" : space || !own ? "rounded-bl-lg" : ""
-          } ${highlighted ? "ring-2 ring-violet-400/60" : ""}`}
+          } ${media || sticker ? "" : `${own && !space ? "bubble-own-radius" : "bubble-peer-radius"} px-4 py-2.5`} ${
+            highlighted ? "ring-2 ring-violet-400/60" : ""
+          }`}
         >
           {/* Цитата (ответ на сообщение) */}
           {message.replyTo && (

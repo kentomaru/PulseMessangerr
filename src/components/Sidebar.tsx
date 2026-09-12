@@ -29,6 +29,7 @@ import {
 } from "lucide-react";
 import Avatar from "./Avatar";
 import PreviewLabel from "./PreviewLabel";
+import StatusEmoji from "./StatusEmoji";
 import StoriesRow from "./StoriesRow";
 import { api } from "@/lib/api";
 import { timeHHmm } from "@/lib/format";
@@ -184,18 +185,25 @@ export default function Sidebar({
   const linkToken = extractToken(query);
 
   return (
-    <aside className="flex h-full w-full flex-col border-r border-white/8 bg-[#0c0c17]/80 backdrop-blur-xl">
-      {/* Шапка */}
+    <aside className="flex h-full w-full flex-col border-r border-white/8 bg-[linear-gradient(180deg,rgba(19,17,36,0.88),rgba(10,10,20,0.86))] backdrop-blur-2xl">
+      {/* Шапка: аватар + имя (клик — профиль), фирменный логотип градиентом */}
       <div className="flex items-center gap-3 px-5 pt-5 pb-3">
         <button onClick={onOpenProfile} className="transition-transform hover:scale-105 active:scale-95">
           <Avatar name={me.displayName} src={me.avatarUrl} size={44} online={me.showOnline} />
         </button>
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            <span className="font-display text-lg font-bold tracking-[0.18em]">PULSE</span>
-            <Sparkles className="h-3.5 w-3.5 text-violet-300/80" />
+            <span className="text-gradient font-display text-lg font-bold tracking-[0.18em]">PULSE</span>
+            <Sparkles className="h-3.5 w-3.5 text-fuchsia-300/90" />
           </div>
-          <p className="truncate text-xs text-white/35">@{me.username}</p>
+          <button
+            onClick={onOpenProfile}
+            className="flex max-w-full items-center gap-1.5 text-left text-xs text-white/40 transition-colors hover:text-white/70"
+            title="Открыть профиль"
+          >
+            <span className="truncate">@{me.username}</span>
+            {me.statusEmoji && <StatusEmoji value={me.statusEmoji} size={13} />}
+          </button>
         </div>
 
         <div ref={createRef} className="relative">

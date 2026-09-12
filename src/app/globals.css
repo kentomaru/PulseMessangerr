@@ -107,20 +107,20 @@ select:focus-visible,
 /* ───────────────────  Стеклянные поверхности  ─────────────────── */
 
 .glass {
-  background: linear-gradient(180deg, rgb(255 255 255 / 0.075), rgb(255 255 255 / 0.035));
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
-  border: 1px solid rgb(255 255 255 / 0.085);
-  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.06);
+  background: linear-gradient(180deg, rgb(255 255 255 / 0.085), rgb(255 255 255 / 0.04));
+  backdrop-filter: blur(16px) saturate(140%);
+  -webkit-backdrop-filter: blur(16px) saturate(140%);
+  border: 1px solid rgb(255 255 255 / 0.09);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.07);
 }
 
 .glass-strong {
-  background: linear-gradient(180deg, rgb(23 22 40 / 0.92), rgb(12 12 22 / 0.9));
-  backdrop-filter: blur(26px);
-  -webkit-backdrop-filter: blur(26px);
-  border: 1px solid rgb(255 255 255 / 0.1);
+  background: linear-gradient(180deg, rgb(26 24 48 / 0.94), rgb(13 12 26 / 0.92));
+  backdrop-filter: blur(28px) saturate(150%);
+  -webkit-backdrop-filter: blur(28px) saturate(150%);
+  border: 1px solid rgb(255 255 255 / 0.11);
   box-shadow:
-    inset 0 1px 0 rgb(255 255 255 / 0.08),
+    inset 0 1px 0 rgb(255 255 255 / 0.09),
     var(--shadow-pop);
 }
 
@@ -128,8 +128,8 @@ select:focus-visible,
 
 .btn-gradient {
   position: relative;
-  background-image: linear-gradient(135deg, #7c3aed 0%, #a855f7 45%, #d946ef 100%);
-  box-shadow: 0 8px 24px -8px rgb(124 58 237 / 0.55);
+  background-image: linear-gradient(130deg, #6d28d9 0%, #8b5cf6 40%, #d946ef 78%, #22d3ee 130%);
+  box-shadow: 0 10px 26px -10px rgb(124 58 237 / 0.6);
   transition:
     filter 0.2s ease,
     transform 0.15s ease,
@@ -316,19 +316,27 @@ select:focus-visible,
 
 /* ───────────────────  Мелочи  ─────────────────── */
 
-/* Пузыри сообщений: свои — фирменный градиент с мягким свечением,
-   чужие — «стеклянная» подложка с тонким верхним бликом. */
+/* Пузыри сообщений: свои — фирменный градиент индиго→фуксия с мягким
+   свечением, чужие — «стеклянная» подложка с тонким верхним бликом. */
 .bubble-own {
-  background-image: linear-gradient(140deg, #6d28d9 0%, #8b5cf6 55%, #a855f7 115%);
+  background-image: linear-gradient(140deg, #5b21b6 0%, #7c3aed 45%, #a855f7 80%, #c084fc 120%);
   box-shadow:
-    0 8px 22px -12px rgb(124 58 237 / 0.65),
-    inset 0 1px 0 rgb(255 255 255 / 0.16);
+    0 10px 26px -14px rgb(124 58 237 / 0.75),
+    inset 0 1px 0 rgb(255 255 255 / 0.18);
 }
 
 .bubble-peer {
-  background: linear-gradient(180deg, rgb(255 255 255 / 0.09), rgb(255 255 255 / 0.055));
-  border: 1px solid rgb(255 255 255 / 0.08);
-  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.07);
+  background: linear-gradient(180deg, rgb(255 255 255 / 0.1), rgb(255 255 255 / 0.06));
+  border: 1px solid rgb(255 255 255 / 0.09);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.08);
+}
+
+/* «Хвостик» пузыря: асимметричные углы как в больших мессенджерах */
+.bubble-own-radius {
+  border-radius: 1.25rem 1.25rem 0.45rem 1.25rem;
+}
+.bubble-peer-radius {
+  border-radius: 1.25rem 1.25rem 1.25rem 0.45rem;
 }
 
 .story-ring {

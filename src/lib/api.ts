@@ -2,10 +2,32 @@ export async function api<T = unknown>(
   path: string,
   options: RequestInit = {},
 ): Promise<T> {
+  // Идемпотентность отправки сообщений: прокси/браузер могут повторить POST
+  // по таймауту — тогда в чате появлялся ДУБЛЬ последнего сообщения. Шлём
+  // случайный ключ, сервер по нему возвращает уже созданное сообщение.
+  let body = options.body;
+  if (
+    options.method === "POST" &&
+    path.split("?")[0] === "/api/messages" &&
+    typeof body === "string" &&
+    typeof crypto !== "undefined" &&
+    crypto.randomUUID
+  ) {
+    try {
+      const parsed = JSON.parse(body) as Record<string, unknown>;
+      if (!parsed.clientKey) {
+        parsed.clientKey = crypto.randomUUID();
+        body = JSON.stringify(parsed);
+      }
+    } catch {
+      /* тело не JSON — не трогаем */
+    }
+  }
   let res: Response;
   try {
     res = await fetch(path, {
       ...options,
+      body,
       headers:
         options.body instanceof FormData
           ? options.headers

@@ -569,6 +569,13 @@ export function useCallController(
       if (sessionRef.current || busyRef.current) return;
       busyRef.current = true;
       setStarting(true);
+      // Размораживаем AudioContext ПРЯМО в жесте пользователя (клик
+      // «Позвонить»/«Принять») — иначе первый звонок мог идти без звука.
+      try {
+        void getAudioContext()?.resume().catch(() => {});
+      } catch {
+        /* нет WebAudio */
+      }
       let stream: MediaStream | null = null;
       try {
         stream = await acquireMedia(opts.media);

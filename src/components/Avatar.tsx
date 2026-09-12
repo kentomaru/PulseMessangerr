@@ -44,21 +44,33 @@ export default function Avatar({
 }) {
   // Если файл аватара побился (404) — показываем градиент с инициалами,
   // а не «сломанную картинку». Сбрасывается при смене адреса картинки.
+  // «Аватарки не грузятся»: иногда браузер кэширует временный сбой сети —
+  // при ошибке делаем ОДНУ повторную попытку с новым параметром.
   const [broken, setBroken] = useState(false);
+  const [retried, setRetried] = useState(false);
   useEffect(() => {
     setBroken(false);
+    setRetried(false);
   }, [src]);
   const showImg = !!src && !broken;
+  const imgSrc =
+    src && retried
+      ? `${src}${src.includes("?") ? "&" : "?"}r=1`
+      : src ?? undefined;
   return (
     <div className={`relative shrink-0 ${className}`} style={{ width: size, height: size }}>
       {showImg ? (
         // eslint-disable-next-line @next/next/no-img-element
         <img
-          src={src ?? undefined}
+          src={imgSrc}
           alt={name}
+          loading="eager"
           className="h-full w-full rounded-full object-cover ring-1 ring-white/15"
           draggable={false}
-          onError={() => setBroken(true)}
+          onError={() => {
+            if (!retried) setRetried(true);
+            else setBroken(true);
+          }}
         />
       ) : (
         <div

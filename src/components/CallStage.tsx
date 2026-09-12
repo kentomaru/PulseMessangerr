@@ -1209,6 +1209,11 @@ function RemoteAudio({ userId }: { userId: string }) {
   const graphRef = useRef<{ src: MediaStreamAudioSourceNode; gain: GainNode } | null>(null);
 
   // Пересобираем граф при смене потока (первый трек/ренеготиация).
+  // ВАЖНО: если AudioContext «заморожен» (браузер ещё не видел жеста или
+  // вкладка была в фоне) — звук молча не играл, пока кто-то не включал
+  // видео/демку (перерисовка «будила» граф). Теперь: пытаемся разморозить
+  // контекст и каждые полсекунды проверяем; пока заморожен — звук идёт через
+  // запасный <audio>, чтобы звонок НИКОГДА не был немым.
   useEffect(() => {
     const teardown = () => {
       try {
@@ -1222,6 +1227,22 @@ function RemoteAudio({ userId }: { userId: string }) {
     teardown();
 
     const ctx = getAudioContext();
+    let watch: ReturnType<typeof setInterval> | null = null;
+
+    const attachFallback = () => {
+      const el = audioRef.current;
+      if (el && el.srcObject !== stream) {
+        el.srcObject = stream ?? null;
+        void el.play().catch(() => {
+          /* автоплей добьётся после первого жеста */
+        });
+      }
+    };
+    const detachFallback = () => {
+      const el = audioRef.current;
+      if (el && el.srcObject) el.srcObject = null;
+    };
+
     if (stream && ctx) {
       try {
         const src = ctx.createMediaStreamSource(stream);
@@ -1229,14 +1250,38 @@ function RemoteAudio({ userId }: { userId: string }) {
         gain.gain.value = Math.max(0, volume) / 100;
         src.connect(gain).connect(ctx.destination);
         graphRef.current = { src, gain };
-        if (audioRef.current) audioRef.current.srcObject = null;
-        return teardown;
+        if (ctx.state !== "running") void ctx.resume().catch(() => {});
+
+        // Страховка: пока контекст не «побежал» — играем через <audio>.
+        const check = () => {
+          if (!graphRef.current) return;
+          if (ctx.state === "running") {
+            detachFallback();
+            if (watch) {
+              clearInterval(watch);
+              watch = null;
+            }
+          } else {
+            void ctx.resume().catch(() => {});
+            attachFallback();
+          }
+        };
+        check();
+        if (watch === null && ctx.state !== "running") watch = setInterval(check, 600);
+        return () => {
+          if (watch) clearInterval(watch);
+          detachFallback();
+          teardown();
+        };
       } catch {
         /* WebAudio не завёлся — фолбэк ниже */
       }
     }
     if (audioRef.current) audioRef.current.srcObject = stream ?? null;
-    return teardown;
+    return () => {
+      if (watch) clearInterval(watch);
+      teardown();
+    };
     // volume намеренно не в зависимостях — он меняется отдельным эффектом
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stream, tick]);
