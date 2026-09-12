@@ -55,6 +55,7 @@ import PreviewLabel from "./PreviewLabel";
 import WallpaperModal from "./WallpaperModal";
 import { api, ApiError, copyToClipboard, uploadFile } from "@/lib/api";
 import { audioConstraints } from "@/lib/audioSettings";
+import { claimPlayback, releasePlayback } from "@/lib/playback";
 import { EMOJI_CATEGORIES, STICKERS } from "@/lib/emojis";
 import { renderRichText } from "@/lib/richText";
 import {
@@ -246,6 +247,10 @@ export default function ChatView({
   const [uploading, setUploading] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [showWallpaper, setShowWallpaper] = useState(false);
+  /** Подтверждение удаления/выхода из чата. */
+  const [confirmDeleteChat, setConfirmDeleteChat] = useState(false);
+  const [deleteChatForAll, setDeleteChatForAll] = useState(false);
+  const [deletingChat, setDeletingChat] = useState(false);
   const [lightbox, setLightbox] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [replyTo, setReplyTo] = useState<ChatMessage | null>(null);
@@ -687,6 +692,57 @@ export default function ChatView({
     setConfirmDelete(message);
   }, []);
 
+  /** Загрузить свой стикер (гифку/картинку) и отправить его в чат. */
+  const [stickerBusy, setStickerBusy] = useState(false);
+  const sendStickerFile = useCallback(
+    async (file: File) => {
+      if (!file.type.startsWith("image/")) {
+        notify("Стикер — это картинка или гифка");
+        return;
+      }
+      if (file.size > 8 * 1024 * 1024) {
+        notify("Стикер — до 8 МБ");
+        return;
+      }
+      setStickerBusy(true);
+      try {
+        const url = await uploadFile(file);
+        await api("/api/messages", {
+          method: "POST",
+          body: JSON.stringify({
+            conversationId,
+            type: "image",
+            content: JSON.stringify({ url, sticker: true }),
+            replyToId: null,
+          }),
+        });
+        await load();
+        refreshConversations();
+      } catch (e) {
+        notify(e instanceof Error ? e.message : "Не удалось отправить стикер");
+      } finally {
+        setStickerBusy(false);
+      }
+    },
+    [conversationId, load, refreshConversations, notify],
+  );
+
+  /** Удалить чат (личный — у себя или для всех; группа — выйти/удалить). */
+  const deleteChat = useCallback(async () => {
+    if (deletingChat) return;
+    setDeletingChat(true);
+    try {
+      const qs = kind === "direct" && deleteChatForAll ? "?forAll=1" : "";
+      await api(`/api/conversations/${conversationId}${qs}`, { method: "DELETE" });
+      setConfirmDeleteChat(false);
+      onBack();
+      refreshConversations();
+    } catch (e) {
+      notify(e instanceof Error ? e.message : "Не удалось удалить чат");
+      setDeletingChat(false);
+    }
+  }, [conversationId, kind, deleteChatForAll, deletingChat, onBack, refreshConversations, notify]);
+
   const toggleReaction = async (messageId: string, emoji: string) => {
     // оптимистично — опрос подтвердит
     setMessages((ms) =>
@@ -914,7 +970,10 @@ export default function ChatView({
     }
     if (isSaved) return { text: "сохранённые сообщения", accent: false };
     if (kind === "direct") {
-      return { text: lastSeenLabel(peerState?.lastSeenAt ?? null, !!peerState?.online), accent: !!peerState?.online };
+      // Показываем и статус, и @юзернейм — «ник и юз», а не что-то одно
+      const status = lastSeenLabel(peerState?.lastSeenAt ?? null, !!peerState?.online);
+      const uname = peerState?.username ? ` · @${peerState.username}` : "";
+      return { text: `${status}${uname}`, accent: !!peerState?.online };
     }
     const online = members.filter((m) => m.user.online).length;
     return {
@@ -1066,6 +1125,16 @@ export default function ChatView({
                         }}
                       />
                     )}
+                    <div className="my-1 h-px bg-white/8" />
+                    <MenuItem
+                      icon={<Trash2 className="h-4 w-4 text-rose-300" />}
+                      label={kind === "direct" ? "Удалить чат" : isSpace ? "Покинуть / удалить" : "Удалить чат"}
+                      danger
+                      onClick={() => {
+                        setMenuOpen(false);
+                        setConfirmDeleteChat(true);
+                      }}
+                    />
                   </motion.div>
                 </>
               )}
@@ -1563,6 +1632,11 @@ export default function ChatView({
                     setEmojiOpen(false);
                     void send(s);
                   }}
+                  onUploadSticker={(f) => {
+                    setEmojiOpen(false);
+                    void sendStickerFile(f);
+                  }}
+                  stickerBusy={stickerBusy}
                   onClose={() => setEmojiOpen(false)}
                 />
               </motion.div>
@@ -1659,6 +1733,25 @@ export default function ChatView({
         )}
       </AnimatePresence>
 
+      {/* Подтверждение удаления/выхода из чата */}
+      <AnimatePresence>
+        {confirmDeleteChat && (
+          <ConfirmDeleteChatModal
+            key="confirm-delete-chat"
+            kind={kind}
+            isOwner={meta?.myRole === "owner"}
+            forAll={deleteChatForAll}
+            setForAll={setDeleteChatForAll}
+            busy={deletingChat}
+            onCancel={() => {
+              setConfirmDeleteChat(false);
+              setDeleteChatForAll(false);
+            }}
+            onConfirm={() => void deleteChat()}
+          />
+        )}
+      </AnimatePresence>
+
       {/* Контекстное меню сообщения (ПКМ / долгое нажатие) */}
       <AnimatePresence>
         {ctxMenu && (
@@ -1724,11 +1817,25 @@ function DraftFileIcon({ mime }: { mime: string }) {
   return <FileIcon className={cls} />;
 }
 
-function MenuItem({ icon, label, onClick }: { icon: React.ReactNode; label: string; onClick: () => void }) {
+function MenuItem({
+  icon,
+  label,
+  onClick,
+  danger,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  onClick: () => void;
+  danger?: boolean;
+}) {
   return (
     <button
       onClick={onClick}
-      className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm text-white/80 transition-colors hover:bg-white/8 hover:text-white"
+      className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm transition-colors ${
+        danger
+          ? "text-rose-300 hover:bg-rose-500/10 hover:text-rose-200"
+          : "text-white/80 hover:bg-white/8 hover:text-white"
+      }`}
     >
       {icon}
       {label}
@@ -2402,6 +2509,15 @@ function MessageBubble({
             <VoiceBubble url={att.url} duration={att.duration ?? 0} own={own && !space} />
           ) : isNote && att ? (
             <VideoNoteBubble url={att.url} duration={att.duration ?? 0} />
+          ) : isImage && att?.sticker ? (
+            /* Стикеры (в т.ч. анимированные гифки) — крупно и без пузыря */
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={att.url}
+              alt="Стикер"
+              draggable={false}
+              className="max-h-44 max-w-44 min-w-24 select-none"
+            />
           ) : isImage && att ? (
             <div>
               <button
@@ -2529,13 +2645,26 @@ function VoiceBubble({ url, duration, own }: { url: string; duration: number; ow
   const [speedIdx, setSpeedIdx] = useState(0);
   const [total, setTotal] = useState(duration || 0);
   const speeds = [1, 1.5, 2];
+  /** Уникальный ключ плеера для эксклюзивного воспроизведения. */
+  const pbId = useRef(`voice-${Math.random().toString(36).slice(2)}`).current;
+
+  const start = () => {
+    const a = audioRef.current;
+    if (!a) return;
+    // Ставим на паузу любой другой играющий голосовой/кружок (позиция у него
+    // сохраняется), затем играем этот — с текущей секунды.
+    claimPlayback(pbId, () => a.pause());
+    void a.play().catch(() => {});
+  };
 
   const toggle = () => {
     const a = audioRef.current;
     if (!a) return;
-    if (a.paused) void a.play().catch(() => {});
+    if (a.paused) start();
     else a.pause();
   };
+
+  useEffect(() => () => releasePlayback(pbId), [pbId]);
 
   return (
     <div className="flex w-64 min-w-52 items-center gap-3 py-0.5">
@@ -2548,6 +2677,7 @@ function VoiceBubble({ url, duration, own }: { url: string; duration: number; ow
         onEnded={() => {
           setPlaying(false);
           setProgress(0);
+          releasePlayback(pbId);
         }}
         onLoadedMetadata={(e) => {
           const d = e.currentTarget.duration;
@@ -2577,7 +2707,7 @@ function VoiceBubble({ url, duration, own }: { url: string; duration: number; ow
             if (a && total > 0) {
               const rect = e.currentTarget.getBoundingClientRect();
               a.currentTime = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width)) * total;
-              void a.play().catch(() => {});
+              start();
             }
           }}
           className="flex h-8 w-full items-center gap-[2px]"
@@ -2621,17 +2751,24 @@ function VideoNoteBubble({ url, duration }: { url: string; duration: number }) {
   const [started, setStarted] = useState(false);
   const [progress, setProgress] = useState(0);
   const [total, setTotal] = useState(duration || 0);
+  /** Уникальный ключ плеера для эксклюзивного воспроизведения. */
+  const pbId = useRef(`note-${Math.random().toString(36).slice(2)}`).current;
 
   const toggle = () => {
     const v = videoRef.current;
     if (!v) return;
     if (v.paused) {
       setStarted(true);
+      // Ставим на паузу любой другой играющий кружок/голосовой — без «каши»
+      // из двух звуков одновременно. Позиция у остановленного сохраняется.
+      claimPlayback(pbId, () => v.pause());
       void v.play().catch(() => {});
     } else {
       v.pause();
     }
   };
+
+  useEffect(() => () => releasePlayback(pbId), [pbId]);
 
   const R = 108; // радиус кольца прогресса
   const C = 2 * Math.PI * R;
@@ -2649,6 +2786,7 @@ function VideoNoteBubble({ url, duration }: { url: string; duration: number }) {
         onEnded={() => {
           setPlaying(false);
           setProgress(0);
+          releasePlayback(pbId);
         }}
         onLoadedMetadata={(e) => {
           const d = e.currentTarget.duration;
@@ -2794,6 +2932,97 @@ function CallLogBubble({
 
 /* ─────────────────── подтверждение удаления сообщения ─────────────────── */
 
+/* ─────────────────── подтверждение удаления чата ─────────────────── */
+
+function ConfirmDeleteChatModal({
+  kind,
+  isOwner,
+  forAll,
+  setForAll,
+  busy,
+  onCancel,
+  onConfirm,
+}: {
+  kind: ConversationKind;
+  isOwner: boolean;
+  forAll: boolean;
+  setForAll: (v: boolean) => void;
+  busy: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  const isDirect = kind === "direct";
+  const title = isDirect ? "Удалить чат?" : isOwner ? "Удалить чат для всех?" : "Покинуть чат?";
+  const subtitle = isDirect
+    ? forAll
+      ? "Переписка будет удалена у вас и у собеседника. Это действие нельзя отменить."
+      : "Чат исчезнет из вашего списка. Собеседник продолжит видеть переписку."
+    : isOwner
+      ? "Чат и вся переписка будут удалены у всех участников."
+      : "Вы выйдете из чата. Остальные участники останутся.";
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      onClick={onCancel}
+      className="fixed inset-0 z-[85] grid place-items-center bg-black/70 p-4 backdrop-blur-sm"
+    >
+      <motion.div
+        initial={{ opacity: 0, scale: 0.94, y: 12 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        exit={{ opacity: 0, scale: 0.95, y: 8 }}
+        onClick={(e) => e.stopPropagation()}
+        className="glass-strong w-full max-w-sm rounded-3xl p-6 text-center shadow-2xl"
+      >
+        <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-rose-500/15">
+          <Trash2 className="h-5 w-5 text-rose-300" />
+        </div>
+        <h3 className="font-display text-lg font-bold">{title}</h3>
+        <p className="mx-auto mt-2 max-w-xs text-sm text-white/45">{subtitle}</p>
+
+        {/* Личный чат: можно удалить только у себя или у обоих */}
+        {isDirect && (
+          <button
+            onClick={() => setForAll(!forAll)}
+            className="mt-4 flex w-full items-center gap-3 rounded-2xl border border-white/8 bg-white/4 px-4 py-3 text-left transition-colors hover:bg-white/8"
+          >
+            <span
+              className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-md border transition-colors ${
+                forAll ? "border-rose-400 bg-rose-500" : "border-white/25 bg-transparent"
+              }`}
+            >
+              {forAll && <Check className="h-3.5 w-3.5 text-white" />}
+            </span>
+            <span className="min-w-0">
+              <span className="block text-sm font-medium">Удалить для всех</span>
+              <span className="block text-xs text-white/35">Стереть переписку и у собеседника</span>
+            </span>
+          </button>
+        )}
+
+        <div className="mt-5 flex gap-2.5">
+          <button
+            onClick={onCancel}
+            className="glass flex-1 rounded-2xl py-3 text-sm font-medium text-white/80 transition-colors hover:bg-white/10"
+          >
+            Отмена
+          </button>
+          <button
+            onClick={onConfirm}
+            disabled={busy}
+            className="flex flex-1 items-center justify-center gap-2 rounded-2xl bg-rose-500 py-3 text-sm font-semibold text-white transition-transform hover:scale-[1.02] active:scale-95 disabled:opacity-60"
+          >
+            {busy && <Loader2 className="h-4 w-4 animate-spin" />}
+            {isDirect ? "Удалить" : isOwner ? "Удалить" : "Покинуть"}
+          </button>
+        </div>
+      </motion.div>
+    </motion.div>
+  );
+}
+
 function ConfirmDeleteModal({
   message,
   onConfirm,
@@ -2865,11 +3094,16 @@ function ConfirmDeleteModal({
 function EmojiPicker({
   onPick,
   onSendSticker,
+  onUploadSticker,
+  stickerBusy,
   onClose,
 }: {
   onPick: (emoji: string) => void;
   /** Отправить стикер отдельным сообщением. */
   onSendSticker: (sticker: string) => void;
+  /** Загрузить свой стикер (гифку/картинку) и отправить его. */
+  onUploadSticker: (file: File) => void;
+  stickerBusy?: boolean;
   onClose: () => void;
 }) {
   /** catIdx === -1 — вкладка стикеров, остальное — категории эмодзи. */
@@ -2877,6 +3111,7 @@ function EmojiPicker({
   const cats = EMOJI_CATEGORIES;
   const cat = cats[Math.min(Math.max(catIdx, 0), cats.length - 1)];
   const gridRef = useRef<HTMLDivElement | null>(null);
+  const stickerInputRef = useRef<HTMLInputElement | null>(null);
 
   // при смене категории прокручиваем сетку наверх
   useEffect(() => {
@@ -2934,9 +3169,35 @@ function EmojiPicker({
                 {s}
               </button>
             ))}
+            {/* Свой стикер: гифка/вебм/картинка до 8 МБ (анимация поддерживается) */}
+            <button
+              onClick={() => stickerInputRef.current?.click()}
+              title="Загрузить свой стикер (гифку или картинку)"
+              className="flex h-14 flex-col items-center justify-center gap-0.5 rounded-2xl border border-dashed border-white/15 text-white/40 transition-colors hover:border-violet-300/50 hover:bg-white/6 hover:text-violet-200"
+            >
+              {stickerBusy ? (
+                <Loader2 className="h-5 w-5 animate-spin" />
+              ) : (
+                <>
+                  <ImagePlus className="h-4.5 w-4.5" />
+                  <span className="text-[9px] font-medium">Гифка</span>
+                </>
+              )}
+            </button>
+            <input
+              ref={stickerInputRef}
+              type="file"
+              accept="image/gif,image/webp,image/png,image/jpeg"
+              className="hidden"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) onUploadSticker(f);
+                e.target.value = "";
+              }}
+            />
           </div>
           <p className="border-t border-white/8 px-3 py-1.5 text-[10px] text-white/30">
-            Стикеры · нажмите, чтобы отправить
+            Стикеры · нажмите, чтобы отправить · «Гифка» — загрузить свой (анимированный)
           </p>
         </>
       ) : (

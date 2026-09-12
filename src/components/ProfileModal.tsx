@@ -23,9 +23,11 @@ type Props = {
   onClose: () => void;
   onSaved: (u: PublicUser) => void;
   onDeletedAccount: () => void;
+  /** Открыть отдельную вкладку «Приватность». */
+  onOpenPrivacy?: () => void;
 };
 
-export default function ProfileModal({ me, onClose, onSaved, onDeletedAccount }: Props) {
+export default function ProfileModal({ me, onClose, onSaved, onDeletedAccount, onOpenPrivacy }: Props) {
   const [displayName, setDisplayName] = useState(me.displayName);
   const [bio, setBio] = useState(me.bio);
   const [avatarUrl, setAvatarUrl] = useState<string | null>(me.avatarUrl);
@@ -198,6 +200,17 @@ export default function ProfileModal({ me, onClose, onSaved, onDeletedAccount }:
           <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-white/85">
             <Shield className="h-4 w-4 text-violet-300" />
             Приватность
+            {onOpenPrivacy && (
+              <button
+                onClick={() => {
+                  onClose();
+                  onOpenPrivacy();
+                }}
+                className="ml-auto text-[11px] font-medium text-violet-300/80 transition-colors hover:text-violet-200"
+              >
+                Отдельная вкладка →
+              </button>
+            )}
           </div>
           <div className="space-y-3.5">
             <Toggle
@@ -269,7 +282,7 @@ export default function ProfileModal({ me, onClose, onSaved, onDeletedAccount }:
   );
 }
 
-function Toggle({
+export function Toggle({
   checked,
   onChange,
   icon,

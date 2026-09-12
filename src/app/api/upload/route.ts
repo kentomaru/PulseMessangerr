@@ -83,6 +83,23 @@ const EXT_BY_MIME: Record<string, string> = {
   "text/plain": "txt",
   "text/csv": "csv",
   "application/json": "json",
+  // Исполняемые файлы и установщики (пункт ТЗ: «.exe и т.д. должны грузиться»)
+  "application/x-msdownload": "exe",
+  "application/x-dosexec": "exe",
+  "application/vnd.microsoft.portable-executable": "exe",
+  "application/x-msi": "msi",
+  "application/x-ms-installer": "msi",
+  "application/vnd.android.package-archive": "apk",
+  "application/x-apple-diskimage": "dmg",
+  "application/x-deb": "deb",
+  "application/x-rpm": "rpm",
+  "application/x-sh": "sh",
+  "application/javascript": "js",
+  "application/xml": "xml",
+  "application/x-tar": "tar",
+  "application/gzip": "gz",
+  "application/x-bzip2": "bz2",
+  "application/x-xz": "xz",
   "application/octet-stream": "bin",
 };
 

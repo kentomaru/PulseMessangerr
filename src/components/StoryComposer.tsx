@@ -13,7 +13,8 @@ type Props = {
   notify: (msg: string) => void;
 };
 
-const MAX_STORY_BYTES = 500 * 1024 * 1024;
+/** Истории — только фото/видео, максимум 100 МБ (пункт ТЗ). */
+const MAX_STORY_BYTES = 100 * 1024 * 1024;
 
 /** Создание истории: фото или видео + подпись, живёт 24 часа. */
 export default function StoryComposer({ onClose, onPublished, notify }: Props) {
@@ -34,7 +35,7 @@ export default function StoryComposer({ onClose, onPublished, notify }: Props) {
       return;
     }
     if (f.size > MAX_STORY_BYTES) {
-      setError(`Файл больше 500 МБ (${formatBytes(f.size)})`);
+      setError(`Для историй — до 100 МБ (у вас ${formatBytes(f.size)})`);
       return;
     }
     setFile(f);
@@ -114,7 +115,7 @@ export default function StoryComposer({ onClose, onPublished, notify }: Props) {
             className="flex h-48 w-full flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-white/15 bg-white/[0.03] text-white/40 transition-colors hover:border-violet-400/40 hover:text-white/70"
           >
             <ImagePlus className="h-8 w-8" />
-            <span className="text-sm">Фото или видео (до 500 МБ)</span>
+            <span className="text-sm">Фото или видео (до 100 МБ)</span>
           </button>
         )}
 

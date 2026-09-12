@@ -18,6 +18,7 @@ import {
   Radio,
   Search,
   SearchX,
+  Shield,
   Sparkles,
   UserPlus,
   Users,
@@ -53,6 +54,8 @@ type Props = {
   onDiscover: () => void;
   /** Открыть «Избранное» (чат с самим собой). */
   onOpenSaved: () => void;
+  /** Открыть отдельную вкладку «Приватность». */
+  onOpenPrivacy: () => void;
   /** Включить/выключить звук уведомлений. */
   onToggleSound: () => void;
   /** Включить/выключить звук входящего звонка. */
@@ -103,6 +106,7 @@ export default function Sidebar({
   onCreateGroup,
   onDiscover,
   onOpenSaved,
+  onOpenPrivacy,
   onToggleSound,
   onToggleCallSound,
   onToggleNotify,
@@ -231,6 +235,13 @@ export default function Sidebar({
           className="glass flex h-9 w-9 items-center justify-center rounded-xl text-white/50 transition-colors hover:text-amber-300"
         >
           <Bookmark className="h-4 w-4" />
+        </button>
+        <button
+          onClick={onOpenPrivacy}
+          title="Приватность — кто видит ваш статус и может звонить/писать"
+          className="glass flex h-9 w-9 items-center justify-center rounded-xl text-white/50 transition-colors hover:text-violet-300"
+        >
+          <Shield className="h-4 w-4" />
         </button>
         {/* Настройки уведомлений: звук сообщений, рингтон, браузерные уведомления */}
         <div ref={notifyBoxRef} className="relative">

@@ -124,6 +124,7 @@ export function parseAttachment(type: string, content: string): AttachmentInfo |
   if (typeof obj.size === "number" && Number.isFinite(obj.size)) att.size = obj.size;
   if (typeof obj.duration === "number" && Number.isFinite(obj.duration)) att.duration = obj.duration;
   if (typeof obj.caption === "string" && obj.caption.trim()) att.caption = obj.caption;
+  if (obj.sticker === true) att.sticker = true;
 
   // «кружок» или голосовое, сохранившееся как text — пропускаем только аудио/видео
   if (type === "text") {
