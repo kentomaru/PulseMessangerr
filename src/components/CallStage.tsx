@@ -200,9 +200,11 @@ export default function CallStage(props: Props) {
 
       {/* Звук участников живёт здесь — в одном экземпляре, независимо от того,
           развёрнуто окно, свёрнуто в «остров» или открыта мобильная версия.
-          (Внутри плиток были бы дубли: окно рендерится дважды — desktop и mobile.) */}
+          (Внутри плиток были бы дубли: окно рендерится дважды — desktop и mobile.)
+          ВАЖНО: контейнер НЕ display:none — некоторые браузеры глушат медиа
+          внутри скрытых контейнеров. Уводим его за экран позиционированием. */}
       {session && (
-        <div className="hidden">
+        <div className="pointer-events-none fixed -left-[9999px] top-0 h-px w-px overflow-hidden" aria-hidden>
           {session.participants.map((p) =>
             p.userId === meId ? null : <RemoteAudio key={p.userId} userId={p.userId} />,
           )}
@@ -936,6 +938,28 @@ function AudioSettingsPanel({
   );
 }
 
+/** Индикатор захвата микрофона: полоска живёт от уровня в реальном времени.
+    Если при разговоре она НЕ двигается — браузер не отдаёт микрофон
+    (нет разрешения/устройство занято), и проблема на стороне захвата. */
+function MicMeter({ micLevelRef }: { micLevelRef: React.RefObject<number> }) {
+  const [lvl, setLvl] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => setLvl(micLevelRef.current ?? 0), 150);
+    return () => clearInterval(t);
+  }, [micLevelRef]);
+  return (
+    <span className="flex flex-col items-center gap-0.5" title="Уровень вашего микрофона">
+      <span className="h-1.5 w-12 overflow-hidden rounded-full bg-white/10">
+        <span
+          className="block h-full rounded-full bg-gradient-to-r from-emerald-400 to-cyan-300 transition-[width] duration-150"
+          style={{ width: `${Math.min(100, lvl)}%` }}
+        />
+      </span>
+      <span className="text-[8px] leading-none text-white/30">микрофон</span>
+    </span>
+  );
+}
+
 function Controls({
   muted,
   cameraOn,
@@ -980,6 +1004,8 @@ function Controls({
       >
         {muted ? <MicOff className="h-4.5 w-4.5" /> : <Mic className="h-4.5 w-4.5" />}
       </Control>
+      {/* Живой уровень микрофона — сразу видно, ловится ли голос */}
+      {!compact && <MicMeter micLevelRef={micLevelRef} />}
       <Control
         small={compact}
         active={!cameraOn}
@@ -1341,14 +1367,14 @@ function RemoteAudio({ userId }: { userId: string }) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const graphRef = useRef<{ src: MediaStreamAudioSourceNode; gain: GainNode } | null>(null);
 
-  // Пересобираем граф при смене потока (первый трек/ренеготиация).
-  // ВАЖНО: если AudioContext «заморожен» (браузер ещё не видел жеста или
-  // вкладка была в фоне) — звук молча не играл, пока кто-то не включал
-  // видео/демку (перерисовка «будила» граф). Теперь: пытаемся разморозить
-  // контекст и каждые полсекунды проверяем; пока заморожен — звук идёт через
-  // запасный <audio>, чтобы звонок НИКОГДА не был немым.
+  /* ЗВУК УЧАСТНИКА. Главный путь — обычный <audio>, самый надёжный в
+     браузерах: он не зависит от состояния AudioContext (замороженный
+     контекст раньше делал звонок немым, и «лечилось» это случайно).
+     WebAudio используется ТОЛЬКО если пользователь поставил громкость
+     выше 100% или ниже 100% нестандартно.
+     Пересборка — при любом изменении потока/дорожек. */
   useEffect(() => {
-    const teardown = () => {
+    const teardownGraph = () => {
       try {
         graphRef.current?.src.disconnect();
         graphRef.current?.gain.disconnect();
@@ -1357,86 +1383,87 @@ function RemoteAudio({ userId }: { userId: string }) {
       }
       graphRef.current = null;
     };
-    teardown();
+    teardownGraph();
 
-    const ctx = getAudioContext();
+    const el = audioRef.current;
+    if (!stream || stream.getAudioTracks().length === 0) {
+      if (el) el.srcObject = null;
+      return;
+    }
+
+    const useWebAudio = volume !== 100;
     let watch: ReturnType<typeof setInterval> | null = null;
 
-    const attachFallback = () => {
-      const el = audioRef.current;
-      if (el && el.srcObject !== stream) {
-        el.srcObject = stream ?? null;
-        void el.play().catch(() => {
-          // Автоплей заблокирован до первого жеста — доиграем по первому
-          // клику/касанию, чтобы звонок не оставался немым.
-          const retry = () => {
-            void el.play().catch(() => {});
-            window.removeEventListener("pointerdown", retry, true);
-            window.removeEventListener("keydown", retry, true);
-          };
-          window.addEventListener("pointerdown", retry, true);
-          window.addEventListener("keydown", retry, true);
-        });
-      }
-    };
-    const detachFallback = () => {
-      const el = audioRef.current;
-      if (el && el.srcObject) el.srcObject = null;
+    const playPlain = () => {
+      if (!audioRef.current) return;
+      // Клонируем поток: если дорожки добавились после первой привязки,
+      // элемент надо «переподключить», иначе он продолжит молчать.
+      const fresh = new MediaStream(stream.getTracks());
+      audioRef.current.srcObject = fresh;
+      audioRef.current.volume = Math.min(1, Math.max(0, volume / 100));
+      void audioRef.current.play().catch(() => {
+        // Автоплей заблокирован — доиграем по первому жесту пользователя
+        const retry = () => {
+          void audioRef.current?.play().catch(() => {});
+          window.removeEventListener("pointerdown", retry, true);
+          window.removeEventListener("keydown", retry, true);
+        };
+        window.addEventListener("pointerdown", retry, true);
+        window.addEventListener("keydown", retry, true);
+      });
     };
 
-    if (stream && ctx) {
-      try {
-        const src = ctx.createMediaStreamSource(stream);
-        const gain = ctx.createGain();
-        gain.gain.value = Math.max(0, volume) / 100;
-        src.connect(gain).connect(ctx.destination);
-        graphRef.current = { src, gain };
-        if (ctx.state !== "running") void ctx.resume().catch(() => {});
-
-        // Страховка: пока контекст не «побежал» — играем через <audio>.
-        const check = () => {
-          if (!graphRef.current) return;
-          if (ctx.state === "running") {
-            detachFallback();
-            if (watch) {
-              clearInterval(watch);
-              watch = null;
+    if (useWebAudio) {
+      const ctx = getAudioContext();
+      if (ctx) {
+        try {
+          const src = ctx.createMediaStreamSource(stream);
+          const gain = ctx.createGain();
+          gain.gain.value = Math.max(0, volume) / 100;
+          src.connect(gain).connect(ctx.destination);
+          graphRef.current = { src, gain };
+          if (ctx.state !== "running") void ctx.resume().catch(() => {});
+          // Пока контекст не побежал — играем через <audio> как основной путь
+          const check = () => {
+            if (ctx.state === "running") {
+              if (audioRef.current) audioRef.current.srcObject = null;
+              if (watch) {
+                clearInterval(watch);
+                watch = null;
+              }
+            } else {
+              void ctx.resume().catch(() => {});
+              playPlain();
             }
-          } else {
-            void ctx.resume().catch(() => {});
-            attachFallback();
-          }
-        };
-        check();
-        if (watch === null && ctx.state !== "running") watch = setInterval(check, 600);
-        return () => {
-          if (watch) clearInterval(watch);
-          detachFallback();
-          teardown();
-        };
-      } catch {
-        /* WebAudio не завёлся — фолбэк ниже */
+          };
+          check();
+          if (watch === null && ctx.state !== "running") watch = setInterval(check, 600);
+          return () => {
+            if (watch) clearInterval(watch);
+            teardownGraph();
+          };
+        } catch {
+          /* WebAudio не завёлся — играем через <audio> */
+        }
       }
     }
-    if (audioRef.current) audioRef.current.srcObject = stream ?? null;
+
+    playPlain();
     return () => {
       if (watch) clearInterval(watch);
-      teardown();
+      teardownGraph();
     };
-    // volume намеренно не в зависимостях — он меняется отдельным эффектом.
-    // Длина списка АУДИО-дорожек — в зависимостях: если звук пришёл позже
-    // видео, граф пересоберётся и заиграет (раньше мог остаться немым).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [stream, tick, stream ? stream.getAudioTracks().length : 0]);
+  }, [stream, tick, stream ? stream.getAudioTracks().length : 0, volume === 100]);
 
-  // Громкость меняется мгновенно, без пересборки графа.
+  // Громкость меняется мгновенно, без пересборки.
   useEffect(() => {
     const g = graphRef.current;
     if (g) g.gain.gain.value = Math.max(0, volume) / 100;
     if (audioRef.current) audioRef.current.volume = Math.min(1, Math.max(0, volume / 100));
   }, [volume]);
 
-  return <audio ref={audioRef} autoPlay playsInline className="hidden" />;
+  return <audio ref={audioRef} autoPlay playsInline className="pointer-events-none opacity-0" />;
 }
 
 /* ─────────────────────────── мелочи ─────────────────────────── */
