@@ -1,92 +1,93 @@
 import { NextResponse } from "next/server";
 import { db } from "@/db";
 import { calls, conversationMembers, users } from "@/db/schema";
-import { and, eq } from "drizzle-orm";
+import { and, eq, ne } from "drizzle-orm";
 import { isUuid, withApi } from "@/lib/api-helpers";
-import { closeStaleCalls, getCallCaller, serializeCall } from "@/lib/calls";
+import { normalizeKind, requireMember } from "@/lib/conversations";
+import {
+  buildCallState,
+  findActiveCall,
+  joinRoom,
+  newJoinToken,
+  sweepStaleCalls,
+} from "@/lib/calls";
 
 /**
- * POST /api/calls — начать звонок.
- * Тело: { conversationId, media: "audio"|"video", offerSdp }.
- * Сервер сохраняет SDP-предложение звонящего; собеседник забирает его
- * через GET /api/calls/incoming и отвечает через POST /api/calls/[id].
+ * POST /api/calls — начать звонок в диалоге { conversationId, media }.
+ *
+ * Личный чат: звонок создаётся в статусе «ringing» (собеседнику звонит телефон),
+ * когда он принимает — комната становится «live».
+ * Группа/канал: сразу создаётся «живая» комната, к которой может присоединиться
+ * любой участник (как голосовой канал в Discord).
+ *
+ * Если в диалоге уже есть живой звонок — просто подключаемся к нему.
  */
 export const POST = withApi("calls:start", async ({ req, me, log }) => {
-  const body = await req.json();
+  const body = await req.json().catch(() => ({}));
   const conversationId = String(body.conversationId ?? "");
   const media = body.media === "video" ? "video" : "audio";
-  const offerSdp = String(body.offerSdp ?? "");
-  if (!conversationId || !offerSdp)
-    return NextResponse.json({ error: "conversationId и offerSdp обязательны" }, { status: 400 });
-  if (!isUuid(conversationId))
+  if (!conversationId || !isUuid(conversationId))
     return NextResponse.json({ error: "Чат не найден" }, { status: 404 });
 
-  // Я — участник чата?
-  const myMembership = await db
-    .select()
-    .from(conversationMembers)
-    .where(
-      and(
-        eq(conversationMembers.conversationId, conversationId),
-        eq(conversationMembers.userId, me.id),
-      ),
-    )
-    .limit(1);
-  if (!myMembership[0]) return NextResponse.json({ error: "Нет доступа" }, { status: 403 });
+  const access = await requireMember(conversationId, me.id);
+  if (!access) return NextResponse.json({ error: "Нет доступа" }, { status: 403 });
 
-  // Собеседник
-  const peerRows = await db
-    .select({ user: users })
-    .from(conversationMembers)
-    .innerJoin(users, eq(conversationMembers.userId, users.id))
-    .where(eq(conversationMembers.conversationId, conversationId));
-  const peer = peerRows.map((r) => r.user).find((u) => u.id !== me.id);
-  if (!peer) return NextResponse.json({ error: "Собеседник не найден" }, { status: 404 });
+  const kind = normalizeKind(access.conversation.kind);
 
-  // Приватность: звонки запрещены
-  if (!peer.allowCalls) {
-    return NextResponse.json(
-      { error: `${peer.displayName} запретил(а) звонки` },
-      { status: 403 },
-    );
+  // Уже живой звонок? Тогда просто входим в комнату.
+  await sweepStaleCalls([conversationId]);
+  const existing = await findActiveCall(conversationId);
+  if (existing) {
+    const updated = await joinRoom(existing, me.id);
+    log.info("Подключение к существующему звонку", { callId: updated.id, userId: me.id });
+    return NextResponse.json({
+      call: await buildCallState(updated, me.id),
+      joinedExisting: true,
+    });
   }
 
-  // Сначала закрываем повисшие звонки (ringing >40 с, active-зомби >4 ч),
-  // потом проверяем, остался ли реально живой звонок в этом чате.
-  const alive = await closeStaleCalls(conversationId);
-  if (alive) {
-    const aliveCaller = await getCallCaller(alive);
-    log.info("Старт звонка отклонён: в чате уже есть звонок", {
-      callId: alive.id,
-      conversationId,
-      status: alive.status,
-      mine: String(alive.callerId === me.id),
-    });
-    // Отдаём тело звонка: клиент сам решит — отменить свой зависший
-    // и позвонить заново, или показать чужой как входящий.
-    return NextResponse.json(
-      {
-        error: alive.callerId === me.id ? "Ваш предыдущий звонок ещё активен" : "Звонок уже идёт",
-        call: serializeCall(alive, aliveCaller),
-      },
-      { status: 409 },
-    );
+  // Личный чат: уважаем приватность собеседника
+  if (kind === "direct") {
+    const peerRows = await db
+      .select({ user: users })
+      .from(conversationMembers)
+      .innerJoin(users, eq(conversationMembers.userId, users.id))
+      .where(
+        and(
+          eq(conversationMembers.conversationId, conversationId),
+          ne(conversationMembers.userId, me.id),
+        ),
+      )
+      .limit(1);
+    const peer = peerRows[0]?.user;
+    if (!peer) return NextResponse.json({ error: "Собеседник не найден" }, { status: 404 });
+    if (!peer.allowCalls) {
+      return NextResponse.json({ error: `${peer.displayName} запретил(а) звонки` }, { status: 403 });
+    }
   }
 
   const [call] = await db
     .insert(calls)
     .values({
       conversationId,
-      callerId: me.id,
-      calleeId: peer.id,
+      hostId: me.id,
       media,
-      status: "ringing",
-      offerSdp,
-      callerIce: [],
-      calleeIce: [],
+      status: kind === "direct" ? "ringing" : "live",
+      joinToken: newJoinToken(),
+      participantCount: 1,
+      answeredAt: kind === "direct" ? null : new Date(),
     })
     .returning();
 
-  log.info("Звонок начат", { callId: call.id, conversationId, media, from: me.username, to: peer.username });
-  return NextResponse.json({ call: serializeCall(call, me) });
+  await joinRoom(call, me.id);
+  const fresh = await db.select().from(calls).where(eq(calls.id, call.id)).limit(1).then((r) => r[0]);
+
+  log.info("Звонок начат", {
+    callId: call.id,
+    conversationId,
+    kind,
+    media,
+    by: me.username,
+  });
+  return NextResponse.json({ call: await buildCallState(fresh ?? call, me.id) });
 });

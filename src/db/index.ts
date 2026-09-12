@@ -109,41 +109,148 @@ export async function ensureSchema(): Promise<void> {
 
     create table if not exists conversations (
       id uuid primary key default gen_random_uuid(),
+      kind text not null default 'direct',
       is_group boolean not null default false,
+      name text,
+      avatar_url text,
+      about text not null default '',
+      is_private boolean not null default true,
+      invite_token text unique,
+      owner_id uuid references users(id) on delete set null,
       created_at timestamptz not null default now()
     );
-
-    create table if not exists calls (
-      id uuid primary key default gen_random_uuid(),
-      conversation_id uuid not null references conversations(id) on delete cascade,
-      caller_id uuid not null references users(id) on delete cascade,
-      callee_id uuid references users(id) on delete cascade,
-      media text not null default 'audio',
-      status text not null default 'ringing',
-      offer_sdp text,
-      answer_sdp text,
-      caller_ice jsonb not null default '[]'::jsonb,
-      callee_ice jsonb not null default '[]'::jsonb,
-      created_at timestamptz not null default now(),
-      answered_at timestamptz,
-      ended_at timestamptz
-    );
-    alter table calls add column if not exists callee_id uuid references users(id) on delete cascade;
-    alter table calls add column if not exists media text not null default 'audio';
-    alter table calls add column if not exists caller_ice jsonb not null default '[]'::jsonb;
-    alter table calls add column if not exists callee_ice jsonb not null default '[]'::jsonb;
-    create index if not exists calls_callee_idx on calls(callee_id, status);
+    alter table conversations add column if not exists name text;
+    alter table conversations add column if not exists avatar_url text;
+    alter table conversations add column if not exists about text not null default '';
+    alter table conversations add column if not exists is_private boolean not null default true;
+    alter table conversations add column if not exists invite_token text unique;
+    alter table conversations add column if not exists owner_id uuid references users(id) on delete set null;
+    /* Одноразовый перенос со старой модели (is_group) на kind: срабатывает только
+       если колонки kind раньше не было, иначе перезапись на каждом старте
+       превратила бы каналы обратно в группы. */
+    do $$
+    begin
+      if not exists (
+        select 1 from information_schema.columns
+        where table_name = 'conversations' and column_name = 'kind'
+      ) then
+        alter table conversations add column kind text not null default 'direct';
+        if exists (
+          select 1 from information_schema.columns
+          where table_name = 'conversations' and column_name = 'is_group'
+        ) then
+          update conversations set kind = 'group' where is_group;
+        end if;
+      end if;
+    end $$;
+    create index if not exists conversations_kind_idx on conversations(kind, is_private);
 
     create table if not exists conversation_members (
       conversation_id uuid not null references conversations(id) on delete cascade,
       user_id uuid not null references users(id) on delete cascade,
+      role text not null default 'member',
       last_read_at timestamptz not null default now(),
       typing_at timestamptz,
       wallpaper text,
+      joined_at timestamptz not null default now(),
       primary key (conversation_id, user_id)
     );
     alter table conversation_members add column if not exists typing_at timestamptz;
     alter table conversation_members add column if not exists wallpaper text;
+    alter table conversation_members add column if not exists role text not null default 'member';
+    alter table conversation_members add column if not exists joined_at timestamptz not null default now();
+    create index if not exists conversation_members_user_idx on conversation_members(user_id);
+    /* Старые группы создавались без владельца и ролей — назначаем владельцем
+       самого раннего участника, иначе группой никто не сможет управлять. */
+    do $$
+    declare
+      rec record;
+      first_member uuid;
+    begin
+      for rec in
+        select c.id from conversations c
+        where c.kind <> 'direct' and c.owner_id is null
+      loop
+        select cm.user_id into first_member
+          from conversation_members cm
+          where cm.conversation_id = rec.id
+          order by cm.joined_at, cm.user_id
+          limit 1;
+        if first_member is not null then
+          update conversations set owner_id = first_member where id = rec.id;
+          update conversation_members set role = 'owner'
+            where conversation_id = rec.id and user_id = first_member;
+        end if;
+      end loop;
+    end $$;
+
+    /* ── Звонки: комната на диалог + mesh-сигналинг между участниками ──
+       Старая модель 1:1 (caller/callee, offer/answer в одной строке) заменена
+       групповыми комнатами. Сносим таблицу только если она ещё старой формы —
+       иначе каждый рестарт стирал бы живые комнаты. */
+    do $$
+    begin
+      if exists (
+        select 1 from information_schema.columns
+        where table_name = 'calls' and column_name in ('caller_id', 'callee_id')
+      ) then
+        drop table if exists call_signals cascade;
+        drop table if exists call_invites cascade;
+        drop table if exists call_participants cascade;
+        drop table if exists calls cascade;
+      end if;
+    end $$;
+
+    create table if not exists calls (
+      id uuid primary key default gen_random_uuid(),
+      conversation_id uuid not null references conversations(id) on delete cascade,
+      host_id uuid not null references users(id) on delete cascade,
+      media text not null default 'audio',
+      status text not null default 'live',
+      join_token text not null unique,
+      participant_count integer not null default 0,
+      started_at timestamptz not null default now(),
+      answered_at timestamptz,
+      ended_at timestamptz
+    );
+    alter table calls add column if not exists participant_count integer not null default 0;
+    create index if not exists calls_conversation_idx on calls(conversation_id, status);
+    create index if not exists calls_join_token_idx on calls(join_token);
+
+    create table if not exists call_participants (
+      call_id uuid not null references calls(id) on delete cascade,
+      user_id uuid not null references users(id) on delete cascade,
+      sdp text,
+      video_on boolean not null default false,
+      muted boolean not null default false,
+      guest boolean not null default false,
+      joined_at timestamptz not null default now(),
+      left_at timestamptz,
+      last_seen_at timestamptz not null default now(),
+      primary key (call_id, user_id)
+    );
+    create index if not exists call_participants_user_idx on call_participants(user_id);
+
+    create table if not exists call_signals (
+      id uuid primary key default gen_random_uuid(),
+      call_id uuid not null references calls(id) on delete cascade,
+      from_user_id uuid not null references users(id) on delete cascade,
+      to_user_id uuid not null references users(id) on delete cascade,
+      kind text not null,
+      payload jsonb not null,
+      read_at timestamptz,
+      created_at timestamptz not null default now()
+    );
+    create index if not exists call_signals_to_idx on call_signals(call_id, to_user_id, read_at);
+
+    create table if not exists call_invites (
+      call_id uuid not null references calls(id) on delete cascade,
+      user_id uuid not null references users(id) on delete cascade,
+      invited_by uuid not null references users(id) on delete cascade,
+      created_at timestamptz not null default now(),
+      primary key (call_id, user_id)
+    );
+    create index if not exists call_invites_user_idx on call_invites(user_id);
 
     create table if not exists messages (
       id uuid primary key default gen_random_uuid(),
@@ -151,13 +258,33 @@ export async function ensureSchema(): Promise<void> {
       sender_id uuid not null references users(id) on delete cascade,
       type text not null default 'text',
       content text not null,
+      reply_to_id uuid,
       created_at timestamptz not null default now(),
       deleted_at timestamptz,
       call_id uuid references calls(id) on delete cascade
     );
     alter table messages add column if not exists call_id uuid references calls(id) on delete cascade;
+    alter table messages add column if not exists reply_to_id uuid;
+    /* Если старая таблица calls сносилась каскадом — внешний ключ messages.call_id
+       пропадал вместе с ней, возвращаем его обратно. */
+    do $$
+    begin
+      if exists (select 1 from information_schema.columns
+                 where table_name = 'messages' and column_name = 'call_id')
+         and not exists (select 1 from pg_constraint
+                         where conname = 'messages_call_id_fkey') then
+        /* старая таблица calls снесена — ссылки на неё больше не валидны */
+        update messages set call_id = null
+          where call_id is not null
+            and not exists (select 1 from calls where calls.id = messages.call_id);
+        alter table messages
+          add constraint messages_call_id_fkey
+          foreign key (call_id) references calls(id) on delete cascade;
+      end if;
+    end $$;
     create unique index if not exists messages_call_id_key on messages(call_id);
     create index if not exists messages_conversation_idx on messages(conversation_id, created_at);
+    create index if not exists messages_reply_idx on messages(reply_to_id);
 
     create table if not exists stories (
       id uuid primary key default gen_random_uuid(),
