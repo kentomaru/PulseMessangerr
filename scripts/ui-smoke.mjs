@@ -358,7 +358,10 @@ async function main() {
         const url = typeof input === "string" ? new URL(input, BASE).href : String(input);
         const headers = new Headers(init.headers ?? undefined);
         if (sessionCookie) headers.set("cookie", sessionCookie);
-        return fetch(url, { ...init, headers });
+        // signal из jsdom-мира — другой класс, чем у undici: выкидываем его
+        // (в смоке клиентские таймауты не нужны, а в браузере они работают).
+        const { signal: _signal, ...rest } = init;
+        return fetch(url, { ...rest, headers });
       };
       // ResizeObserver: нет в jsdom, есть в любом браузере. В dev-сборке его
       // использует next-devtools (оверлей ошибок) — без заглушки смок падал бы
