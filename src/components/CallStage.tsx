@@ -572,10 +572,16 @@ function CallBody({
   const videoPeople = people.filter(hasVideo);
   const gridCols = videoPeople.length <= 1 ? 1 : videoPeople.length <= 4 ? 2 : 3;
 
-  // Демонстрации экрана — большими плитками над сеткой
-  const screenSharers = people.filter(
-    (p) => p.screenOn || (p.userId === meId && screenSharing),
-  );
+  // Демонстрации экрана — большими плитками над сеткой.
+  // ВАЖНО: показываем плитку ТОЛЬКО пока в потоке есть живая видеодорожка.
+  // Раньше после «прекратить демонстрацию» флаг мог остаться, и висела
+  // ЧЁРНАЯ плитка демонстрации.
+  const hasLiveVideo = (s: MediaStream | null | undefined) =>
+    !!s?.getVideoTracks().some((t) => t.readyState === "live");
+  const screenSharers = people.filter((p) => {
+    if (p.userId === meId) return screenSharing && hasLiveVideo(screenStreamRef.current);
+    return p.screenOn && hasLiveVideo(remoteStreams[p.userId]);
+  });
 
   return (
     <div className="nice-scroll relative min-h-0 flex-1 overflow-y-auto p-3">
@@ -800,8 +806,10 @@ function AudioSettingsPanel({
   };
 
   return (
+    // max-h + скролл: даже в переполненном групповом звонке панель всегда
+    // умещается на экране и кнопка настроек звука не «уезжает».
     <div
-      className="glass-strong absolute bottom-full left-1/2 z-40 mb-3 w-72 -translate-x-1/2 rounded-2xl p-4 shadow-2xl"
+      className="glass-strong nice-scroll absolute bottom-full left-1/2 z-40 mb-3 max-h-[min(26rem,62vh)] w-72 -translate-x-1/2 overflow-y-auto rounded-2xl p-4 shadow-2xl"
       onClick={(e) => e.stopPropagation()}
     >
       <div className="mb-3 flex items-center justify-between">

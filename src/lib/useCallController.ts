@@ -576,7 +576,7 @@ export function useCallController(
 
   /* ─────────────────────── вход в комнату ─────────────────────── */
 
-  const acquireMedia = useCallback(async (media: CallMedia): Promise<MediaStream> => {
+  const acquireMedia = useCallback(async (media: CallMedia): Promise<MediaStream | null> => {
     // Шумо-/эхоподавление и автоусиление — из настроек звука (пункты
     // «шумоподавление», «порог активации голоса» включаются в панели звонка).
     const audio = audioConstraints();
@@ -586,20 +586,24 @@ export function useCallController(
       if (media === "video") {
         // Камеры может не быть — продолжаем хотя бы с аудио
         try {
-          const audioOnly = await navigator.mediaDevices.getUserMedia({ audio });
-          notifyRef.current("Камера недоступна — переключаемся на аудио");
-          return audioOnly;
+          return await navigator.mediaDevices.getUserMedia({ audio });
         } catch {
-          /* упадём ниже */
+          /* пробуем дальше */
         }
       }
       // Некоторые браузеры не знают отдельные ограничения — пробуем просто аудио
       try {
-        return await navigator.mediaDevices.getUserMedia({ audio: true, video: media === "video" });
+        return await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
       } catch {
-        /* упадём ниже */
+        /* пробуем дальше */
       }
-      throw err;
+      // Ничего не дали (нет доступа к микрофону/камере, запрет в браузере и
+      // т.п.) — НЕ роняем звонок: заходим в режиме прослушивания (собеседников
+      // будет слышно и видно, но вас — нет). Раньше звонок вообще не начинался.
+      notifyRef.current(
+        "Нет доступа к микрофону/камере — вы в режиме прослушивания. Разрешите доступ в настройках браузера, чтобы говорить",
+      );
+      return null;
     }
   }, []);
 
@@ -624,8 +628,10 @@ export function useCallController(
       let stream: MediaStream | null = null;
       try {
         stream = await acquireMedia(opts.media);
+        // stream может быть null — режим прослушивания (нет доступа к
+        // микрофону): звонок всё равно работает, мы слышим и видим других.
         localStreamRef.current = stream;
-        const videoOn = stream.getVideoTracks().some((t) => t.enabled);
+        const videoOn = !!stream?.getVideoTracks().some((t) => t.enabled);
         setCameraOn(videoOn);
         setMuted(false);
         mutedRef.current = false;
