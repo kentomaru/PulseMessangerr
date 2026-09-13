@@ -3,76 +3,30 @@
 /* ─────────────────────────  База  ───────────────────────── */
 
 :root {
-  color-scheme: dark;
+  color-scheme: light;
   /* Единая дизайн-шкала: радиусы и «высота» поверхностей. Держит интерфейс
      согласованным — все блоки оформлены по одним правилам. */
   --radius-sm: 10px;
   --radius-md: 14px;
   --radius-lg: 20px;
   --radius-xl: 26px;
-  --accent-1: #7c3aed;
-  --accent-2: #a855f7;
-  --accent-3: #22d3ee;
-  --shadow-pop: 0 18px 50px -18px rgb(0 0 0 / 0.85);
+  --accent-1: #2563eb;
+  --accent-2: #3b82f6;
+  --accent-3: #0ea5e9;
+  --shadow-pop: 0 12px 34px -14px rgb(15 23 42 / 0.18);
 }
 
 html,
 body {
-  height: 100%;
-}
-
-body {
   font-family: "Manrope", "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
     "Helvetica Neue", Arial, "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif;
-  color: rgb(255 255 255 / 0.92);
+  color: #1f2937;
   font-size: 15px;
   line-height: 1.45;
-  /* Фон мессенджера: нежный сине-чёрный, медленно и плавно переливается.
-     Четыре мягких синих свечения дрейфуют по большому градиенту —
-     движение едва заметное, спокойное, «живое». */
-  background-color: #030510;
-  background-image:
-    linear-gradient(165deg, #050a1c 0%, #030510 50%, #061024 100%),
-    radial-gradient(62rem 44rem at 10% -12%, rgb(37 99 235 / 0.25), transparent 64%),
-    radial-gradient(54rem 40rem at 104% 6%, rgb(14 165 233 / 0.16), transparent 62%),
-    radial-gradient(58rem 44rem at 44% 118%, rgb(59 130 246 / 0.20), transparent 66%);
-  background-size:
-    100% 100%,
-    210% 210%,
-    210% 210%,
-    210% 210%;
-  background-attachment: fixed;
-  animation: bg-flow 36s ease-in-out infinite alternate;
+  /* Спокойный светло-серый фон без градиентов и анимаций — как в обычных
+     «человеческих» мессенджерах. */
+  background: #eef1f5;
   -webkit-font-smoothing: antialiased;
-}
-
-/* Плавный дрейф синих свечений фона — нежно и без рывков. */
-@keyframes bg-flow {
-  0% {
-    background-position:
-      0 0,
-      0% 0%,
-      100% 0%,
-      50% 100%;
-  }
-  100% {
-    background-position:
-      0 0,
-      100% 100%,
-      0% 80%,
-      55% 0%;
-  }
-}
-
-/* Лёгкое «зерно» поверх фона — делает тёмные поверхности глубже. */
-body::before {
-  content: "";
-  position: fixed;
-  inset: 0;
-  z-index: 0;
-  pointer-events: none;
-  opacity: 0.5;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0.028 0'/%3E%3C/filter%3E%3Crect width='120' height='120' filter='url(%23n)'/%3E%3C/svg%3E");
 }
 
 .font-display {
@@ -94,48 +48,40 @@ input:focus-visible,
 textarea:focus-visible,
 select:focus-visible,
 [tabindex]:focus-visible {
-  outline: 2px solid rgb(167 139 250 / 0.6);
+  outline: 2px solid rgb(37 99 235 / 0.5);
   outline-offset: 2px;
 }
 
 ::selection {
-  background: rgb(139 92 246 / 0.4);
+  background: rgb(59 130 246 / 0.25);
 }
 
 /* ───────────────────  Стеклянные поверхности  ─────────────────── */
 
 .glass {
-  background: linear-gradient(180deg, rgb(255 255 255 / 0.085), rgb(255 255 255 / 0.04));
-  backdrop-filter: blur(16px) saturate(140%);
-  -webkit-backdrop-filter: blur(16px) saturate(140%);
-  border: 1px solid rgb(255 255 255 / 0.09);
-  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.07);
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  box-shadow: 0 1px 2px rgb(15 23 42 / 0.04);
 }
 
 .glass-strong {
-  background: linear-gradient(180deg, rgb(26 24 48 / 0.94), rgb(13 12 26 / 0.92));
-  backdrop-filter: blur(28px) saturate(150%);
-  -webkit-backdrop-filter: blur(28px) saturate(150%);
-  border: 1px solid rgb(255 255 255 / 0.11);
-  box-shadow:
-    inset 0 1px 0 rgb(255 255 255 / 0.09),
-    var(--shadow-pop);
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  box-shadow: var(--shadow-pop);
 }
 
 /* ───────────────────  Кнопки и градиенты  ─────────────────── */
 
 .btn-gradient {
   position: relative;
-  background-image: linear-gradient(130deg, #6d28d9 0%, #8b5cf6 40%, #d946ef 78%, #22d3ee 130%);
-  box-shadow: 0 10px 26px -10px rgb(124 58 237 / 0.6);
+  background: #2563eb;
   transition:
-    filter 0.2s ease,
-    transform 0.15s ease,
-    box-shadow 0.2s ease;
+    background-color 0.15s ease,
+    transform 0.15s ease;
 }
 
 .btn-gradient:hover {
-  filter: brightness(1.12);
+  background: #1d4ed8;
 }
 
 .btn-gradient:active {
@@ -143,28 +89,25 @@ select:focus-visible,
 }
 
 .btn-gradient:disabled {
-  filter: saturate(0.5) brightness(0.75);
+  background: #93c5fd;
   cursor: not-allowed;
   transform: none;
 }
 
 .text-gradient {
-  background-image: linear-gradient(120deg, #60a5fa, #22d3ee);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
+  color: #1d4ed8;
 }
 
 .ring-focus:focus-within {
-  border-color: rgb(167 139 250 / 0.45);
-  box-shadow: 0 0 0 3px rgb(139 92 246 / 0.18);
+  border-color: rgb(37 99 235 / 0.5);
+  box-shadow: 0 0 0 3px rgb(59 130 246 / 0.15);
 }
 
 /* ───────────────────  Скроллбары  ─────────────────── */
 
 .nice-scroll {
   scrollbar-width: thin;
-  scrollbar-color: rgb(255 255 255 / 0.14) transparent;
+  scrollbar-color: rgb(148 163 184 / 0.5) transparent;
 }
 
 .nice-scroll::-webkit-scrollbar {
@@ -173,12 +116,12 @@ select:focus-visible,
 }
 
 .nice-scroll::-webkit-scrollbar-thumb {
-  background: linear-gradient(180deg, rgb(139 92 246 / 0.4), rgb(217 70 239 / 0.28));
+  background: rgb(148 163 184 / 0.55);
   border-radius: 999px;
 }
 
 .nice-scroll::-webkit-scrollbar-thumb:hover {
-  background: linear-gradient(180deg, rgb(139 92 246 / 0.6), rgb(217 70 239 / 0.45));
+  background: rgb(100 116 139 / 0.7);
 }
 
 /* Градиентная «линия света» под шапкой чата и над полем ввода */
@@ -191,7 +134,7 @@ select:focus-visible,
   inset-inline: 0;
   bottom: -1px;
   height: 1px;
-  background: linear-gradient(90deg, transparent, rgb(139 92 246 / 0.45), rgb(34 211 238 / 0.3), transparent);
+  background: #e5e7eb;
   pointer-events: none;
 }
 
@@ -287,47 +230,47 @@ select:focus-visible,
 /* ───────────────────  Обои чата (пресеты)  ─────────────────── */
 
 .wallpaper-g1 {
-  background: linear-gradient(160deg, #150b2e 0%, #090a16 60%, #0a0a14 100%);
+  background: #f3f5f8;
 }
 .wallpaper-g2 {
-  background: linear-gradient(160deg, #04121f 0%, #071a2c 55%, #0a0a14 100%);
+  background: linear-gradient(160deg, #eaf2fb 0%, #f3f5f8 60%, #eef1f5 100%);
 }
 .wallpaper-g3 {
-  background: linear-gradient(160deg, #1d0b1e 0%, #2a1030 50%, #0a0a14 100%);
+  background: linear-gradient(160deg, #e8eef9 0%, #f5f3ef 60%, #f3f5f8 100%);
 }
 .wallpaper-g4 {
-  background: linear-gradient(160deg, #0d1f14 0%, #0a1410 55%, #0a0a14 100%);
+  background: linear-gradient(160deg, #e9f3ec 0%, #f3f5f8 60%, #eef1f5 100%);
 }
 .wallpaper-g5 {
-  background: radial-gradient(circle at 20% 20%, rgb(124 58 237 / 0.35), transparent 55%),
-    radial-gradient(circle at 85% 70%, rgb(34 211 238 / 0.22), transparent 50%), #0a0a14;
+  background: radial-gradient(circle at 20% 20%, rgb(59 130 246 / 0.10), transparent 55%),
+    radial-gradient(circle at 85% 70%, rgb(14 165 233 / 0.08), transparent 50%), #f3f5f8;
 }
 .wallpaper-g6 {
-  background: radial-gradient(circle at 75% 15%, rgb(217 70 239 / 0.28), transparent 55%),
-    radial-gradient(circle at 15% 85%, rgb(59 130 246 / 0.25), transparent 50%), #0a0a14;
+  background: radial-gradient(circle at 75% 15%, rgb(14 165 233 / 0.10), transparent 55%),
+    radial-gradient(circle at 15% 85%, rgb(59 130 246 / 0.08), transparent 50%), #f3f5f8;
 }
 .wallpaper-g7 {
-  background: radial-gradient(circle at 50% 0%, rgb(16 185 129 / 0.25), transparent 55%),
-    radial-gradient(circle at 20% 90%, rgb(139 92 246 / 0.25), transparent 50%), #0a0a14;
+  background: radial-gradient(circle at 50% 0%, rgb(16 185 129 / 0.10), transparent 55%),
+    radial-gradient(circle at 20% 90%, rgb(59 130 246 / 0.08), transparent 50%), #f3f5f8;
 }
 .wallpaper-g8 {
   background: repeating-linear-gradient(
       45deg,
-      rgb(255 255 255 / 0.02) 0 12px,
+      rgb(15 23 42 / 0.025) 0 12px,
       transparent 12px 24px
     ),
-    linear-gradient(160deg, #16122b, #0a0a14);
+    linear-gradient(160deg, #f6f8fb, #eef1f5);
 }
 .wallpaper-g9 {
   background: repeating-radial-gradient(
       circle at 0 0,
-      rgb(255 255 255 / 0.025) 0 14px,
+      rgb(15 23 42 / 0.03) 0 14px,
       transparent 14px 28px
     ),
-    linear-gradient(160deg, #0b1526, #0a0a14);
+    linear-gradient(160deg, #f6f8fb, #eef1f5);
 }
 .wallpaper-g10 {
-  background: linear-gradient(160deg, #241205 0%, #170d04 55%, #0a0a14 100%);
+  background: linear-gradient(160deg, #f7f2ea 0%, #f3f5f8 60%, #eef1f5 100%);
 }
 
 /* ───────────────────  Мелочи  ─────────────────── */
@@ -335,16 +278,13 @@ select:focus-visible,
 /* Пузыри сообщений: свои — фирменный градиент индиго→фуксия с мягким
    свечением, чужие — «стеклянная» подложка с тонким верхним бликом. */
 .bubble-own {
-  background-image: linear-gradient(140deg, #5b21b6 0%, #7c3aed 45%, #a855f7 80%, #c084fc 120%);
-  box-shadow:
-    0 10px 26px -14px rgb(124 58 237 / 0.75),
-    inset 0 1px 0 rgb(255 255 255 / 0.18);
+  background: #d7e7fb;
+  border: 1px solid #c3daf5;
 }
 
 .bubble-peer {
-  background: linear-gradient(180deg, rgb(255 255 255 / 0.1), rgb(255 255 255 / 0.06));
-  border: 1px solid rgb(255 255 255 / 0.09);
-  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.08);
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
 }
 
 /* «Хвостик» пузыря: асимметричные углы как в больших мессенджерах */
@@ -358,22 +298,16 @@ select:focus-visible,
 /* Фирменный узор чата, когда обои не выбраны: тонкая диагональная сетка
    точек + мягкая виньетка — чат не выглядит «пустым листом». */
 .chat-pattern {
-  background-image:
-    radial-gradient(rgb(255 255 255 / 0.045) 1px, transparent 1.4px),
-    radial-gradient(60rem 40rem at 50% -10%, rgb(124 58 237 / 0.08), transparent 65%),
-    radial-gradient(50rem 36rem at 50% 115%, rgb(37 99 235 / 0.07), transparent 62%);
-  background-size:
-    22px 22px,
-    auto,
-    auto;
+  background-image: radial-gradient(rgb(15 23 42 / 0.05) 1px, transparent 1.4px);
+  background-size: 22px 22px;
 }
 
 .story-ring {
-  background: conic-gradient(from 140deg, #7c3aed, #d946ef, #22d3ee, #7c3aed);
+  background: conic-gradient(from 140deg, #2563eb, #0ea5e9, #2563eb);
 }
 
 .story-ring-seen {
-  background: rgb(255 255 255 / 0.16);
+  background: #cbd5e1;
 }
 
 .story-progress {

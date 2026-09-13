@@ -1047,10 +1047,10 @@ export default function ChatView({
 
       {/* Шапка — z-30: выпадающее меню «⋮» должно быть НАД областью сообщений
           (раньше оба блока были z-10, сообщения перекрывали меню — клики «не работали») */}
-      <div className="glass-strong chrome-line relative z-30 flex items-center gap-3 border-b border-white/8 px-4 py-3">
+      <div className="glass-strong chrome-line relative z-30 flex items-center gap-3 border-b border-gray-200 px-4 py-3">
         <button
           onClick={onBack}
-          className="glass flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-white/70 md:hidden"
+          className="glass flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-gray-600 md:hidden"
         >
           <ArrowLeft className="h-4 w-4" />
         </button>
@@ -1073,11 +1073,11 @@ export default function ChatView({
                 <StatusEmoji value={peerState.statusEmoji} size={28} />
               )}
               {isSaved && <Bookmark className="h-3.5 w-3.5 shrink-0 text-amber-300" />}
-              {isSpace && kind === "channel" && <Megaphone className="h-3.5 w-3.5 shrink-0 text-cyan-300" />}
-              {isSpace && kind === "group" && <Hash className="h-3.5 w-3.5 shrink-0 text-violet-300" />}
+              {isSpace && kind === "channel" && <Megaphone className="h-3.5 w-3.5 shrink-0 text-blue-600" />}
+              {isSpace && kind === "group" && <Hash className="h-3.5 w-3.5 shrink-0 text-blue-600" />}
               {isSpace && meta?.isPrivate && <Lock className="h-3 w-3 shrink-0 text-white/25" />}
             </p>
-            <p className={`truncate text-xs ${subtitle.accent ? "text-violet-300" : "text-white/35"}`}>
+            <p className={`truncate text-xs ${subtitle.accent ? "text-blue-600" : "text-white/35"}`}>
               {subtitle.text}
             </p>
           </div>
@@ -1087,7 +1087,7 @@ export default function ChatView({
           {activeCall && (
             <button
               onClick={() => onJoinCall(activeCall.id, activeCall.media)}
-              className="flex items-center gap-2 rounded-xl bg-emerald-500/90 px-3 py-2 text-[13px] font-semibold text-white transition-transform hover:scale-[1.03] active:scale-95"
+              className="flex items-center gap-2 rounded-xl bg-emerald-500/90 px-3 py-2 text-[13px] font-semibold text-gray-900 transition-transform hover:scale-[1.03] active:scale-95"
               title="Присоединиться к звонку"
             >
               <Radio className="h-4 w-4 animate-pulse-dot" />
@@ -1098,8 +1098,8 @@ export default function ChatView({
           <button
             onClick={() => setSearchOpen((v) => !v)}
             title="Поиск по чату"
-            className={`glass flex h-10 w-10 items-center justify-center rounded-xl transition-colors hover:text-white ${
-              searchOpen ? "text-violet-300" : "text-white/75"
+            className={`glass flex h-10 w-10 items-center justify-center rounded-xl transition-colors hover:text-gray-900 ${
+              searchOpen ? "text-blue-600" : "text-white/75"
             }`}
           >
             <Search className="h-4.5 w-4.5" />
@@ -1110,7 +1110,7 @@ export default function ChatView({
                 onClick={() => onCall("audio")}
                 disabled={callBusy}
                 title="Аудиозвонок"
-                className="glass flex h-10 w-10 items-center justify-center rounded-xl text-white/75 transition-colors hover:text-white disabled:opacity-40"
+                className="glass flex h-10 w-10 items-center justify-center rounded-xl text-white/75 transition-colors hover:text-gray-900 disabled:opacity-40"
               >
                 <Phone className="h-4.5 w-4.5" />
               </button>
@@ -1118,7 +1118,7 @@ export default function ChatView({
                 onClick={() => onCall("video")}
                 disabled={callBusy}
                 title="Видеозвонок"
-                className="glass flex h-10 w-10 items-center justify-center rounded-xl text-white/75 transition-colors hover:text-white sm:flex disabled:opacity-40"
+                className="glass flex h-10 w-10 items-center justify-center rounded-xl text-white/75 transition-colors hover:text-gray-900 sm:flex disabled:opacity-40"
               >
                 <Video className="h-4.5 w-4.5" />
               </button>
@@ -1128,7 +1128,7 @@ export default function ChatView({
             <button
               onClick={() => setMenuOpen((v) => !v)}
               title="Меню чата"
-              className="glass flex h-10 w-10 items-center justify-center rounded-xl text-white/75 transition-colors hover:text-white"
+              className="glass flex h-10 w-10 items-center justify-center rounded-xl text-white/75 transition-colors hover:text-gray-900"
             >
               <MoreVertical className="h-4.5 w-4.5" />
             </button>
@@ -1181,7 +1181,7 @@ export default function ChatView({
                         }}
                       />
                     )}
-                    <div className="my-1 h-px bg-white/8" />
+                    <div className="my-1 h-px bg-gray-100" />
                     <MenuItem
                       icon={<Trash2 className="h-4 w-4 text-rose-300" />}
                       label={kind === "direct" ? "Удалить чат" : isSpace ? "Покинуть / удалить" : "Удалить чат"}
@@ -1207,25 +1207,25 @@ export default function ChatView({
             initial={{ height: 0, opacity: 0 }}
             animate={{ height: "auto", opacity: 1 }}
             exit={{ height: 0, opacity: 0 }}
-            className="relative z-20 overflow-hidden border-b border-white/8 bg-violet-500/8"
+            className="relative z-20 overflow-hidden border-b border-gray-200 bg-violet-500/8"
           >
             <div className="mx-auto flex max-w-2xl items-center gap-2 px-4 py-1.5">
-              <Pin className="h-3.5 w-3.5 shrink-0 text-violet-300" />
+              <Pin className="h-3.5 w-3.5 shrink-0 text-blue-600" />
               <button
                 onClick={() => jumpTo(pinnedCurrent.id)}
                 title="Перейти к сообщению"
-                className="min-w-0 flex-1 truncate text-left text-xs text-white/70"
+                className="min-w-0 flex-1 truncate text-left text-xs text-gray-600"
               >
-                <span className="font-semibold text-violet-300">
+                <span className="font-semibold text-blue-600">
                   {pinnedCurrent.senderId === me.id ? "Вы" : (pinnedCurrent.sender?.displayName ?? "")}:{" "}
                 </span>
                 <PreviewLabel type={pinnedCurrent.type} content={pinnedCurrent.content} />
               </button>
               {pinned.length > 1 && (
-                <span className="flex shrink-0 items-center gap-0.5 text-[11px] text-white/40 tabular-nums">
+                <span className="flex shrink-0 items-center gap-0.5 text-[11px] text-gray-400 tabular-nums">
                   <button
                     onClick={() => setPinnedIdx((i) => (i - 1 + pinned.length) % pinned.length)}
-                    className="rounded-full p-0.5 hover:text-white"
+                    className="rounded-full p-0.5 hover:text-gray-900"
                     title="Предыдущее закреплённое"
                   >
                     <ChevronLeft className="h-3.5 w-3.5" />
@@ -1233,7 +1233,7 @@ export default function ChatView({
                   {Math.min(pinnedIdx, pinned.length - 1) + 1}/{pinned.length}
                   <button
                     onClick={() => setPinnedIdx((i) => (i + 1) % pinned.length)}
-                    className="rounded-full p-0.5 hover:text-white"
+                    className="rounded-full p-0.5 hover:text-gray-900"
                     title="Следующее закреплённое"
                   >
                     <ChevronRight className="h-3.5 w-3.5" />
@@ -1244,7 +1244,7 @@ export default function ChatView({
                 <button
                   onClick={() => void togglePin(pinnedCurrent)}
                   title="Открепить"
-                  className="shrink-0 rounded-full p-1 text-white/40 transition-colors hover:text-rose-300"
+                  className="shrink-0 rounded-full p-1 text-gray-400 transition-colors hover:text-rose-300"
                 >
                   <PinOff className="h-3.5 w-3.5" />
                 </button>
@@ -1262,7 +1262,7 @@ export default function ChatView({
             initial={{ height: 0, opacity: 0 }}
             animate={{ height: "auto", opacity: 1 }}
             exit={{ height: 0, opacity: 0 }}
-            className="relative z-20 overflow-hidden border-b border-white/8 bg-[#0d0d18]/90"
+            className="relative z-20 overflow-hidden border-b border-gray-200 bg-white"
           >
             <div className="mx-auto max-w-2xl px-4 py-2.5">
               <div className="flex items-center gap-2.5">
@@ -1276,12 +1276,12 @@ export default function ChatView({
                   }}
                   placeholder="Поиск по чату…"
                   maxLength={100}
-                  className="ring-focus w-full rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-sm transition-all placeholder:text-white/30"
+                  className="ring-focus w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm transition-all placeholder:text-gray-400"
                 />
-                {searching && <Loader2 className="h-4 w-4 shrink-0 animate-spin text-white/40" />}
+                {searching && <Loader2 className="h-4 w-4 shrink-0 animate-spin text-gray-400" />}
                 <button
                   onClick={() => setSearchOpen(false)}
-                  className="shrink-0 rounded-full p-1.5 text-white/50 transition-colors hover:text-white"
+                  className="shrink-0 rounded-full p-1.5 text-gray-500 transition-colors hover:text-gray-900"
                   title="Закрыть поиск"
                 >
                   <X className="h-4 w-4" />
@@ -1296,7 +1296,7 @@ export default function ChatView({
                         jumpTo(h.id);
                         setSearchOpen(false);
                       }}
-                      className="flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left transition-colors hover:bg-white/8"
+                      className="flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left transition-colors hover:bg-gray-100"
                     >
                       <Avatar name={h.senderName} src={h.sender?.avatarUrl ?? null} size={28} />
                       <span className="min-w-0 flex-1">
@@ -1310,7 +1310,7 @@ export default function ChatView({
                 </div>
               )}
               {searchHits && searchHits.length === 0 && !searching && searchQuery.trim().length > 0 && (
-                <p className="px-2 pt-2 text-xs text-white/40">Ничего не найдено</p>
+                <p className="px-2 pt-2 text-xs text-gray-400">Ничего не найдено</p>
               )}
             </div>
           </motion.div>
@@ -1328,7 +1328,7 @@ export default function ChatView({
             className="relative z-10 overflow-hidden"
           >
             <div className="mx-4 mt-3 flex max-w-2xl items-center gap-3 rounded-2xl border border-emerald-400/25 bg-emerald-500/12 px-4 py-2.5">
-              <Radio className="h-4 w-4 shrink-0 animate-pulse-dot text-emerald-300" />
+              <Radio className="h-4 w-4 shrink-0 animate-pulse-dot text-emerald-600" />
               <p className="min-w-0 flex-1 truncate text-[13px] text-emerald-100/90">
                 {activeCall.participantCount > 0
                   ? `В комнате ${activeCall.participantCount} чел. — присоединяйтесь`
@@ -1336,7 +1336,7 @@ export default function ChatView({
               </p>
               <button
                 onClick={() => onJoinCall(activeCall.id, activeCall.media)}
-                className="shrink-0 rounded-xl bg-emerald-500 px-3 py-1.5 text-xs font-semibold text-white"
+                className="shrink-0 rounded-xl bg-emerald-500 px-3 py-1.5 text-xs font-semibold text-gray-900"
               >
                 Войти
               </button>
@@ -1367,20 +1367,20 @@ export default function ChatView({
       >
         {dragOver && (
           <div className="pointer-events-none absolute inset-2 z-20 flex items-center justify-center rounded-3xl border-2 border-dashed border-violet-400/60 bg-violet-500/10 backdrop-blur-sm">
-            <p className="rounded-2xl bg-black/60 px-5 py-3 text-sm font-medium text-white/90">
+            <p className="rounded-2xl bg-black/60 px-5 py-3 text-sm font-medium text-gray-900">
               Отпустите — прикрепим к сообщению
             </p>
           </div>
         )}
         {!loaded ? (
           <div className="flex h-full items-center justify-center">
-            <Loader2 className="h-6 w-6 animate-spin text-white/30" />
+            <Loader2 className="h-6 w-6 animate-spin text-gray-400" />
           </div>
         ) : messages.length === 0 ? (
           <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
             <Avatar name={title} src={avatar} size={72} />
             <p className="font-display text-lg font-bold">{title}</p>
-            <p className="max-w-xs text-sm leading-relaxed text-white/40">
+            <p className="max-w-xs text-sm leading-relaxed text-gray-400">
               {isSpace
                 ? kind === "channel"
                   ? "Канал создан. Опубликуйте первый пост — и позовите людей ссылкой"
@@ -1416,7 +1416,7 @@ export default function ChatView({
                   )}
                   {showDay && (
                     <div className="flex justify-center py-4">
-                      <span className="glass rounded-full px-3.5 py-1.5 text-[11px] font-medium text-white/50">
+                      <span className="glass rounded-full px-3.5 py-1.5 text-[11px] font-medium text-gray-500">
                         {dayLabel(m.createdAt)}
                       </span>
                     </div>
@@ -1453,7 +1453,7 @@ export default function ChatView({
       </div>
 
       {/* Ответ / редактирование / поле ввода */}
-      <div className="glass-strong relative z-10 border-t border-white/8 px-4 py-3">
+      <div className="glass-strong relative z-10 border-t border-gray-200 px-4 py-3">
         <div className="mx-auto max-w-2xl">
           {/* Черновик файлов: превью + подпись + кнопка «Отправить» */}
           <AnimatePresence>
@@ -1465,8 +1465,8 @@ export default function ChatView({
                 exit={{ opacity: 0, height: 0 }}
                 className="overflow-hidden"
               >
-                <div className="mb-2 rounded-2xl border border-white/8 bg-white/[0.04] p-2.5">
-                  <p className="mb-2 px-1 text-[11px] font-semibold tracking-wide text-white/40 uppercase">
+                <div className="mb-2 rounded-2xl border border-gray-200 bg-gray-50 p-2.5">
+                  <p className="mb-2 px-1 text-[11px] font-semibold tracking-wide text-gray-400 uppercase">
                     К отправке · {draftFiles.length} шт.
                     {uploading ? " · загрузка…" : ""}
                   </p>
@@ -1474,13 +1474,13 @@ export default function ChatView({
                     {draftFiles.map((d) => (
                       <div
                         key={d.id}
-                        className="group/draft relative flex items-center gap-2.5 rounded-xl border border-white/10 bg-black/25 p-2 pr-3"
+                        className="group/draft relative flex items-center gap-2.5 rounded-xl border border-gray-200 bg-black/25 p-2 pr-3"
                       >
                         {d.preview ? (
                           // eslint-disable-next-line @next/next/no-img-element
                           <img src={d.preview} alt={d.file.name} className="h-12 w-12 rounded-lg object-cover" />
                         ) : (
-                          <span className="flex h-12 w-12 items-center justify-center rounded-lg bg-white/8">
+                          <span className="flex h-12 w-12 items-center justify-center rounded-lg bg-gray-100">
                             <DraftFileIcon mime={d.file.type} />
                           </span>
                         )}
@@ -1490,7 +1490,7 @@ export default function ChatView({
                         </span>
                         <button
                           onClick={() => removeDraftFile(d.id)}
-                          className="rounded-full bg-black/60 p-1 text-white/70 transition-colors hover:text-rose-300"
+                          className="rounded-full bg-black/60 p-1 text-gray-600 transition-colors hover:text-rose-300"
                           title="Убрать"
                         >
                           <X className="h-3.5 w-3.5" />
@@ -1512,14 +1512,14 @@ export default function ChatView({
                 exit={{ opacity: 0, height: 0 }}
                 className="overflow-hidden"
               >
-                <div className="mb-2 flex items-center gap-2.5 rounded-2xl border border-white/8 bg-white/[0.04] px-3 py-2">
+                <div className="mb-2 flex items-center gap-2.5 rounded-2xl border border-gray-200 bg-gray-50 px-3 py-2">
                   {editing ? (
                     <Pencil className="h-4 w-4 shrink-0 text-amber-300" />
                   ) : (
-                    <Reply className="h-4 w-4 shrink-0 text-violet-300" />
+                    <Reply className="h-4 w-4 shrink-0 text-blue-600" />
                   )}
                   <div className="min-w-0 flex-1">
-                    <p className={`truncate text-[11px] font-semibold ${editing ? "text-amber-300" : "text-violet-300"}`}>
+                    <p className={`truncate text-[11px] font-semibold ${editing ? "text-amber-300" : "text-blue-600"}`}>
                       {editing
                         ? "Редактирование сообщения"
                         : replyTo!.senderId === me.id
@@ -1540,7 +1540,7 @@ export default function ChatView({
                         setText("");
                       } else setReplyTo(null);
                     }}
-                    className="shrink-0 rounded-full p-1 text-white/40 hover:text-white"
+                    className="shrink-0 rounded-full p-1 text-gray-400 hover:text-gray-900"
                   >
                     <X className="h-3.5 w-3.5" />
                   </button>
@@ -1550,7 +1550,7 @@ export default function ChatView({
           </AnimatePresence>
 
           {!canPost ? (
-            <div className="flex items-center justify-center gap-2 rounded-2xl border border-white/8 bg-white/[0.03] py-3.5 text-sm text-white/40">
+            <div className="flex items-center justify-center gap-2 rounded-2xl border border-gray-200 bg-white/[0.03] py-3.5 text-sm text-gray-400">
               <Lock className="h-4 w-4" />
               В этом канале писать могут только администраторы
             </div>
@@ -1563,12 +1563,12 @@ export default function ChatView({
               </span>
               <div className="min-w-0 flex-1">
                 <p className="text-sm font-semibold text-rose-200 tabular-nums">{formatDuration(recSecs)}</p>
-                <p className="text-[11px] text-white/40">Запись голосового сообщения…</p>
+                <p className="text-[11px] text-gray-400">Запись голосового сообщения…</p>
               </div>
               <button
                 onClick={() => stopVoiceRecording(false)}
                 title="Отменить запись"
-                className="glass flex h-11 w-11 items-center justify-center rounded-2xl text-white/70 transition-colors hover:text-rose-300"
+                className="glass flex h-11 w-11 items-center justify-center rounded-2xl text-gray-600 transition-colors hover:text-rose-300"
               >
                 <Ban className="h-4.5 w-4.5" />
               </button>
@@ -1576,7 +1576,7 @@ export default function ChatView({
                 onClick={() => stopVoiceRecording(true)}
                 disabled={uploading}
                 title="Закончить и отправить"
-                className="btn-gradient flex h-11 items-center gap-2 rounded-2xl px-4 text-sm font-semibold text-white"
+                className="btn-gradient flex h-11 items-center gap-2 rounded-2xl px-4 text-sm font-semibold text-gray-900"
               >
                 {uploading ? <Loader2 className="h-4.5 w-4.5 animate-spin" /> : <Send className="h-4.5 w-4.5" />}
                 Отправить
@@ -1588,7 +1588,7 @@ export default function ChatView({
                 onClick={() => fileRef.current?.click()}
                 disabled={uploading || sending}
                 title="Прикрепить файл (до 500 МБ)"
-                className="glass flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl text-white/70 transition-colors hover:text-white disabled:opacity-50"
+                className="glass flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl text-gray-600 transition-colors hover:text-gray-900 disabled:opacity-50"
               >
                 {uploading ? <Loader2 className="h-4.5 w-4.5 animate-spin" /> : <Paperclip className="h-4.5 w-4.5" />}
               </button>
@@ -1596,7 +1596,7 @@ export default function ChatView({
                 onClick={() => void startVoiceRecording()}
                 disabled={uploading || sending || noteRecorder}
                 title="Записать голосовое сообщение"
-                className="glass flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl text-white/70 transition-colors hover:text-white disabled:opacity-50"
+                className="glass flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl text-gray-600 transition-colors hover:text-gray-900 disabled:opacity-50"
               >
                 <Mic className="h-4.5 w-4.5" />
               </button>
@@ -1604,7 +1604,7 @@ export default function ChatView({
                 onClick={() => setNoteRecorder(true)}
                 disabled={uploading || sending || voiceRecActive}
                 title="Записать видеосообщение (кружок)"
-                className="glass hidden h-11 w-11 shrink-0 items-center justify-center rounded-2xl text-white/70 transition-colors hover:text-white sm:flex disabled:opacity-50"
+                className="glass hidden h-11 w-11 shrink-0 items-center justify-center rounded-2xl text-gray-600 transition-colors hover:text-gray-900 sm:flex disabled:opacity-50"
               >
                 <VideoNoteIcon />
               </button>
@@ -1647,14 +1647,14 @@ export default function ChatView({
                 rows={1}
                 maxLength={4000}
                 placeholder={draftFiles.length > 0 ? "Подпись к файлам (необязательно)…" : kind === "channel" ? "Написать в канал…" : "Сообщение…"}
-                className="ring-focus nice-scroll max-h-32 min-h-11 flex-1 resize-none rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3 text-[15px] transition-all placeholder:text-white/30"
+                className="ring-focus nice-scroll max-h-32 min-h-11 flex-1 resize-none rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-[15px] transition-all placeholder:text-gray-400"
               />
               <button
                 ref={emojiBtnRef}
                 onClick={() => setEmojiOpen((v) => !v)}
                 title="Эмодзи"
-                className={`glass flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl transition-colors hover:text-white ${
-                  emojiOpen ? "text-amber-300" : "text-white/70"
+                className={`glass flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl transition-colors hover:text-gray-900 ${
+                  emojiOpen ? "text-amber-300" : "text-gray-600"
                 }`}
               >
                 <Smile className="h-4.5 w-4.5" />
@@ -1663,7 +1663,7 @@ export default function ChatView({
                 onClick={() => void send()}
                 disabled={(!canSendSomething && !editing) || sending || uploading}
                 title="Отправить"
-                className="btn-gradient flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl text-white"
+                className="btn-gradient flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl text-gray-900"
               >
                 {sending ? <Loader2 className="h-4.5 w-4.5 animate-spin" /> : <Send className="h-4.5 w-4.5" />}
               </button>
@@ -1764,14 +1764,14 @@ export default function ChatView({
               href={lightbox}
               download
               onClick={(e) => e.stopPropagation()}
-              className="glass absolute top-5 left-5 flex items-center gap-2 rounded-xl px-3.5 py-2.5 text-sm text-white/85 transition-colors hover:text-white"
+              className="glass absolute top-5 left-5 flex items-center gap-2 rounded-xl px-3.5 py-2.5 text-sm text-white/85 transition-colors hover:text-gray-900"
             >
               <Download className="h-4 w-4" />
               Скачать
             </a>
             <button
               onClick={() => setLightbox(null)}
-              className="absolute top-5 right-5 rounded-full bg-white/10 p-2.5 text-white/80 transition-colors hover:bg-white/20"
+              className="absolute top-5 right-5 rounded-full bg-gray-200 p-2.5 text-gray-700 transition-colors hover:bg-white/20"
             >
               <X className="h-5 w-5" />
             </button>
@@ -1870,7 +1870,7 @@ function VideoNoteIcon() {
 }
 
 function DraftFileIcon({ mime }: { mime: string }) {
-  const cls = "h-5 w-5 text-white/60";
+  const cls = "h-5 w-5 text-gray-500";
   if (mime.startsWith("video/")) return <Film className={cls} />;
   if (mime.startsWith("audio/")) return <Music className={cls} />;
   if (mime.startsWith("image/")) return <ImagePlus className={cls} />;
@@ -1895,7 +1895,7 @@ function MenuItem({
       className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm transition-colors ${
         danger
           ? "text-rose-300 hover:bg-rose-500/10 hover:text-rose-200"
-          : "text-white/80 hover:bg-white/8 hover:text-white"
+          : "text-gray-700 hover:bg-gray-100 hover:text-gray-900"
       }`}
     >
       {icon}
@@ -1963,7 +1963,7 @@ function MessageContextMenu({
         style={{ left: x, top: y }}
       >
       {/* быстрые реакции */}
-      <div className="grid grid-cols-5 gap-0.5 border-b border-white/8 p-1">
+      <div className="grid grid-cols-5 gap-0.5 border-b border-gray-200 p-1">
         {QUICK_EMOJIS.map((e) => (
           <button
             key={e}
@@ -1975,14 +1975,14 @@ function MessageContextMenu({
           </button>
         ))}
       </div>
-      <ContextItem icon={<Reply className="h-4 w-4 text-violet-300" />} label="Ответить" onClick={onReply} />
+      <ContextItem icon={<Reply className="h-4 w-4 text-blue-600" />} label="Ответить" onClick={onReply} />
       {canPin && (
         <ContextItem
           icon={
             m.pinned ? (
               <PinOff className="h-4 w-4 text-rose-300" />
             ) : (
-              <Pin className="h-4 w-4 text-emerald-300" />
+              <Pin className="h-4 w-4 text-emerald-600" />
             )
           }
           label={m.pinned ? "Открепить" : "Закрепить"}
@@ -1990,13 +1990,13 @@ function MessageContextMenu({
         />
       )}
       {hasText && (
-        <ContextItem icon={<Copy className="h-4 w-4 text-cyan-300" />} label="Копировать" onClick={onCopy} />
+        <ContextItem icon={<Copy className="h-4 w-4 text-blue-600" />} label="Копировать" onClick={onCopy} />
       )}
       {isEditable && (
         <ContextItem icon={<Pencil className="h-4 w-4 text-amber-300" />} label="Изменить" onClick={onEdit} />
       )}
       <ContextItem
-        icon={<ChevronRight className="h-4 w-4 text-emerald-300" />}
+        icon={<ChevronRight className="h-4 w-4 text-emerald-600" />}
         label="Переслать"
         onClick={onForward}
       />
@@ -2022,8 +2022,8 @@ function ContextItem({
   return (
     <button
       onClick={onClick}
-      className={`flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-sm transition-colors hover:bg-white/8 ${
-        danger ? "text-rose-300/90 hover:text-rose-200" : "text-white/80 hover:text-white"
+      className={`flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-sm transition-colors hover:bg-gray-100 ${
+        danger ? "text-rose-300/90 hover:text-rose-200" : "text-gray-700 hover:text-gray-900"
       }`}
     >
       {icon}
@@ -2088,29 +2088,29 @@ function ForwardModal({
         onClick={(e) => e.stopPropagation()}
         className="glass-strong w-full max-w-md overflow-hidden rounded-[1.8rem] shadow-2xl"
       >
-        <div className="flex items-center justify-between border-b border-white/8 px-6 py-4">
+        <div className="flex items-center justify-between border-b border-gray-200 px-6 py-4">
           <h3 className="font-display text-lg font-bold">Переслать сообщение</h3>
-          <button onClick={onClose} className="rounded-full bg-white/5 p-2 text-white/60 transition-colors hover:bg-white/10">
+          <button onClick={onClose} className="rounded-full bg-gray-100 p-2 text-gray-500 transition-colors hover:bg-gray-100">
             <X className="h-4 w-4" />
           </button>
         </div>
-        <p className="truncate px-6 pt-4 text-xs text-white/40">
+        <p className="truncate px-6 pt-4 text-xs text-gray-400">
           <PreviewLabel type={message.type} content={message.content} />
         </p>
         <div className="nice-scroll max-h-80 overflow-y-auto p-3">
           {!convs ? (
             <div className="flex justify-center py-10">
-              <Loader2 className="h-6 w-6 animate-spin text-white/40" />
+              <Loader2 className="h-6 w-6 animate-spin text-gray-400" />
             </div>
           ) : convs.length === 0 ? (
-            <p className="px-3 py-6 text-center text-sm text-white/40">Пока нет чатов</p>
+            <p className="px-3 py-6 text-center text-sm text-gray-400">Пока нет чатов</p>
           ) : (
             convs.map((c) => (
               <button
                 key={c.id}
                 onClick={() => void forwardTo(c)}
                 disabled={sendingTo !== null}
-                className="flex w-full items-center gap-3 rounded-2xl px-3 py-2.5 text-left transition-colors hover:bg-white/8 disabled:opacity-50"
+                className="flex w-full items-center gap-3 rounded-2xl px-3 py-2.5 text-left transition-colors hover:bg-gray-100 disabled:opacity-50"
               >
                 <Avatar
                   name={c.title}
@@ -2126,7 +2126,7 @@ function ForwardModal({
                     {c.saved ? "избранное" : c.kind === "direct" ? "личный чат" : c.kind === "channel" ? "канал" : "группа"}
                   </span>
                 </span>
-                {sendingTo === c.id && <Loader2 className="h-4 w-4 animate-spin text-white/50" />}
+                {sendingTo === c.id && <Loader2 className="h-4 w-4 animate-spin text-gray-500" />}
               </button>
             ))
           )}
@@ -2307,7 +2307,7 @@ function VideoNoteRecorder({
             }
             onClose();
           }}
-          className="rounded-full bg-white/10 p-2.5 text-white/80 transition-colors hover:bg-white/20"
+          className="rounded-full bg-gray-200 p-2.5 text-gray-700 transition-colors hover:bg-white/20"
         >
           <X className="h-5 w-5" />
         </button>
@@ -2339,7 +2339,7 @@ function VideoNoteRecorder({
           </span>
         )}
         {phase === "camera" && (
-          <span className="absolute bottom-4 left-1/2 -translate-x-1/2 rounded-full bg-black/70 px-3 py-1 text-[11px] text-white/70">
+          <span className="absolute bottom-4 left-1/2 -translate-x-1/2 rounded-full bg-black/70 px-3 py-1 text-[11px] text-gray-600">
             до 60 секунд
           </span>
         )}
@@ -2350,7 +2350,7 @@ function VideoNoteRecorder({
         {phase === "camera" && (
           <button
             onClick={startRecording}
-            className="flex h-16 w-16 items-center justify-center rounded-full bg-rose-500 text-white shadow-[0_10px_30px_-6px_rgba(244,63,94,0.6)] transition-transform hover:scale-105 active:scale-95"
+            className="flex h-16 w-16 items-center justify-center rounded-full bg-rose-500 text-gray-900 shadow-[0_10px_30px_-6px_rgba(244,63,94,0.6)] transition-transform hover:scale-105 active:scale-95"
             title="Начать запись"
           >
             <span className="flex h-8 w-8 items-center justify-center rounded-full bg-white">
@@ -2372,13 +2372,13 @@ function VideoNoteRecorder({
             <button
               onClick={rerecord}
               title="Перезаписать"
-              className="glass flex h-12 w-12 items-center justify-center rounded-full text-white/80 transition-colors hover:text-white"
+              className="glass flex h-12 w-12 items-center justify-center rounded-full text-gray-700 transition-colors hover:text-gray-900"
             >
               <RotateCcw className="h-5 w-5" />
             </button>
             <button
               onClick={send}
-              className="btn-gradient flex h-16 w-16 items-center justify-center rounded-full text-white shadow-[0_10px_30px_-6px_rgba(139,92,246,0.6)] transition-transform hover:scale-105 active:scale-95"
+              className="btn-gradient flex h-16 w-16 items-center justify-center rounded-full text-gray-900 shadow-[0_10px_30px_-6px_rgba(139,92,246,0.6)] transition-transform hover:scale-105 active:scale-95"
               title="Отправить кружок"
             >
               <Send className="h-6 w-6" />
@@ -2386,7 +2386,7 @@ function VideoNoteRecorder({
           </>
         )}
       </div>
-      <p className="text-xs text-white/40">
+      <p className="text-xs text-gray-400">
         {phase === "camera"
           ? "Наведите камеру и нажмите запись"
           : phase === "recording"
@@ -2482,7 +2482,7 @@ function MessageBubble({
   if (message.deletedAt) {
     return (
       <div className={`flex py-0.5 ${alignRight ? "justify-end" : "justify-start"}`}>
-        <div className="flex items-center gap-2 rounded-2xl border border-dashed border-white/12 px-3.5 py-2 text-[13px] italic text-white/35">
+        <div className="flex items-center gap-2 rounded-2xl border border-dashed border-gray-300 px-3.5 py-2 text-[13px] italic text-white/35">
           <Trash2 className="h-3 w-3" />
           Сообщение удалено
         </div>
@@ -2535,7 +2535,7 @@ function MessageBubble({
         {space && !grouped && !alignRight && sender && (
           <button
             onClick={() => onViewUser(sender)}
-            className="mb-1 block text-left text-[12px] font-semibold text-violet-300/90 hover:text-violet-200"
+            className="mb-1 block text-left text-[12px] font-semibold text-blue-600/90 hover:text-violet-200"
           >
             {sender.displayName}
           </button>
@@ -2543,7 +2543,7 @@ function MessageBubble({
 
         <div
           className={`relative overflow-hidden ${
-            media || sticker ? "" : own && !space ? "bubble-own text-white" : "bubble-peer text-white/90"
+            media || sticker ? "" : own && !space ? "bubble-own text-gray-900" : "bubble-peer text-gray-900"
           } ${media || sticker ? "" : `${own && !space ? "bubble-own-radius" : "bubble-peer-radius"} px-4 py-2.5`} ${
             highlighted ? "ring-2 ring-violet-400/60" : ""
           }`}
@@ -2554,12 +2554,12 @@ function MessageBubble({
               onClick={() => onJump(message.replyTo!.id)}
               className="mb-1.5 flex w-full gap-2 rounded-xl border-l-2 border-violet-300/70 bg-black/20 px-2.5 py-1.5 text-left"
             >
-              <CornerUpLeft className="mt-0.5 h-3 w-3 shrink-0 text-violet-300/80" />
+              <CornerUpLeft className="mt-0.5 h-3 w-3 shrink-0 text-blue-600/80" />
               <span className="min-w-0">
                 <span className="block truncate text-[11px] font-semibold text-violet-200">
                   {message.replyTo.senderId === meId ? "Вы" : message.replyTo.senderName}
                 </span>
-                <span className="block truncate text-[12px] text-white/50">
+                <span className="block truncate text-[12px] text-gray-500">
                   {message.replyTo.deleted ? (
                     "Сообщение удалено"
                   ) : (
@@ -2626,7 +2626,7 @@ function MessageBubble({
                 className={`flex items-center gap-1 rounded-full px-2 py-0.5 text-xs transition-colors ${
                   r.mine
                     ? "bg-violet-500/30 text-violet-100 ring-1 ring-violet-400/50"
-                    : "bg-white/8 text-white/70 hover:bg-white/12"
+                    : "bg-gray-100 text-gray-600 hover:bg-white/12"
                 }`}
               >
                 <span>{r.emoji}</span>
@@ -2636,16 +2636,16 @@ function MessageBubble({
           </div>
         )}
 
-        <div className={`mt-1 flex items-center gap-1 text-[10px] text-white/30 ${alignRight ? "justify-end" : ""}`}>
+        <div className={`mt-1 flex items-center gap-1 text-[10px] text-gray-400 ${alignRight ? "justify-end" : ""}`}>
           <span>{timeHHmm(message.createdAt)}</span>
           {message.pinned && (
             <span title="Закреплено" className="flex items-center">
-              <Pin className="h-3 w-3 text-violet-300" />
+              <Pin className="h-3 w-3 text-blue-600" />
             </span>
           )}
           {message.editedAt && <span className="italic">изменено</span>}
           {own &&
-            (read ? <CheckCheck className="h-3.5 w-3.5 text-cyan-300" /> : <Check className="h-3.5 w-3.5" />)}
+            (read ? <CheckCheck className="h-3.5 w-3.5 text-blue-600" /> : <Check className="h-3.5 w-3.5" />)}
         </div>
       </div>
 
@@ -2659,7 +2659,7 @@ function MessageBubble({
         <button
           onClick={onReply}
           title="Ответить"
-          className="rounded-full p-1 text-white/30 hover:text-violet-300"
+          className="rounded-full p-1 text-gray-400 hover:text-blue-600"
         >
           <Reply className="h-3.5 w-3.5" />
         </button>
@@ -2667,7 +2667,7 @@ function MessageBubble({
           <button
             onClick={onPin}
             title={message.pinned ? "Открепить" : "Закрепить"}
-            className={`rounded-full p-1 ${message.pinned ? "text-violet-300 hover:text-rose-300" : "text-white/30 hover:text-emerald-300"}`}
+            className={`rounded-full p-1 ${message.pinned ? "text-blue-600 hover:text-rose-300" : "text-gray-400 hover:text-emerald-600"}`}
           >
             {message.pinned ? <PinOff className="h-3.5 w-3.5" /> : <Pin className="h-3.5 w-3.5" />}
           </button>
@@ -2678,17 +2678,17 @@ function MessageBubble({
             onMenu(rect.left - 100, rect.bottom + 6, message);
           }}
           title="Реакция"
-          className="rounded-full p-1 text-white/30 hover:text-amber-300"
+          className="rounded-full p-1 text-gray-400 hover:text-amber-300"
         >
           <SmilePlus className="h-3.5 w-3.5" />
         </button>
         {canEdit && (
-          <button onClick={onEdit} title="Изменить" className="rounded-full p-1 text-white/30 hover:text-cyan-300">
+          <button onClick={onEdit} title="Изменить" className="rounded-full p-1 text-gray-400 hover:text-blue-600">
             <Pencil className="h-3.5 w-3.5" />
           </button>
         )}
         {canDelete && (
-          <button onClick={onDelete} title="Удалить" className="rounded-full p-1 text-white/30 hover:text-rose-300">
+          <button onClick={onDelete} title="Удалить" className="rounded-full p-1 text-gray-400 hover:text-rose-300">
             <Trash2 className="h-3.5 w-3.5" />
           </button>
         )}
@@ -2758,7 +2758,7 @@ function VoiceBubble({ url, duration, own }: { url: string; duration: number; ow
         onClick={toggle}
         title={playing ? "Пауза" : "Воспроизвести"}
         className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full transition-transform hover:scale-105 active:scale-95 ${
-          own ? "bg-white/20 text-white" : "btn-gradient text-white"
+          own ? "bg-white/20 text-gray-900" : "btn-gradient text-gray-900"
         }`}
       >
         {playing ? <Pause className="h-5 w-5" /> : <Play className="ml-0.5 h-5 w-5" />}
@@ -2798,7 +2798,7 @@ function VoiceBubble({ url, duration, own }: { url: string; duration: number; ow
               if (audioRef.current) audioRef.current.playbackRate = speeds[next];
             }}
             title="Скорость воспроизведения"
-            className="rounded-full bg-white/8 px-2 py-0.5 text-[10px] font-semibold text-white/70 transition-colors hover:bg-white/15"
+            className="rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-semibold text-gray-600 transition-colors hover:bg-gray-200"
           >
             {speeds[speedIdx]}x
           </button>
@@ -2886,11 +2886,11 @@ function VideoNoteBubble({ url, duration }: { url: string; duration: number }) {
           title={started ? "Продолжить" : "Воспроизвести"}
         >
           <span className="flex h-14 w-14 items-center justify-center rounded-full bg-black/55 backdrop-blur-sm">
-            <Play className="ml-1 h-6 w-6 text-white" />
+            <Play className="ml-1 h-6 w-6 text-gray-900" />
           </span>
         </button>
       )}
-      <span className="pointer-events-none absolute right-3 bottom-3 rounded-full bg-black/70 px-2 py-0.5 text-[10px] text-white/80 tabular-nums">
+      <span className="pointer-events-none absolute right-3 bottom-3 rounded-full bg-black/70 px-2 py-0.5 text-[10px] text-gray-700 tabular-nums">
         {formatDuration(Math.round(total))}
       </span>
     </div>
@@ -2908,8 +2908,8 @@ function FileCard({ att }: { att: AttachmentInfo }) {
           <DraftFileIcon mime={mime} />
         </span>
         <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-medium text-white/90">{att.name ?? "Файл"}</p>
-          <p className="text-[11px] text-white/40">
+          <p className="truncate text-sm font-medium text-gray-900">{att.name ?? "Файл"}</p>
+          <p className="text-[11px] text-gray-400">
             {formatBytes(att.size)}
             {mime ? ` · ${mime.split("/")[1]?.split(";")[0] ?? mime}` : ""}
           </p>
@@ -2919,7 +2919,7 @@ function FileCard({ att }: { att: AttachmentInfo }) {
           download={att.name ?? undefined}
           onClick={(e) => e.stopPropagation()}
           title="Скачать"
-          className="glass flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-white/75 transition-colors hover:text-white"
+          className="glass flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-white/75 transition-colors hover:text-gray-900"
         >
           <Download className="h-4.5 w-4.5" />
         </a>
@@ -2971,22 +2971,22 @@ function CallLogBubble({
     <div className="flex justify-center py-1.5">
       <div
         className={`glass flex items-center gap-2.5 rounded-full px-4 py-2 text-[13px] ${
-          missed ? "text-rose-300" : "text-emerald-300"
+          missed ? "text-rose-300" : "text-emerald-600"
         }`}
       >
         {icon}
-        <span className="text-white/80">
+        <span className="text-gray-700">
           {group ? "Групповой звонок" : callLogLabel(info)}
           {group && info.durationSec > 0 ? ` · ${formatDuration(info.durationSec)}` : ""}
           {group && info.participants ? ` · ${info.participants} чел.` : ""}
         </span>
         {!group && info.durationSec > 0 && (
-          <span className="text-white/40">· {formatDuration(info.durationSec)}</span>
+          <span className="text-gray-400">· {formatDuration(info.durationSec)}</span>
         )}
         <span className="text-white/25">{timeHHmm(message.createdAt)}</span>
         {info.media === "video" && <Video className="h-3.5 w-3.5 text-white/35" />}
         {onJoin && (
-          <button onClick={onJoin} className="ml-1 rounded-full bg-emerald-500/90 px-2.5 py-1 text-[11px] font-semibold text-white">
+          <button onClick={onJoin} className="ml-1 rounded-full bg-emerald-500/90 px-2.5 py-1 text-[11px] font-semibold text-gray-900">
             войти
           </button>
         )}
@@ -3051,14 +3051,14 @@ function ConfirmDeleteChatModal({
         {isDirect && (
           <button
             onClick={() => setForAll(!forAll)}
-            className="mt-4 flex w-full items-center gap-3 rounded-2xl border border-white/8 bg-white/4 px-4 py-3 text-left transition-colors hover:bg-white/8"
+            className="mt-4 flex w-full items-center gap-3 rounded-2xl border border-gray-200 bg-white/4 px-4 py-3 text-left transition-colors hover:bg-gray-100"
           >
             <span
               className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-md border transition-colors ${
                 forAll ? "border-rose-400 bg-rose-500" : "border-white/25 bg-transparent"
               }`}
             >
-              {forAll && <Check className="h-3.5 w-3.5 text-white" />}
+              {forAll && <Check className="h-3.5 w-3.5 text-gray-900" />}
             </span>
             <span className="min-w-0">
               <span className="block text-sm font-medium">Удалить для всех</span>
@@ -3070,14 +3070,14 @@ function ConfirmDeleteChatModal({
         <div className="mt-5 flex gap-2.5">
           <button
             onClick={onCancel}
-            className="glass flex-1 rounded-2xl py-3 text-sm font-medium text-white/80 transition-colors hover:bg-white/10"
+            className="glass flex-1 rounded-2xl py-3 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-100"
           >
             Отмена
           </button>
           <button
             onClick={onConfirm}
             disabled={busy}
-            className="flex flex-1 items-center justify-center gap-2 rounded-2xl bg-rose-500 py-3 text-sm font-semibold text-white transition-transform hover:scale-[1.02] active:scale-95 disabled:opacity-60"
+            className="flex flex-1 items-center justify-center gap-2 rounded-2xl bg-rose-500 py-3 text-sm font-semibold text-gray-900 transition-transform hover:scale-[1.02] active:scale-95 disabled:opacity-60"
           >
             {busy && <Loader2 className="h-4 w-4 animate-spin" />}
             {isDirect ? "Удалить" : isOwner ? "Удалить" : "Покинуть"}
@@ -3138,13 +3138,13 @@ function ConfirmDeleteModal({
         <div className="mt-5 flex gap-2.5">
           <button
             onClick={onCancel}
-            className="glass flex-1 rounded-2xl py-3 text-sm font-medium text-white/80 transition-colors hover:bg-white/10"
+            className="glass flex-1 rounded-2xl py-3 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-100"
           >
             Отмена
           </button>
           <button
             onClick={onConfirm}
-            className="flex-1 rounded-2xl bg-rose-500 py-3 text-sm font-semibold text-white transition-transform hover:scale-[1.02] active:scale-95"
+            className="flex-1 rounded-2xl bg-rose-500 py-3 text-sm font-semibold text-gray-900 transition-transform hover:scale-[1.02] active:scale-95"
           >
             Удалить
           </button>
@@ -3195,12 +3195,12 @@ function EmojiPicker({
   return (
     <div className="glass-strong overflow-hidden rounded-[1.4rem] shadow-2xl">
       {/* категории */}
-      <div className="flex items-center gap-0.5 border-b border-white/8 px-2.5 py-2">
+      <div className="flex items-center gap-0.5 border-b border-gray-200 px-2.5 py-2">
         <button
           onClick={() => setCatIdx(-1)}
           title="Стикеры — отправляются отдельным сообщением"
           className={`flex h-8 w-9 shrink-0 items-center justify-center rounded-xl transition-colors ${
-            catIdx === -1 ? "bg-white/12 text-white" : "text-white/45 hover:bg-white/6 hover:text-white/80"
+            catIdx === -1 ? "bg-white/12 text-gray-900" : "text-white/45 hover:bg-white/6 hover:text-gray-700"
           }`}
         >
           <Sticker className="h-4 w-4" />
@@ -3220,7 +3220,7 @@ function EmojiPicker({
         <button
           onClick={onClose}
           title="Закрыть"
-          className="ml-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-xl text-white/40 transition-colors hover:text-white"
+          className="ml-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-xl text-gray-400 transition-colors hover:text-gray-900"
         >
           <X className="h-4 w-4" />
         </button>
@@ -3236,7 +3236,7 @@ function EmojiPicker({
                 key={u}
                 onClick={() => onSendStickerUrl(u)}
                 title="Отправить недавний стикер"
-                className="flex h-14 items-center justify-center overflow-hidden rounded-2xl transition-transform hover:scale-110 hover:bg-white/8 active:scale-95"
+                className="flex h-14 items-center justify-center overflow-hidden rounded-2xl transition-transform hover:scale-110 hover:bg-gray-100 active:scale-95"
               >
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img src={u} alt="" className="h-full w-full object-contain" draggable={false} />
@@ -3247,7 +3247,7 @@ function EmojiPicker({
                 key={s}
                 onClick={() => onSendSticker(s)}
                 title="Отправить стикер"
-                className="flex h-14 items-center justify-center rounded-2xl text-[34px] transition-transform hover:scale-110 hover:bg-white/8 active:scale-95"
+                className="flex h-14 items-center justify-center rounded-2xl text-[34px] transition-transform hover:scale-110 hover:bg-gray-100 active:scale-95"
               >
                 {s}
               </button>
@@ -3256,7 +3256,7 @@ function EmojiPicker({
             <button
               onClick={() => stickerInputRef.current?.click()}
               title="Загрузить свой стикер (гифку или картинку)"
-              className="flex h-14 flex-col items-center justify-center gap-0.5 rounded-2xl border border-dashed border-white/15 text-white/40 transition-colors hover:border-violet-300/50 hover:bg-white/6 hover:text-violet-200"
+              className="flex h-14 flex-col items-center justify-center gap-0.5 rounded-2xl border border-dashed border-gray-300 text-gray-400 transition-colors hover:border-violet-300/50 hover:bg-white/6 hover:text-violet-200"
             >
               {stickerBusy ? (
                 <Loader2 className="h-5 w-5 animate-spin" />
@@ -3279,7 +3279,7 @@ function EmojiPicker({
               }}
             />
           </div>
-          <p className="border-t border-white/8 px-3 py-1.5 text-[10px] text-white/30">
+          <p className="border-t border-gray-200 px-3 py-1.5 text-[10px] text-gray-400">
             Стикеры · нажмите, чтобы отправить · «Гифка» — загрузить свой (анимированный)
           </p>
         </>
@@ -3294,13 +3294,13 @@ function EmojiPicker({
               <button
                 key={e}
                 onClick={() => onPick(e)}
-                className="flex h-9 items-center justify-center rounded-xl text-xl transition-transform hover:scale-125 hover:bg-white/8 active:scale-95"
+                className="flex h-9 items-center justify-center rounded-xl text-xl transition-transform hover:scale-125 hover:bg-gray-100 active:scale-95"
               >
                 {e}
               </button>
             ))}
           </div>
-          <p className="border-t border-white/8 px-3 py-1.5 text-[10px] text-white/30">
+          <p className="border-t border-gray-200 px-3 py-1.5 text-[10px] text-gray-400">
             {cat.name} · нажмите, чтобы вставить
           </p>
         </>

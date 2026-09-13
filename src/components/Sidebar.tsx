@@ -190,7 +190,7 @@ export default function Sidebar({
   const linkToken = extractToken(query);
 
   return (
-    <aside className="flex h-full w-full flex-col border-r border-blue-200/8 bg-[linear-gradient(180deg,rgba(8,14,30,0.90),rgba(4,7,16,0.88))] backdrop-blur-2xl">
+    <aside className="flex h-full w-full flex-col border-r border-gray-200 bg-white">
       {/* Шапка: аватар + имя (клик — профиль), фирменный логотип градиентом */}
       <div className="flex items-center gap-3 px-5 pt-5 pb-3">
         <button onClick={onOpenProfile} className="transition-transform hover:scale-105 active:scale-95">
@@ -199,11 +199,11 @@ export default function Sidebar({
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
             <span className="text-gradient font-display text-lg font-bold tracking-[0.18em]">PULSE</span>
-            <Sparkles className="h-3.5 w-3.5 text-fuchsia-300/90" />
+            <Sparkles className="h-3.5 w-3.5 text-blue-600/90" />
           </div>
           <button
             onClick={onOpenProfile}
-            className="flex max-w-full items-center gap-1.5 text-left text-xs text-white/40 transition-colors hover:text-white/70"
+            className="flex max-w-full items-center gap-1.5 text-left text-xs text-gray-400 transition-colors hover:text-gray-600"
             title="Открыть профиль"
           >
             <span className="truncate">@{me.username}</span>
@@ -215,7 +215,7 @@ export default function Sidebar({
           <button
             onClick={() => setCreateOpen((v) => !v)}
             title="Создать группу или канал"
-            className="btn-gradient flex h-9 w-9 items-center justify-center rounded-xl text-white"
+            className="btn-gradient flex h-9 w-9 items-center justify-center rounded-xl text-gray-900"
           >
             <Plus className="h-4 w-4" />
           </button>
@@ -229,7 +229,7 @@ export default function Sidebar({
                 className="glass-strong absolute right-0 z-40 mt-2 w-56 overflow-hidden rounded-2xl p-1.5 shadow-2xl"
               >
                 <CreateItem
-                  icon={<Users className="h-4 w-4 text-violet-300" />}
+                  icon={<Users className="h-4 w-4 text-blue-600" />}
                   title="Создать группу"
                   hint="Общий чат и звонки"
                   onClick={() => {
@@ -238,7 +238,7 @@ export default function Sidebar({
                   }}
                 />
                 <CreateItem
-                  icon={<Megaphone className="h-4 w-4 text-cyan-300" />}
+                  icon={<Megaphone className="h-4 w-4 text-blue-600" />}
                   title="Создать канал"
                   hint="Пишут админы"
                   onClick={() => {
@@ -247,7 +247,7 @@ export default function Sidebar({
                   }}
                 />
                 <CreateItem
-                  icon={<Compass className="h-4 w-4 text-emerald-300" />}
+                  icon={<Compass className="h-4 w-4 text-emerald-600" />}
                   title="Обзор"
                   hint="Публичные группы и каналы"
                   onClick={() => {
@@ -263,7 +263,7 @@ export default function Sidebar({
         <button
           onClick={onOpenSaved}
           title="Избранное — сохранить сообщение можно через «Переслать»"
-          className="glass flex h-9 w-9 items-center justify-center rounded-xl text-white/50 transition-colors hover:text-amber-300"
+          className="glass flex h-9 w-9 items-center justify-center rounded-xl text-gray-500 transition-colors hover:text-amber-300"
         >
           <Bookmark className="h-4 w-4" />
         </button>
@@ -274,8 +274,8 @@ export default function Sidebar({
             title="Настройки уведомлений"
             className={`glass flex h-9 w-9 items-center justify-center rounded-xl transition-colors ${
               soundOn || notifyOn
-                ? "text-white/50 hover:text-emerald-300"
-                : "text-white/30 hover:text-white/70"
+                ? "text-gray-500 hover:text-emerald-600"
+                : "text-gray-400 hover:text-gray-600"
             }`}
           >
             {soundOn || notifyOn ? <Bell className="h-4 w-4" /> : <BellOff className="h-4 w-4" />}
@@ -290,7 +290,7 @@ export default function Sidebar({
                 transition={{ duration: 0.14 }}
                 className="glass-strong absolute top-11 right-0 z-50 w-64 rounded-2xl p-3 shadow-2xl"
               >
-                <p className="px-1 pb-2 text-[10px] font-semibold tracking-wide text-white/40 uppercase">
+                <p className="px-1 pb-2 text-[10px] font-semibold tracking-wide text-gray-400 uppercase">
                   Уведомления
                 </p>
                 <NotifyRow
@@ -314,10 +314,10 @@ export default function Sidebar({
                   active={notifyOn}
                   onClick={onToggleNotify}
                 />
-                <p className="px-1 pt-3 pb-2 text-[10px] font-semibold tracking-wide text-white/40 uppercase">
+                <p className="px-1 pt-3 pb-2 text-[10px] font-semibold tracking-wide text-gray-400 uppercase">
                   Размер интерфейса
                 </p>
-                <div className="grid grid-cols-3 gap-1 rounded-xl bg-white/[0.05] p-1">
+                <div className="grid grid-cols-3 gap-1 rounded-xl bg-gray-100 p-1">
                   {(
                     [
                       ["s", "Мелкий"],
@@ -330,8 +330,8 @@ export default function Sidebar({
                       onClick={() => onSetUiScale(v)}
                       className={`rounded-lg px-1 py-1.5 text-[11px] font-medium transition-colors ${
                         uiScale === v
-                          ? "btn-gradient text-white"
-                          : "text-white/50 hover:bg-white/8 hover:text-white/80"
+                          ? "btn-gradient text-gray-900"
+                          : "text-gray-500 hover:bg-gray-100 hover:text-gray-700"
                       }`}
                     >
                       {label}
@@ -345,7 +345,7 @@ export default function Sidebar({
         <button
           onClick={onLogout}
           title="Выйти"
-          className="glass flex h-9 w-9 items-center justify-center rounded-xl text-white/50 transition-colors hover:text-rose-300"
+          className="glass flex h-9 w-9 items-center justify-center rounded-xl text-gray-500 transition-colors hover:text-rose-300"
         >
           <LogOut className="h-4 w-4" />
         </button>
@@ -353,15 +353,15 @@ export default function Sidebar({
 
       {/* Поиск */}
       <div ref={searchBoxRef} className="relative px-5 pb-3">
-        <label className="ring-focus flex items-center gap-2.5 rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-2.5 transition-all">
+        <label className="ring-focus flex items-center gap-2.5 rounded-2xl border border-gray-200 bg-gray-50 px-4 py-2.5 transition-all">
           <Search className="h-4 w-4 shrink-0 text-white/35" />
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Люди, группы, каналы или ссылка"
-            className="w-full bg-transparent text-sm placeholder:text-white/30"
+            className="w-full bg-transparent text-sm placeholder:text-gray-400"
           />
-          {searching && <Loader2 className="h-3.5 w-3.5 animate-spin text-white/40" />}
+          {searching && <Loader2 className="h-3.5 w-3.5 animate-spin text-gray-400" />}
         </label>
 
         <AnimatePresence>
@@ -379,14 +379,14 @@ export default function Sidebar({
                     onJoinByToken(linkToken);
                     setQuery("");
                   }}
-                  className="mb-1 flex w-full items-center gap-3 rounded-xl bg-violet-500/15 px-3 py-2.5 text-left"
+                  className="mb-1 flex w-full items-center gap-3 rounded-xl bg-blue-50 px-3 py-2.5 text-left"
                 >
                   <span className="glass flex h-8 w-8 items-center justify-center rounded-lg">
-                    <Lock className="h-3.5 w-3.5 text-violet-300" />
+                    <Lock className="h-3.5 w-3.5 text-blue-600" />
                   </span>
                   <span className="min-w-0">
                     <span className="block truncate text-sm font-medium">Войти по ссылке</span>
-                    <span className="block truncate text-[11px] text-white/40">
+                    <span className="block truncate text-[11px] text-gray-400">
                       приватная группа, канал или звонок
                     </span>
                   </span>
@@ -408,21 +408,21 @@ export default function Sidebar({
                     setQuery("");
                   }}
                   disabled={!g.joined}
-                  className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left transition-colors hover:bg-white/8 disabled:opacity-60"
+                  className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left transition-colors hover:bg-gray-100 disabled:opacity-60"
                 >
                   <Avatar name={g.name} src={g.avatarUrl} size={34} />
                   <div className="min-w-0 flex-1">
                     <p className="flex items-center gap-1.5 truncate text-sm font-medium">
                       {g.kind === "channel" ? (
-                        <Megaphone className="h-3 w-3 text-cyan-300" />
+                        <Megaphone className="h-3 w-3 text-blue-600" />
                       ) : (
-                        <Hash className="h-3 w-3 text-violet-300" />
+                        <Hash className="h-3 w-3 text-blue-600" />
                       )}
                       {g.name}
                     </p>
                     <p className="truncate text-xs text-white/35">{g.memberCount} участников</p>
                   </div>
-                  {!g.joined && <span className="text-[11px] text-white/30">в обзоре</span>}
+                  {!g.joined && <span className="text-[11px] text-gray-400">в обзоре</span>}
                 </button>
               ))}
 
@@ -438,7 +438,7 @@ export default function Sidebar({
                     onOpenChat(u);
                     setQuery("");
                   }}
-                  className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left transition-colors hover:bg-white/8"
+                  className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left transition-colors hover:bg-gray-100"
                 >
                   <Avatar name={u.displayName} src={u.avatarUrl} size={34} online={u.online} />
                   <div className="min-w-0 flex-1">
@@ -450,7 +450,7 @@ export default function Sidebar({
               ))}
 
               {users.length === 0 && groups.length === 0 && !searching && !linkToken && (
-                <p className="flex items-center gap-2 px-3 py-3 text-sm text-white/40">
+                <p className="flex items-center gap-2 px-3 py-3 text-sm text-gray-400">
                   <SearchX className="h-4 w-4" />
                   Ничего не нашли
                 </p>
@@ -509,9 +509,9 @@ export default function Sidebar({
         {unpinnedDms.length === 0 && unpinnedSpaces.length === 0 && pinned.length === 0 ? (
           <div className="mt-8 px-6 text-center">
             <div className="glass mx-auto flex h-14 w-14 items-center justify-center rounded-2xl">
-              <Search className="h-6 w-6 text-white/30" />
+              <Search className="h-6 w-6 text-gray-400" />
             </div>
-            <p className="mt-4 text-sm leading-relaxed text-white/40">
+            <p className="mt-4 text-sm leading-relaxed text-gray-400">
               Пока никого. Найдите человека по @имени в поиске выше — или создайте группу кнопкой «+»
             </p>
           </div>
@@ -534,7 +534,7 @@ export default function Sidebar({
 
         <button
           onClick={onDiscover}
-          className="mt-4 flex w-full items-center justify-center gap-2 rounded-2xl border border-dashed border-white/12 py-3 text-[13px] text-white/40 transition-colors hover:border-violet-400/40 hover:text-white/70"
+          className="mt-4 flex w-full items-center justify-center gap-2 rounded-2xl border border-dashed border-gray-300 py-3 text-[13px] text-gray-400 transition-colors hover:border-blue-500/40 hover:text-gray-600"
         >
           <Compass className="h-4 w-4" />
           Найти публичные группы и каналы
@@ -588,13 +588,13 @@ function ConvRow({
       }}
       className={`group/row relative flex w-full cursor-pointer items-center gap-3 rounded-2xl px-3 py-3 text-left transition-colors ${
         active
-          ? "bg-gradient-to-r from-violet-500/20 via-violet-500/10 to-transparent"
-          : "hover:bg-white/5"
+          ? "bg-gradient-to-r from-blue-50 to-transparent"
+          : "hover:bg-gray-100"
       }`}
     >
       {/* Акцентная полоска у активного чата */}
       {active && (
-        <span className="absolute top-1/2 left-0 h-6 w-1 -translate-y-1/2 rounded-full bg-gradient-to-b from-violet-400 to-fuchsia-400" />
+        <span className="absolute top-1/2 left-0 h-6 w-1 -translate-y-1/2 rounded-full bg-gradient-to-b from-blue-500 to-blue-600" />
       )}
       <div className="relative">
         <Avatar
@@ -606,9 +606,9 @@ function ConvRow({
         {isSpace && (
           <span className="glass-strong absolute -right-1 -bottom-1 flex h-5 w-5 items-center justify-center rounded-full">
             {conv.kind === "channel" ? (
-              <Megaphone className="h-3 w-3 text-cyan-300" />
+              <Megaphone className="h-3 w-3 text-blue-600" />
             ) : (
-              <Users className="h-3 w-3 text-violet-300" />
+              <Users className="h-3 w-3 text-blue-600" />
             )}
           </span>
         )}
@@ -631,7 +631,7 @@ function ConvRow({
                   e.stopPropagation();
                   onToggleMute(conv.id);
                 }}
-                className="grid h-6 w-6 place-items-center rounded-lg text-white/35 hover:bg-white/10 hover:text-white/80"
+                className="grid h-6 w-6 place-items-center rounded-lg text-white/35 hover:bg-gray-100 hover:text-gray-700"
               >
                 {muted ? <BellRing className="h-3 w-3" /> : <BellOff className="h-3 w-3" />}
               </span>
@@ -644,8 +644,8 @@ function ConvRow({
                   e.stopPropagation();
                   onTogglePin(conv.id);
                 }}
-                className={`grid h-6 w-6 place-items-center rounded-lg hover:bg-white/10 ${
-                  pinned ? "text-violet-300" : "text-white/35 hover:text-white/80"
+                className={`grid h-6 w-6 place-items-center rounded-lg hover:bg-gray-100 ${
+                  pinned ? "text-blue-600" : "text-white/35 hover:text-gray-700"
                 }`}
               >
                 <Pin className="h-3 w-3" />
@@ -653,7 +653,7 @@ function ConvRow({
             )}
           </span>
           {!pinned && lm && (
-            <span className="hidden shrink-0 text-[11px] text-white/30 group-hover/row:hidden">
+            <span className="hidden shrink-0 text-[11px] text-gray-400 group-hover/row:hidden">
               {timeHHmm(lm.createdAt)}
             </span>
           )}
@@ -661,7 +661,7 @@ function ConvRow({
 
         <div className="mt-0.5 flex items-center justify-between gap-2">
           {call && call.status === "live" ? (
-            <p className="flex min-w-0 items-center gap-1.5 truncate text-[13px] text-emerald-300">
+            <p className="flex min-w-0 items-center gap-1.5 truncate text-[13px] text-emerald-600">
               <Radio className="h-3.5 w-3.5 shrink-0 animate-pulse-dot" />
               <span className="truncate">
                 Звонок идёт · {call.participantCount}
@@ -669,12 +669,12 @@ function ConvRow({
               </span>
             </p>
           ) : (
-            <p className="truncate text-[13px] text-white/40">
+            <p className="truncate text-[13px] text-gray-400">
               <PreviewNode conv={conv} meId={meId} />
             </p>
           )}
           {conv.unreadCount > 0 && (
-            <span className="btn-gradient flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full px-1.5 text-[11px] font-bold text-white">
+            <span className="btn-gradient flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full px-1.5 text-[11px] font-bold text-gray-900">
               {conv.unreadCount > 99 ? "99+" : conv.unreadCount}
             </span>
           )}
@@ -682,7 +682,7 @@ function ConvRow({
       </div>
       {/* Булавка у закреплённого чата */}
       {pinned && (
-        <Pin className="absolute top-2 right-2 h-3 w-3 rotate-45 text-violet-300/70" />
+        <Pin className="absolute top-2 right-2 h-3 w-3 rotate-45 text-blue-600/70" />
       )}
     </div>
   );
@@ -702,7 +702,7 @@ function CreateItem({
   return (
     <button
       onClick={onClick}
-      className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left transition-colors hover:bg-white/8"
+      className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left transition-colors hover:bg-gray-100"
     >
       <span className="glass flex h-8 w-8 shrink-0 items-center justify-center rounded-lg">{icon}</span>
       <span className="min-w-0">
@@ -730,11 +730,11 @@ function NotifyRow({
   return (
     <button
       onClick={onClick}
-      className="flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left transition-colors hover:bg-white/8"
+      className="flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left transition-colors hover:bg-gray-100"
     >
       <span
         className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${
-          active ? "bg-violet-500/20 text-violet-200" : "bg-white/6 text-white/35"
+          active ? "bg-blue-50 text-violet-200" : "bg-white/6 text-white/35"
         }`}
       >
         {icon}
