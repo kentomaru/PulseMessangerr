@@ -209,7 +209,7 @@ export default function GroupCreateModal({
         <div className="rounded-2xl border border-white/8 bg-white/[0.03] p-3.5">
           <button onClick={() => setIsPrivate((v) => !v)} className="flex w-full items-center gap-3 text-left">
             <span className="glass flex h-9 w-9 shrink-0 items-center justify-center rounded-xl">
-              {isPrivate ? <Lock className="h-4 w-4 text-violet-300" /> : <Hash className="h-4 w-4 text-cyan-300" />}
+              {isPrivate ? <Lock className="h-4 w-4 text-slate-400" /> : <Hash className="h-4 w-4 text-slate-400" />}
             </span>
             <span className="min-w-0 flex-1">
               <span className="block text-sm font-medium">{isPrivate ? "Приватный" : "Публичный"}</span>
@@ -221,7 +221,7 @@ export default function GroupCreateModal({
             </span>
             <span
               className={`relative h-6 w-11 shrink-0 rounded-full transition-colors ${
-                isPrivate ? "bg-violet-500" : "bg-white/15"
+                isPrivate ? "bg-[#5865f2]" : "bg-white/15"
               }`}
             >
               <motion.span
@@ -327,7 +327,7 @@ function KindCard({
     <button
       onClick={onClick}
       className={`rounded-2xl border p-3.5 text-left transition-colors ${
-        active ? "border-violet-400/60 bg-violet-500/15" : "border-white/8 bg-white/[0.03] hover:bg-white/[0.06]"
+        active ? "border-[#5865f2]/60 bg-white/8" : "border-white/8 bg-white/[0.03] hover:bg-white/[0.06]"
       }`}
     >
       <span className={`mb-2 flex h-8 w-8 items-center justify-center rounded-xl ${active ? "btn-gradient text-white" : "glass text-white/60"}`}>

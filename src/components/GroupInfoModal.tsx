@@ -244,7 +244,7 @@ export default function GroupInfoModal({
                 {info.isPrivate ? <Lock className="h-3 w-3" /> : <Hash className="h-3 w-3" />}
                 {info.isPrivate ? "приватный" : "публичный"}
               </span>
-              <span className="flex items-center gap-1 text-violet-300/80">
+              <span className="flex items-center gap-1 text-slate-400/80">
                 <Shield className="h-3 w-3" />
                 вы — {ROLE_LABEL[info.myRole]}
               </span>
@@ -269,7 +269,7 @@ export default function GroupInfoModal({
               onClick={() => setIsPrivate((v) => !v)}
               className="flex w-full items-center gap-3 rounded-xl border border-white/8 bg-white/[0.03] px-3 py-2.5 text-left"
             >
-              {isPrivate ? <Lock className="h-4 w-4 text-violet-300" /> : <Hash className="h-4 w-4 text-cyan-300" />}
+              {isPrivate ? <Lock className="h-4 w-4 text-slate-400" /> : <Hash className="h-4 w-4 text-slate-400" />}
               <span className="min-w-0 flex-1">
                 <span className="block text-sm font-medium">{isPrivate ? "Приватный" : "Публичный"}</span>
                 <span className="block text-[11px] text-white/35">
@@ -278,7 +278,7 @@ export default function GroupInfoModal({
                     : "Виден в «Обзоре», может вступить любой"}
                 </span>
               </span>
-              <span className={`h-5 w-9 shrink-0 rounded-full ${isPrivate ? "bg-violet-500" : "bg-white/20"}`} />
+              <span className={`h-5 w-9 shrink-0 rounded-full ${isPrivate ? "bg-[#5865f2]" : "bg-white/20"}`} />
             </button>
             <div className="flex gap-2">
               <button

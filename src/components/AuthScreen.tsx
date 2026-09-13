@@ -72,16 +72,16 @@ export default function AuthScreen() {
     <main className="relative flex h-dvh items-center justify-center overflow-hidden p-4">
       {/* floating orbs */}
       <div className="pointer-events-none absolute inset-0">
-        <div className="animate-float absolute top-[12%] left-[8%] h-72 w-72 rounded-full bg-violet-600/25 blur-[110px]" />
-        <div className="animate-float absolute right-[6%] bottom-[10%] h-80 w-80 rounded-full bg-cyan-500/15 blur-[120px] [animation-delay:-6s]" />
-        <div className="animate-float absolute top-[55%] left-[45%] h-64 w-64 rounded-full bg-fuchsia-600/15 blur-[100px] [animation-delay:-11s]" />
+        <div className="animate-float absolute top-[12%] left-[8%] h-72 w-72 rounded-full bg-white/10 blur-[110px]" />
+        <div className="animate-float absolute right-[6%] bottom-[10%] h-80 w-80 rounded-full bg-white/8 blur-[120px] [animation-delay:-6s]" />
+        <div className="animate-float absolute top-[55%] left-[45%] h-64 w-64 rounded-full bg-white/8 blur-[100px] [animation-delay:-11s]" />
       </div>
 
       <div className="relative z-10 grid w-full max-w-5xl overflow-hidden rounded-[2rem] border border-white/10 shadow-[0_40px_120px_-30px_rgba(0,0,0,0.9)] md:grid-cols-[1.15fr_1fr]">
         {/* Hero panel */}
         <div className="relative hidden flex-col justify-between overflow-hidden bg-gradient-to-br from-[#15082e] via-[#120a24] to-[#041521] p-10 md:flex">
-          <div className="absolute -top-24 -right-24 h-72 w-72 rounded-full bg-violet-600/30 blur-[90px]" />
-          <div className="absolute -bottom-20 -left-16 h-64 w-64 rounded-full bg-cyan-500/20 blur-[80px]" />
+          <div className="absolute -top-24 -right-24 h-72 w-72 rounded-full bg-white/10 blur-[90px]" />
+          <div className="absolute -bottom-20 -left-16 h-64 w-64 rounded-full bg-white/10 blur-[80px]" />
 
           <div className="relative flex items-center gap-3">
             <div className="btn-gradient flex h-11 w-11 items-center justify-center rounded-2xl">
@@ -106,13 +106,13 @@ export default function AuthScreen() {
           <div className="relative flex flex-col gap-3 text-sm text-white/60">
             <div className="flex items-center gap-3">
               <div className="glass flex h-9 w-9 items-center justify-center rounded-xl">
-                <MessagesSquare className="h-4 w-4 text-violet-300" />
+                <MessagesSquare className="h-4 w-4 text-slate-400" />
               </div>
               Мгновенные сообщения и фото
             </div>
             <div className="flex items-center gap-3">
               <div className="glass flex h-9 w-9 items-center justify-center rounded-xl">
-                <PhoneCall className="h-4 w-4 text-cyan-300" />
+                <PhoneCall className="h-4 w-4 text-slate-400" />
               </div>
               Голосовые и видеозвонки в браузере
             </div>
@@ -143,7 +143,7 @@ export default function AuthScreen() {
                 {mode === m && (
                   <motion.span
                     layoutId="auth-tab"
-                    className="absolute inset-0 rounded-xl bg-gradient-to-r from-violet-600/80 to-fuchsia-600/80"
+                    className="absolute inset-0 rounded-xl bg-gradient-to-r from-[#5865f2]/80 to-[#7289da]/80"
                     transition={{ type: "spring", bounce: 0.25, duration: 0.5 }}
                   />
                 )}
@@ -289,7 +289,7 @@ export default function AuthScreen() {
 
           <p className="mt-6 text-center text-[11px] text-white/25">
             Продолжая, вы соглашаетесь с{" "}
-            <a href="/privacy" target="_blank" rel="noreferrer" className="text-violet-300/70 transition-colors hover:text-violet-200">
+            <a href="/privacy" target="_blank" rel="noreferrer" className="text-slate-400/70 transition-colors hover:text-slate-300">
               политикой конфиденциальности
             </a>
           </p>

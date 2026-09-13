@@ -101,7 +101,7 @@ export default function PeoplePicker({
       >
         <div className="flex items-center gap-3 border-b border-white/8 px-5 py-4">
           <div className="glass flex h-9 w-9 items-center justify-center rounded-xl">
-            <UserPlus className="h-4 w-4 text-violet-300" />
+            <UserPlus className="h-4 w-4 text-slate-400" />
           </div>
           <div className="min-w-0 flex-1">
             <p className="font-display truncate text-[15px] font-bold">{title}</p>

@@ -3,12 +3,12 @@
 import { useEffect, useState } from "react";
 
 const PALETTES = [
-  "from-violet-500 to-fuchsia-500",
-  "from-cyan-500 to-blue-600",
+  "from-[#5865f2] to-[#7289da]",
+  "from-[#5865f2] to-blue-600",
   "from-emerald-500 to-teal-600",
   "from-amber-500 to-orange-600",
   "from-rose-500 to-pink-600",
-  "from-indigo-500 to-violet-600",
+  "from-indigo-500 to-[#4752c4]",
 ];
 
 export function paletteFor(seed: string) {
@@ -84,7 +84,7 @@ export default function Avatar({
       )}
       {online !== undefined && (
         <span
-          className={`absolute right-0 bottom-0 h-3 w-3 rounded-full border-2 border-[#0a0a14] ${
+          className={`absolute right-0 bottom-0 h-3 w-3 rounded-full border-2 border-[#16181c] ${
             online ? "bg-emerald-400 animate-pulse-dot" : "bg-zinc-500"
           }`}
           style={{ transform: "translate(2px, 2px)" }}

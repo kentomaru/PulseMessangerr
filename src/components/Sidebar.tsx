@@ -199,7 +199,7 @@ export default function Sidebar({
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
             <span className="text-gradient font-display text-lg font-bold tracking-[0.18em]">PULSE</span>
-            <Sparkles className="h-3.5 w-3.5 text-fuchsia-300/90" />
+            <Sparkles className="h-3.5 w-3.5 text-slate-400/90" />
           </div>
           <button
             onClick={onOpenProfile}
@@ -229,7 +229,7 @@ export default function Sidebar({
                 className="glass-strong absolute right-0 z-40 mt-2 w-56 overflow-hidden rounded-2xl p-1.5 shadow-2xl"
               >
                 <CreateItem
-                  icon={<Users className="h-4 w-4 text-violet-300" />}
+                  icon={<Users className="h-4 w-4 text-slate-400" />}
                   title="Создать группу"
                   hint="Общий чат и звонки"
                   onClick={() => {
@@ -238,7 +238,7 @@ export default function Sidebar({
                   }}
                 />
                 <CreateItem
-                  icon={<Megaphone className="h-4 w-4 text-cyan-300" />}
+                  icon={<Megaphone className="h-4 w-4 text-slate-400" />}
                   title="Создать канал"
                   hint="Пишут админы"
                   onClick={() => {
@@ -379,10 +379,10 @@ export default function Sidebar({
                     onJoinByToken(linkToken);
                     setQuery("");
                   }}
-                  className="mb-1 flex w-full items-center gap-3 rounded-xl bg-violet-500/15 px-3 py-2.5 text-left"
+                  className="mb-1 flex w-full items-center gap-3 rounded-xl bg-white/8 px-3 py-2.5 text-left"
                 >
                   <span className="glass flex h-8 w-8 items-center justify-center rounded-lg">
-                    <Lock className="h-3.5 w-3.5 text-violet-300" />
+                    <Lock className="h-3.5 w-3.5 text-slate-400" />
                   </span>
                   <span className="min-w-0">
                     <span className="block truncate text-sm font-medium">Войти по ссылке</span>
@@ -414,9 +414,9 @@ export default function Sidebar({
                   <div className="min-w-0 flex-1">
                     <p className="flex items-center gap-1.5 truncate text-sm font-medium">
                       {g.kind === "channel" ? (
-                        <Megaphone className="h-3 w-3 text-cyan-300" />
+                        <Megaphone className="h-3 w-3 text-slate-400" />
                       ) : (
-                        <Hash className="h-3 w-3 text-violet-300" />
+                        <Hash className="h-3 w-3 text-slate-400" />
                       )}
                       {g.name}
                     </p>
@@ -534,7 +534,7 @@ export default function Sidebar({
 
         <button
           onClick={onDiscover}
-          className="mt-4 flex w-full items-center justify-center gap-2 rounded-2xl border border-dashed border-white/12 py-3 text-[13px] text-white/40 transition-colors hover:border-violet-400/40 hover:text-white/70"
+          className="mt-4 flex w-full items-center justify-center gap-2 rounded-2xl border border-dashed border-white/12 py-3 text-[13px] text-white/40 transition-colors hover:border-[#5865f2]/40 hover:text-white/70"
         >
           <Compass className="h-4 w-4" />
           Найти публичные группы и каналы
@@ -588,13 +588,13 @@ function ConvRow({
       }}
       className={`group/row relative flex w-full cursor-pointer items-center gap-3 rounded-2xl px-3 py-3 text-left transition-colors ${
         active
-          ? "bg-gradient-to-r from-violet-500/20 via-violet-500/10 to-transparent"
+          ? "bg-white/10"
           : "hover:bg-white/5"
       }`}
     >
       {/* Акцентная полоска у активного чата */}
       {active && (
-        <span className="absolute top-1/2 left-0 h-6 w-1 -translate-y-1/2 rounded-full bg-gradient-to-b from-violet-400 to-fuchsia-400" />
+        <span className="absolute top-1/2 left-0 h-6 w-1 -translate-y-1/2 rounded-full bg-slate-300" />
       )}
       <div className="relative">
         <Avatar
@@ -606,9 +606,9 @@ function ConvRow({
         {isSpace && (
           <span className="glass-strong absolute -right-1 -bottom-1 flex h-5 w-5 items-center justify-center rounded-full">
             {conv.kind === "channel" ? (
-              <Megaphone className="h-3 w-3 text-cyan-300" />
+              <Megaphone className="h-3 w-3 text-slate-400" />
             ) : (
-              <Users className="h-3 w-3 text-violet-300" />
+              <Users className="h-3 w-3 text-slate-400" />
             )}
           </span>
         )}
@@ -645,7 +645,7 @@ function ConvRow({
                   onTogglePin(conv.id);
                 }}
                 className={`grid h-6 w-6 place-items-center rounded-lg hover:bg-white/10 ${
-                  pinned ? "text-violet-300" : "text-white/35 hover:text-white/80"
+                  pinned ? "text-slate-400" : "text-white/35 hover:text-white/80"
                 }`}
               >
                 <Pin className="h-3 w-3" />
@@ -682,7 +682,7 @@ function ConvRow({
       </div>
       {/* Булавка у закреплённого чата */}
       {pinned && (
-        <Pin className="absolute top-2 right-2 h-3 w-3 rotate-45 text-violet-300/70" />
+        <Pin className="absolute top-2 right-2 h-3 w-3 rotate-45 text-slate-400/70" />
       )}
     </div>
   );
@@ -734,7 +734,7 @@ function NotifyRow({
     >
       <span
         className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${
-          active ? "bg-violet-500/20 text-violet-200" : "bg-white/6 text-white/35"
+          active ? "bg-white/10 text-slate-300" : "bg-white/6 text-white/35"
         }`}
       >
         {icon}
@@ -745,7 +745,7 @@ function NotifyRow({
       </span>
       <span
         className={`relative h-5 w-9 shrink-0 rounded-full transition-colors ${
-          active ? "bg-violet-500" : "bg-white/15"
+          active ? "bg-[#5865f2]" : "bg-white/15"
         }`}
       >
         <span

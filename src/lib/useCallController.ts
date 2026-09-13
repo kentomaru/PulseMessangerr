@@ -615,9 +615,9 @@ const syncMesh = useCallback(
   // запустит демку (та запускает полное пересогласование). Сторож считает
   // тики, где соединение «connected», микрофон жив, но отправлено 0 байт,
   // и через ~12 секунд один раз делает то же самое пересогласование сам.
-  const healRef = useRef<{ zeroTicks: Record<string, number>; healed: boolean }>({
+  const healRef = useRef<{ zeroTicks: Record<string, number>; stage: number }>({
     zeroTicks: {},
-    healed: false,
+    stage: 0,
   });
   useEffect(() => {
     const s = session;
@@ -650,7 +650,8 @@ const syncMesh = useCallback(
           const h = healRef.current;
           if (
             micLive &&
-            l.pc.connectionState === "connected" &&
+            (l.pc.connectionState === "connected" ||
+              (l.pc.connectionState as string) === "completed") &&
             prevSent >= 0 &&
             sent - prevSent === 0
           ) {
@@ -668,14 +669,39 @@ const syncMesh = useCallback(
         }
         setAudioWatchdog(diag);
 
-        // Лечение: соединение стоит, микрофон не выключен, но звук не уходит
-        // уже ~12 секунд. Это ровно то, что пользователь чинил вручную,
-        // включая демку, — делаем полный ре-оффер автоматически.
+        // Лечение «односторонней тишины»: соединение стоит, микрофон не
+        // выключен, но звук не уходит уже ~12 секунд. Ступень 1 — проверяем,
+        // что аудиотрек вообще стоит на отправку (иначе добавляем), и делаем
+        // полный ре-оффер — ровно то, что происходило при включении демки.
+        // Ступень 2 (если через 12 секунд всё ещё тишина) — ICE-рестарт.
         const hh = healRef.current;
-        if (!hh.healed && Object.values(hh.zeroTicks).some((n) => n >= 4)) {
-          hh.healed = true;
+        const maxZero = Object.values(hh.zeroTicks).reduce((m, n) => Math.max(m, n), 0);
+        if (hh.stage < 2 && maxZero >= 4) {
           hh.zeroTicks = {};
-          void renegotiateAllRef.current(false);
+          const micTrack = localStreamRef.current?.getAudioTracks()[0] ?? null;
+          if (micTrack && micTrack.readyState === "live") {
+            for (const [, l] of linksRef.current) {
+              const hasAudio = l.pc
+                .getSenders()
+                .some(
+                  (s) => s.track && s.track.kind === "audio" && s.track.readyState === "live",
+                );
+              if (!hasAudio) {
+                try {
+                  l.pc.addTrack(micTrack, localStreamRef.current as MediaStream);
+                } catch {
+                  /* уже добавлен параллельно */
+                }
+              }
+            }
+          }
+          if (hh.stage === 0) {
+            hh.stage = 1;
+            void renegotiateAllRef.current(false);
+          } else {
+            hh.stage = 2;
+            void iceRestartAllRef.current();
+          }
         }
 
         // Если участников больше одного, а соединений нет (сигнал потерялся,
@@ -695,7 +721,7 @@ const syncMesh = useCallback(
     return () => {
       clearInterval(t);
       watchdogRef.current = {};
-      healRef.current = { zeroTicks: {}, healed: false };
+      healRef.current = { zeroTicks: {}, stage: 0 };
     };
   // В зависимостях ТОЛЬКО стабильные значения: объект session меняется
   // каждые 2 секунды опроса, и интервал пересоздавался раньше, чем успевал
@@ -1180,6 +1206,26 @@ const syncMesh = useCallback(
   }, [sendSignal]);
   const renegotiateAllRef = useRef(renegotiateAll);
   renegotiateAllRef.current = renegotiateAll;
+
+  // Лечащий ICE-рестарт: тот же ре-оффер, но с пересбором ICE-кандидатов.
+  const iceRestartAll = useCallback(async () => {
+    for (const [peerId, l] of Array.from(linksRef.current.entries())) {
+      try {
+        l.offering = true;
+        l.offeringSince = Date.now();
+        const offer = await l.pc.createOffer({ ...OFFER_OPTIONS, iceRestart: true });
+        await l.pc.setLocalDescription(offer);
+        const d = l.pc.localDescription;
+        const s = sessionRef.current;
+        if (s && d) await sendSignal(s.id, peerId, "offer", { type: d.type, sdp: d.sdp });
+      } catch {
+        l.offering = false;
+        l.offeringSince = null;
+      }
+    }
+  }, [sendSignal]);
+  const iceRestartAllRef = useRef(iceRestartAll);
+  iceRestartAllRef.current = iceRestartAll;
 
 
 

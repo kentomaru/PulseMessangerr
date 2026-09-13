@@ -1042,7 +1042,7 @@ export default function ChatView({
         aria-hidden
       />
       {wallpaper?.startsWith("/api/files/") && (
-        <div className="pointer-events-none absolute inset-0 bg-[#0a0a14]/70" aria-hidden />
+        <div className="pointer-events-none absolute inset-0 bg-[#16181c]/70" aria-hidden />
       )}
 
       {/* Шапка — z-30: выпадающее меню «⋮» должно быть НАД областью сообщений
@@ -1073,11 +1073,11 @@ export default function ChatView({
                 <StatusEmoji value={peerState.statusEmoji} size={28} />
               )}
               {isSaved && <Bookmark className="h-3.5 w-3.5 shrink-0 text-amber-300" />}
-              {isSpace && kind === "channel" && <Megaphone className="h-3.5 w-3.5 shrink-0 text-cyan-300" />}
-              {isSpace && kind === "group" && <Hash className="h-3.5 w-3.5 shrink-0 text-violet-300" />}
+              {isSpace && kind === "channel" && <Megaphone className="h-3.5 w-3.5 shrink-0 text-slate-400" />}
+              {isSpace && kind === "group" && <Hash className="h-3.5 w-3.5 shrink-0 text-slate-400" />}
               {isSpace && meta?.isPrivate && <Lock className="h-3 w-3 shrink-0 text-white/25" />}
             </p>
-            <p className={`truncate text-xs ${subtitle.accent ? "text-violet-300" : "text-white/35"}`}>
+            <p className={`truncate text-xs ${subtitle.accent ? "text-slate-400" : "text-white/35"}`}>
               {subtitle.text}
             </p>
           </div>
@@ -1099,7 +1099,7 @@ export default function ChatView({
             onClick={() => setSearchOpen((v) => !v)}
             title="Поиск по чату"
             className={`glass flex h-10 w-10 items-center justify-center rounded-xl transition-colors hover:text-white ${
-              searchOpen ? "text-violet-300" : "text-white/75"
+              searchOpen ? "text-slate-400" : "text-white/75"
             }`}
           >
             <Search className="h-4.5 w-4.5" />
@@ -1207,16 +1207,16 @@ export default function ChatView({
             initial={{ height: 0, opacity: 0 }}
             animate={{ height: "auto", opacity: 1 }}
             exit={{ height: 0, opacity: 0 }}
-            className="relative z-20 overflow-hidden border-b border-white/8 bg-violet-500/8"
+            className="relative z-20 overflow-hidden border-b border-white/8 bg-[#5865f2]/8"
           >
             <div className="mx-auto flex max-w-2xl items-center gap-2 px-4 py-1.5">
-              <Pin className="h-3.5 w-3.5 shrink-0 text-violet-300" />
+              <Pin className="h-3.5 w-3.5 shrink-0 text-slate-400" />
               <button
                 onClick={() => jumpTo(pinnedCurrent.id)}
                 title="Перейти к сообщению"
                 className="min-w-0 flex-1 truncate text-left text-xs text-white/70"
               >
-                <span className="font-semibold text-violet-300">
+                <span className="font-semibold text-slate-400">
                   {pinnedCurrent.senderId === me.id ? "Вы" : (pinnedCurrent.sender?.displayName ?? "")}:{" "}
                 </span>
                 <PreviewLabel type={pinnedCurrent.type} content={pinnedCurrent.content} />
@@ -1262,7 +1262,7 @@ export default function ChatView({
             initial={{ height: 0, opacity: 0 }}
             animate={{ height: "auto", opacity: 1 }}
             exit={{ height: 0, opacity: 0 }}
-            className="relative z-20 overflow-hidden border-b border-white/8 bg-[#0d0d18]/90"
+            className="relative z-20 overflow-hidden border-b border-white/8 bg-[#1e2127]/90"
           >
             <div className="mx-auto max-w-2xl px-4 py-2.5">
               <div className="flex items-center gap-2.5">
@@ -1366,7 +1366,7 @@ export default function ChatView({
         }}
       >
         {dragOver && (
-          <div className="pointer-events-none absolute inset-2 z-20 flex items-center justify-center rounded-3xl border-2 border-dashed border-violet-400/60 bg-violet-500/10 backdrop-blur-sm">
+          <div className="pointer-events-none absolute inset-2 z-20 flex items-center justify-center rounded-3xl border-2 border-dashed border-[#5865f2]/60 bg-[#5865f2]/10 backdrop-blur-sm">
             <p className="rounded-2xl bg-black/60 px-5 py-3 text-sm font-medium text-white/90">
               Отпустите — прикрепим к сообщению
             </p>
@@ -1516,10 +1516,10 @@ export default function ChatView({
                   {editing ? (
                     <Pencil className="h-4 w-4 shrink-0 text-amber-300" />
                   ) : (
-                    <Reply className="h-4 w-4 shrink-0 text-violet-300" />
+                    <Reply className="h-4 w-4 shrink-0 text-slate-400" />
                   )}
                   <div className="min-w-0 flex-1">
-                    <p className={`truncate text-[11px] font-semibold ${editing ? "text-amber-300" : "text-violet-300"}`}>
+                    <p className={`truncate text-[11px] font-semibold ${editing ? "text-amber-300" : "text-slate-400"}`}>
                       {editing
                         ? "Редактирование сообщения"
                         : replyTo!.senderId === me.id
@@ -1975,7 +1975,7 @@ function MessageContextMenu({
           </button>
         ))}
       </div>
-      <ContextItem icon={<Reply className="h-4 w-4 text-violet-300" />} label="Ответить" onClick={onReply} />
+      <ContextItem icon={<Reply className="h-4 w-4 text-slate-400" />} label="Ответить" onClick={onReply} />
       {canPin && (
         <ContextItem
           icon={
@@ -1990,7 +1990,7 @@ function MessageContextMenu({
         />
       )}
       {hasText && (
-        <ContextItem icon={<Copy className="h-4 w-4 text-cyan-300" />} label="Копировать" onClick={onCopy} />
+        <ContextItem icon={<Copy className="h-4 w-4 text-slate-400" />} label="Копировать" onClick={onCopy} />
       )}
       {isEditable && (
         <ContextItem icon={<Pencil className="h-4 w-4 text-amber-300" />} label="Изменить" onClick={onEdit} />
@@ -2535,7 +2535,7 @@ function MessageBubble({
         {space && !grouped && !alignRight && sender && (
           <button
             onClick={() => onViewUser(sender)}
-            className="mb-1 block text-left text-[12px] font-semibold text-violet-300/90 hover:text-violet-200"
+            className="mb-1 block text-left text-[12px] font-semibold text-slate-400/90 hover:text-slate-300"
           >
             {sender.displayName}
           </button>
@@ -2545,18 +2545,18 @@ function MessageBubble({
           className={`relative overflow-hidden ${
             media || sticker ? "" : own && !space ? "bubble-own text-white" : "bubble-peer text-white/90"
           } ${media || sticker ? "" : `${own && !space ? "bubble-own-radius" : "bubble-peer-radius"} px-4 py-2.5`} ${
-            highlighted ? "ring-2 ring-violet-400/60" : ""
+            highlighted ? "ring-2 ring-[#5865f2]/60" : ""
           }`}
         >
           {/* Цитата (ответ на сообщение) */}
           {message.replyTo && (
             <button
               onClick={() => onJump(message.replyTo!.id)}
-              className="mb-1.5 flex w-full gap-2 rounded-xl border-l-2 border-violet-300/70 bg-black/20 px-2.5 py-1.5 text-left"
+              className="mb-1.5 flex w-full gap-2 rounded-xl border-l-2 border-slate-500/70 bg-black/20 px-2.5 py-1.5 text-left"
             >
-              <CornerUpLeft className="mt-0.5 h-3 w-3 shrink-0 text-violet-300/80" />
+              <CornerUpLeft className="mt-0.5 h-3 w-3 shrink-0 text-slate-400/80" />
               <span className="min-w-0">
-                <span className="block truncate text-[11px] font-semibold text-violet-200">
+                <span className="block truncate text-[11px] font-semibold text-slate-300">
                   {message.replyTo.senderId === meId ? "Вы" : message.replyTo.senderName}
                 </span>
                 <span className="block truncate text-[12px] text-white/50">
@@ -2625,7 +2625,7 @@ function MessageBubble({
                 title={r.mine ? "Убрать реакцию" : "Поставить реакцию"}
                 className={`flex items-center gap-1 rounded-full px-2 py-0.5 text-xs transition-colors ${
                   r.mine
-                    ? "bg-violet-500/30 text-violet-100 ring-1 ring-violet-400/50"
+                    ? "bg-[#5865f2]/30 text-slate-200 ring-1 ring-[#5865f2]/50"
                     : "bg-white/8 text-white/70 hover:bg-white/12"
                 }`}
               >
@@ -2640,12 +2640,12 @@ function MessageBubble({
           <span>{timeHHmm(message.createdAt)}</span>
           {message.pinned && (
             <span title="Закреплено" className="flex items-center">
-              <Pin className="h-3 w-3 text-violet-300" />
+              <Pin className="h-3 w-3 text-slate-400" />
             </span>
           )}
           {message.editedAt && <span className="italic">изменено</span>}
           {own &&
-            (read ? <CheckCheck className="h-3.5 w-3.5 text-cyan-300" /> : <Check className="h-3.5 w-3.5" />)}
+            (read ? <CheckCheck className="h-3.5 w-3.5 text-slate-400" /> : <Check className="h-3.5 w-3.5" />)}
         </div>
       </div>
 
@@ -2659,7 +2659,7 @@ function MessageBubble({
         <button
           onClick={onReply}
           title="Ответить"
-          className="rounded-full p-1 text-white/30 hover:text-violet-300"
+          className="rounded-full p-1 text-white/30 hover:text-slate-400"
         >
           <Reply className="h-3.5 w-3.5" />
         </button>
@@ -2667,7 +2667,7 @@ function MessageBubble({
           <button
             onClick={onPin}
             title={message.pinned ? "Открепить" : "Закрепить"}
-            className={`rounded-full p-1 ${message.pinned ? "text-violet-300 hover:text-rose-300" : "text-white/30 hover:text-emerald-300"}`}
+            className={`rounded-full p-1 ${message.pinned ? "text-slate-400 hover:text-rose-300" : "text-white/30 hover:text-emerald-300"}`}
           >
             {message.pinned ? <PinOff className="h-3.5 w-3.5" /> : <Pin className="h-3.5 w-3.5" />}
           </button>
@@ -2683,7 +2683,7 @@ function MessageBubble({
           <SmilePlus className="h-3.5 w-3.5" />
         </button>
         {canEdit && (
-          <button onClick={onEdit} title="Изменить" className="rounded-full p-1 text-white/30 hover:text-cyan-300">
+          <button onClick={onEdit} title="Изменить" className="rounded-full p-1 text-white/30 hover:text-slate-400">
             <Pencil className="h-3.5 w-3.5" />
           </button>
         )}
@@ -2783,7 +2783,7 @@ function VoiceBubble({ url, duration, own }: { url: string; duration: number; ow
             return (
               <span
                 key={i}
-                className={`w-[3px] rounded-full transition-colors ${filled ? "bg-violet-300" : "bg-white/20"}`}
+                className={`w-[3px] rounded-full transition-colors ${filled ? "bg-slate-300" : "bg-white/20"}`}
                 style={{ height: `${h}px` }}
               />
             );
@@ -3256,7 +3256,7 @@ function EmojiPicker({
             <button
               onClick={() => stickerInputRef.current?.click()}
               title="Загрузить свой стикер (гифку или картинку)"
-              className="flex h-14 flex-col items-center justify-center gap-0.5 rounded-2xl border border-dashed border-white/15 text-white/40 transition-colors hover:border-violet-300/50 hover:bg-white/6 hover:text-violet-200"
+              className="flex h-14 flex-col items-center justify-center gap-0.5 rounded-2xl border border-dashed border-white/15 text-white/40 transition-colors hover:border-slate-500/50 hover:bg-white/6 hover:text-slate-300"
             >
               {stickerBusy ? (
                 <Loader2 className="h-5 w-5 animate-spin" />

@@ -518,7 +518,7 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
         className="group relative hidden w-2 shrink-0 cursor-col-resize md:block"
         title="Потяните, чтобы изменить ширину панели"
       >
-        <div className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-white/5 transition-colors group-hover:w-[3px] group-hover:bg-violet-400/50" />
+        <div className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-white/5 transition-colors group-hover:w-[3px] group-hover:bg-white/20" />
       </div>
 
       <div className={`${activeId ? "flex" : "hidden md:flex"} min-w-0 flex-1`}>
@@ -698,7 +698,7 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
               exit={{ opacity: 0, y: 8, scale: 0.96 }}
               className="glass-strong flex items-center gap-2.5 rounded-2xl px-4.5 py-3 text-sm text-white/90 shadow-xl"
             >
-              <CheckCircle2 className="h-4 w-4 text-violet-300" />
+              <CheckCircle2 className="h-4 w-4 text-slate-400" />
               {t.msg}
             </motion.div>
           ))}
@@ -718,7 +718,7 @@ function EmptyState({
   return (
     <div className="relative flex h-full w-full flex-col items-center justify-center gap-5 text-center">
       <div className="relative">
-        <div className="absolute inset-0 animate-ping rounded-full bg-violet-600/20 blur-2xl" />
+        <div className="absolute inset-0 animate-ping rounded-full bg-white/10 blur-2xl" />
         <div className="btn-gradient relative flex h-20 w-20 items-center justify-center rounded-[1.6rem]">
           <svg
             viewBox="0 0 24 24"

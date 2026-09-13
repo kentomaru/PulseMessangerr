@@ -205,7 +205,7 @@ export default function ProfileModal({ me, onClose, onSaved, onDeletedAccount }:
                   onClick={() => setBannerUrl(active ? null : b.key)}
                   title={b.label}
                   className={`h-12 w-24 shrink-0 overflow-hidden rounded-xl transition-all ${
-                    active ? "ring-2 ring-violet-400 ring-offset-2 ring-offset-[#0d0d18]" : "opacity-80 hover:opacity-100"
+                    active ? "ring-2 ring-[#5865f2] ring-offset-2 ring-offset-[#0d0d18]" : "opacity-80 hover:opacity-100"
                   }`}
                   style={bannerStyle(b.key)}
                 >
@@ -217,7 +217,7 @@ export default function ProfileModal({ me, onClose, onSaved, onDeletedAccount }:
             })}
             {bannerUrl && isFileBanner(bannerUrl) && (
               <div
-                className="h-12 w-24 shrink-0 overflow-hidden rounded-xl ring-2 ring-violet-400 ring-offset-2 ring-offset-[#0d0d18]"
+                className="h-12 w-24 shrink-0 overflow-hidden rounded-xl ring-2 ring-[#5865f2] ring-offset-2 ring-offset-[#0d0d18]"
                 style={bannerStyle(bannerUrl)}
                 title="Ваш баннер"
               />
@@ -298,7 +298,7 @@ export default function ProfileModal({ me, onClose, onSaved, onDeletedAccount }:
             {icon}
             {label}
             {tab === t && (
-              <span className="absolute inset-x-3 -bottom-px h-0.5 rounded-full bg-gradient-to-r from-violet-400 to-fuchsia-400" />
+              <span className="absolute inset-x-3 -bottom-px h-0.5 rounded-full bg-gradient-to-r from-[#5865f2] to-[#7289da]" />
             )}
           </button>
         ))}
@@ -395,7 +395,7 @@ export default function ProfileModal({ me, onClose, onSaved, onDeletedAccount }:
                       setStatusEmoji((cur) => (cur === e ? "" : e));
                     }}
                     className={`grid h-9 place-items-center rounded-lg text-lg transition-all hover:scale-110 hover:bg-white/10 ${
-                      statusEmoji === e ? "bg-violet-500/25 ring-1 ring-violet-400" : ""
+                      statusEmoji === e ? "bg-[#5865f2]/25 ring-1 ring-[#5865f2]" : ""
                     }`}
                   >
                     {e}
@@ -453,7 +453,7 @@ export default function ProfileModal({ me, onClose, onSaved, onDeletedAccount }:
             href="/privacy"
             target="_blank"
             rel="noreferrer"
-            className="block text-center text-xs text-violet-300/80 transition-colors hover:text-violet-200"
+            className="block text-center text-xs text-slate-400/80 transition-colors hover:text-slate-300"
           >
             Политика конфиденциальности →
           </a>
@@ -485,7 +485,7 @@ export function Toggle({
       </span>
       <span
         className={`relative h-6 w-11 shrink-0 rounded-full transition-colors ${
-          checked ? "bg-violet-500" : "bg-white/15"
+          checked ? "bg-[#5865f2]" : "bg-white/15"
         }`}
       >
         <motion.span
@@ -535,7 +535,7 @@ export function RecentGifRow({
           onClick={() => onPick(u)}
           title="Сделать статус-эмодзи"
           className={`h-12 w-12 shrink-0 overflow-hidden rounded-xl transition-all hover:scale-105 ${
-            active === u ? "ring-2 ring-violet-400 ring-offset-2 ring-offset-[#0d0d18]" : ""
+            active === u ? "ring-2 ring-[#5865f2] ring-offset-2 ring-offset-[#0d0d18]" : ""
           }`}
         >
           {/* eslint-disable-next-line @next/next/no-img-element */}

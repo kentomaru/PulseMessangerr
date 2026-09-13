@@ -128,8 +128,8 @@ export default function PrivacyModal({ me, onClose, onSaved }: Props) {
   return (
     <ModalShell onClose={onClose}>
       <div className="flex items-center gap-3 border-b border-white/8 px-6 py-4">
-        <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-violet-500/15">
-          <Shield className="h-4.5 w-4.5 text-violet-300" />
+        <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-white/8">
+          <Shield className="h-4.5 w-4.5 text-slate-400" />
         </div>
         <div className="min-w-0 flex-1">
           <h3 className="font-display text-base font-bold">Приватность</h3>

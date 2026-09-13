@@ -143,9 +143,9 @@ export default function DiscoverModal({ onClose, onJoined, notify }: Props) {
                 <div className="min-w-0 flex-1">
                   <p className="flex items-center gap-1.5 truncate text-sm font-semibold">
                     {it.kind === "channel" ? (
-                      <Megaphone className="h-3.5 w-3.5 text-cyan-300" />
+                      <Megaphone className="h-3.5 w-3.5 text-slate-400" />
                     ) : (
-                      <Hash className="h-3.5 w-3.5 text-violet-300" />
+                      <Hash className="h-3.5 w-3.5 text-slate-400" />
                     )}
                     {it.name}
                   </p>

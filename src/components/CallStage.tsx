@@ -259,7 +259,7 @@ function IncomingPrompt({ incoming, starting, onAccept, onDecline, onDismissInco
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      className="fixed inset-0 z-[80] grid place-items-center bg-[#07070f]/80 p-4 backdrop-blur-md"
+      className="fixed inset-0 z-[80] grid place-items-center bg-[#16181c]/80 p-4 backdrop-blur-md"
     >
       <motion.div
         initial={{ scale: 0.92, y: 24 }}
@@ -270,9 +270,9 @@ function IncomingPrompt({ incoming, starting, onAccept, onDecline, onDismissInco
         <div className="relative mx-auto flex h-32 w-32 items-center justify-center">
           {isDmRing && (
             <>
-              <span className="ring-pulse absolute h-32 w-32 rounded-full bg-violet-500/40" />
+              <span className="ring-pulse absolute h-32 w-32 rounded-full bg-white/15" />
               <span
-                className="ring-pulse absolute h-32 w-32 rounded-full bg-fuchsia-500/30"
+                className="ring-pulse absolute h-32 w-32 rounded-full bg-white/10"
                 style={{ animationDelay: "0.6s" }}
               />
             </>
@@ -284,7 +284,7 @@ function IncomingPrompt({ incoming, starting, onAccept, onDecline, onDismissInco
         <p className="mt-2 flex items-center justify-center gap-2 text-sm text-white/50">
           {isDmRing ? (
             <>
-              <Volume2 className="h-4 w-4 text-violet-300" />
+              <Volume2 className="h-4 w-4 text-slate-400" />
               Входящий {incoming.media === "video" ? "видеозвонок" : "аудиозвонок"}
               {incoming.host ? ` · ${incoming.host.displayName}` : ""}
             </>
@@ -447,7 +447,7 @@ function CallWindow(props: WindowProps) {
         animate={{ opacity: 1, scale: 1 }}
         exit={{ opacity: 0, scale: 0.95 }}
         transition={{ type: "spring", bounce: 0.18, duration: 0.4 }}
-        className={`fixed z-[80] hidden overflow-hidden rounded-[1.6rem] border border-white/12 bg-[#0b0b16]/95 shadow-[0_40px_120px_-30px_rgba(0,0,0,1)] backdrop-blur-2xl md:flex md:flex-col ${
+        className={`fixed z-[80] hidden overflow-hidden rounded-[1.6rem] border border-white/12 bg-[#1b1e24]/95 shadow-[0_40px_120px_-30px_rgba(0,0,0,1)] backdrop-blur-2xl md:flex md:flex-col ${
           fullscreen ? "inset-2" : ""
         }`}
         style={
@@ -530,7 +530,7 @@ function CallWindow(props: WindowProps) {
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
-        className="fixed inset-0 z-[80] flex flex-col bg-[#07070f]/97 backdrop-blur-xl md:hidden"
+        className="fixed inset-0 z-[80] flex flex-col bg-[#16181c]/97 backdrop-blur-xl md:hidden"
       >
         <div className="flex items-center gap-2 px-4 py-3">
           <LiveDot />
@@ -621,7 +621,7 @@ function CallBody({
   return (
     <div className="nice-scroll relative min-h-0 flex-1 overflow-y-auto p-3">
       {people.length <= 1 && (
-        <div className="absolute inset-x-0 top-3 z-10 mx-auto w-fit max-w-[92%] rounded-xl border border-white/10 bg-[#0a1120]/90 px-4 py-2.5 text-center text-xs text-white/70 shadow-xl backdrop-blur">
+        <div className="absolute inset-x-0 top-3 z-10 mx-auto w-fit max-w-[92%] rounded-xl border border-white/10 bg-[#1e2127]/90 px-4 py-2.5 text-center text-xs text-white/70 shadow-xl backdrop-blur">
           Вы одни в звонке — звук и видео появятся, когда войдёт второй
           участник. Позовите кого-нибудь кнопкой «Пригласить» внизу.
         </div>
@@ -857,7 +857,7 @@ function AudioSettingsPanel({
     >
       <div className="mb-3 flex items-center justify-between">
         <p className="flex items-center gap-2 text-sm font-semibold">
-          <AudioLines className="h-4 w-4 text-violet-300" />
+          <AudioLines className="h-4 w-4 text-slate-400" />
           Настройки звука
         </p>
         <button
@@ -884,7 +884,7 @@ function AudioSettingsPanel({
           >
             <span
               className={`relative h-5 w-9 shrink-0 rounded-full transition-colors ${
-                settings[key] ? "bg-violet-500" : "bg-white/15"
+                settings[key] ? "bg-[#5865f2]" : "bg-white/15"
               }`}
             >
               <span
@@ -914,7 +914,7 @@ function AudioSettingsPanel({
             step={5}
             value={settings.voiceGate}
             onChange={(e) => update({ voiceGate: Number(e.target.value) })}
-            className="w-full accent-violet-400"
+            className="w-full accent-[#5865f2]"
           />
           <p className="mt-1 text-[10px] leading-tight text-white/35">
             Микрофон открывается только для голоса громче порога — фон не попадает в звонок.
@@ -947,7 +947,7 @@ function AudioSettingsPanel({
                   className={`h-full rounded-full transition-[width] duration-100 ${
                     settings.voiceGate > 0 && level >= settings.voiceGate
                       ? "bg-gradient-to-r from-emerald-400 to-emerald-300"
-                      : "bg-gradient-to-r from-emerald-400 via-violet-400 to-fuchsia-400"
+                      : "bg-gradient-to-r from-emerald-400 via-[#6a76f4] to-[#7289da]"
                   }`}
                   style={{ width: `${Math.min(100, level)}%` }}
                 />
@@ -976,7 +976,7 @@ function MicMeter({ micLevelRef }: { micLevelRef: React.RefObject<number> }) {
     <span className="flex flex-col items-center gap-0.5" title="Уровень вашего микрофона">
       <span className="h-1.5 w-12 overflow-hidden rounded-full bg-white/10">
         <span
-          className="block h-full rounded-full bg-gradient-to-r from-emerald-400 to-cyan-300 transition-[width] duration-150"
+          className="block h-full rounded-full bg-gradient-to-r from-emerald-400 to-[#7289da] transition-[width] duration-150"
           style={{ width: `${Math.min(100, lvl)}%` }}
         />
       </span>
@@ -1219,7 +1219,7 @@ function VolumeControl({ userId, name }: { userId: string; name: string }) {
             step={5}
             value={Math.min(150, Math.round(volume))}
             onChange={(e) => setVolume(userId, Number(e.target.value))}
-            className="w-full accent-violet-400"
+            className="w-full accent-[#5865f2]"
           />
           <span className="w-8 shrink-0 text-right text-[10px] tabular-nums text-white/60">
             {Math.round(volume)}%

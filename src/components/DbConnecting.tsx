@@ -13,8 +13,8 @@ export default function DbConnecting() {
   return (
     <main className="relative flex h-dvh items-center justify-center overflow-hidden p-4">
       <div className="pointer-events-none absolute inset-0">
-        <div className="animate-float absolute top-[12%] left-[8%] h-72 w-72 rounded-full bg-violet-600/25 blur-[110px]" />
-        <div className="animate-float absolute right-[6%] bottom-[10%] h-80 w-80 rounded-full bg-cyan-500/15 blur-[120px] [animation-delay:-6s]" />
+        <div className="animate-float absolute top-[12%] left-[8%] h-72 w-72 rounded-full bg-white/10 blur-[110px]" />
+        <div className="animate-float absolute right-[6%] bottom-[10%] h-80 w-80 rounded-full bg-white/8 blur-[120px] [animation-delay:-6s]" />
       </div>
 
       <div className="glass-strong relative w-full max-w-md rounded-[2rem] p-10 text-center shadow-[0_40px_120px_-30px_rgba(0,0,0,0.9)]">

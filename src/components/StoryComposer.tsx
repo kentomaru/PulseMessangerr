@@ -116,7 +116,7 @@ export default function StoryComposer({ onClose, onPublished, notify }: Props) {
         ) : (
           <button
             onClick={() => inputRef.current?.click()}
-            className="flex h-48 w-full flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-white/15 bg-white/[0.03] text-white/40 transition-colors hover:border-violet-400/40 hover:text-white/70"
+            className="flex h-48 w-full flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-white/15 bg-white/[0.03] text-white/40 transition-colors hover:border-[#5865f2]/40 hover:text-white/70"
           >
             <ImagePlus className="h-8 w-8" />
             <span className="text-sm">Фото или видео (до 100 МБ)</span>
