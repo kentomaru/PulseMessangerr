@@ -43,6 +43,7 @@ type Props = {
   onChanged: () => void;
   notify: (msg: string) => void;
   callBusy: boolean;
+  onOpenConversation?: (id: string) => void;
 };
 
 const ROLE_LABEL: Record<MemberRole, string> = {
@@ -61,6 +62,7 @@ export default function GroupInfoModal({
   onChanged,
   notify,
   callBusy,
+  onOpenConversation,
 }: Props) {
   const [info, setInfo] = useState<ConversationInfo | null>(null);
   const [members, setMembers] = useState<ConversationMemberItem[]>([]);
@@ -73,6 +75,11 @@ export default function GroupInfoModal({
   const [saving, setSaving] = useState(false);
   const [picker, setPicker] = useState<"add" | null>(null);
   const [copied, setCopied] = useState(false);
+  // Комментарии канала: привязанная группа-обсуждение
+  const [discussion, setDiscussion] = useState<{ id: string; name: string | null } | null>(null);
+  const [myGroups, setMyGroups] = useState<{ id: string; name: string | null }[]>([]);
+  const [discPicker, setDiscPicker] = useState(false);
+  const [discBusy, setDiscBusy] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -95,6 +102,57 @@ export default function GroupInfoModal({
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    if (info?.kind !== "channel" || info.myRole !== "owner") return;
+    api<{ discussion: { id: string; name: string | null } | null; myGroups: { id: string; name: string | null }[] }>(
+      `/api/conversations/${conversationId}/discussion`,
+    )
+      .then((d) => {
+        setDiscussion(d.discussion);
+        setMyGroups(d.myGroups);
+      })
+      .catch(() => {});
+  }, [info?.kind, info?.myRole, conversationId]);
+
+  const linkDiscussion = async (groupId: string) => {
+    setDiscBusy(true);
+    try {
+      await api(`/api/conversations/${conversationId}/discussion`, {
+        method: "POST",
+        body: JSON.stringify({ groupId }),
+      });
+      const d = await api<{ discussion: { id: string; name: string | null } | null }>(
+        `/api/conversations/${conversationId}/discussion`,
+      );
+      setDiscussion(d.discussion);
+      setDiscPicker(false);
+      notify("Чат для комментариев привязан");
+    } catch (e) {
+      notify(e instanceof Error ? e.message : "Не удалось привязать чат");
+    } finally {
+      setDiscBusy(false);
+    }
+  };
+
+  const createDiscussion = async () => {
+    setDiscBusy(true);
+    try {
+      const d = await api<{ conversation: { id: string } }>("/api/conversations", {
+        method: "POST",
+        body: JSON.stringify({
+          kind: "group",
+          name: `Чат канала «${info?.name ?? ""}»`,
+          memberIds: [me.id],
+        }),
+      });
+      await linkDiscussion(d.conversation.id);
+      onChanged();
+    } catch (e) {
+      notify(e instanceof Error ? e.message : "Не удалось создать чат");
+      setDiscBusy(false);
+    }
+  };
 
   const manager = info ? info.myRole === "owner" || info.myRole === "admin" : false;
   const owner = info?.myRole === "owner";
@@ -325,6 +383,75 @@ export default function GroupInfoModal({
           </div>
         )}
       </div>
+
+      {/* Комментарии канала: группа-обсуждение (владелец привязывает чат) */}
+      {info.kind === "channel" && owner && (
+        <div className="px-6 pt-4">
+          <p className="mb-2 text-[10px] font-semibold tracking-wide text-white/40 uppercase">
+            Комментарии
+          </p>
+          {discussion ? (
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => {
+                  onClose();
+                  onOpenConversation?.(discussion.id);
+                }}
+                className="btn-gradient rounded-xl px-3.5 py-2 text-[13px] font-semibold text-white"
+              >
+                Открыть чат · {discussion.name ?? "обсуждение"}
+              </button>
+              <button
+                onClick={() => {
+                  void (async () => {
+                    try {
+                      await api(`/api/conversations/${conversationId}/discussion`, {
+                        method: "POST",
+                        body: JSON.stringify({ unlink: true }),
+                      });
+                      setDiscussion(null);
+                      notify("Обсуждение отвязано");
+                    } catch {
+                      notify("Не удалось отвязать");
+                    }
+                  })();
+                }}
+                className="rounded-xl bg-white/10 px-3.5 py-2 text-[13px] text-white/70 hover:bg-white/15"
+              >
+                Отвязать
+              </button>
+            </div>
+          ) : discPicker ? (
+            <div className="space-y-1.5">
+              {myGroups.map((g) => (
+                <button
+                  key={g.id}
+                  disabled={discBusy}
+                  onClick={() => void linkDiscussion(g.id)}
+                  className="flex w-full items-center gap-2 rounded-xl bg-white/5 px-3 py-2 text-left text-[13px] hover:bg-white/10 disabled:opacity-50"
+                >
+                  <Users className="h-3.5 w-3.5 text-slate-400" />
+                  <span className="truncate">{g.name ?? "Группа"}</span>
+                </button>
+              ))}
+              <button
+                disabled={discBusy}
+                onClick={() => void createDiscussion()}
+                className="flex w-full items-center gap-2 rounded-xl bg-white/10 px-3 py-2 text-[13px] font-medium hover:bg-white/15 disabled:opacity-50"
+              >
+                <UserPlus className="h-3.5 w-3.5" /> Создать новый чат
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={() => setDiscPicker(true)}
+              className="rounded-xl bg-white/10 px-3.5 py-2 text-[13px] text-white/80 hover:bg-white/15"
+            >
+              Добавить чат для комментариев
+            </button>
+          )}
+        </div>
+      )}
 
       {info.about && !edit && (
         <p className="px-6 pt-4 text-sm leading-relaxed text-white/55">{info.about}</p>

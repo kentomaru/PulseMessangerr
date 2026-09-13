@@ -12,6 +12,7 @@ import {
   ChevronRight,
   CornerUpLeft,
   Copy,
+  ArrowDown,
   Download,
   File as FileIcon,
   FileText,
@@ -22,6 +23,7 @@ import {
   Loader2,
   Lock,
   Megaphone,
+  MessageSquare,
   Mic,
   MoreVertical,
   Music,
@@ -115,6 +117,7 @@ type Props = {
   onViewPeer: () => void;
   onViewUser: (user: PublicUser) => void;
   onOpenInfo: () => void;
+  onOpenDiscussion?: () => void;
   callBusy: boolean;
   refreshConversations: () => void;
   notify: (msg: string) => void;
@@ -229,6 +232,7 @@ export default function ChatView({
   onViewPeer,
   onViewUser,
   onOpenInfo,
+  onOpenDiscussion,
   callBusy,
   refreshConversations,
   notify,
@@ -255,6 +259,11 @@ export default function ChatView({
   const [lightbox, setLightbox] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [replyTo, setReplyTo] = useState<ChatMessage | null>(null);
+  // Кнопка «вниз» + счётчик новых сообщений, пока читаешь историю
+  const [showJump, setShowJump] = useState(false);
+  const [newBelow, setNewBelow] = useState(0);
+  const atBottomRef = useRef(true);
+  const prevLenRef = useRef(0);
   const [editing, setEditing] = useState<ChatMessage | null>(null);
   const [highlight, setHighlight] = useState<string | null>(null);
   const [draftFiles, setDraftFiles] = useState<DraftFile[]>(() => getStoredDraft(conversationId).files);
@@ -273,6 +282,12 @@ export default function ChatView({
   const [emojiOpen, setEmojiOpen] = useState(false);
   /** id сообщения, перед которым рисуем разделитель «Непрочитанные». */
   const [unreadBefore, setUnreadBefore] = useState<string | null>(null);
+  useEffect(() => {
+    if (!loaded || !unreadBefore) return;
+    const el = scrollRef.current?.querySelector<HTMLElement>(`[data-mid="${unreadBefore}"]`);
+    if (el) el.scrollIntoView({ block: "start" });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loaded, unreadBefore]);
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
@@ -418,7 +433,7 @@ export default function ChatView({
 
     // Стикер/текст напрямую — без редактирования и черновиков
     if (directText !== undefined) {
-      const content = directText.trim();
+      const content = emojify(directText).trim();
       if (!content) return;
       setSending(true);
       const reply = replyTo;
@@ -446,7 +461,7 @@ export default function ChatView({
 
     // Редактирование своего сообщения
     if (editing) {
-      const content = text.trim();
+      const content = emojify(text).trim();
       if (!content) return;
       setSending(true);
       const target = editing;
@@ -472,7 +487,7 @@ export default function ChatView({
     // Файлы из черновика (первый файл получает подпись из поля ввода)
     if (draftFiles.length > 0) {
       const files = draftFiles;
-      const caption = text.trim();
+      const caption = emojify(text).trim();
       setDraftFiles([]);
       setText("");
       setUploading(true);
@@ -944,6 +959,52 @@ export default function ChatView({
     inputRef.current?.focus();
   };
 
+  // Классика мессенджеров: текстовые смайлики при отправке становятся эмодзи
+  const emojify = (s: string) =>
+    s
+      .replace(/<3/g, "❤️")
+      .replace(/:\)/g, "🙂")
+      .replace(/:\(/g, "🙁")
+      .replace(/;\)/g, "😉")
+      .replace(/:D/g, "😄");
+
+  /** Скачать историю чата простым текстовым файлом. */
+  const exportHistory = () => {
+    const lines = messages.map((m) => {
+      const who = m.senderId === me.id ? "Вы" : m.sender?.displayName || "…";
+      const when = new Date(m.createdAt).toLocaleString("ru-RU");
+      const attached = m.type !== "text" ? " [вложение]" : "";
+      const body = (m.content || "") + attached;
+      return `${when} — ${who}: ${body}`;
+    });
+    const blob = new Blob([lines.join("\n")], { type: "text/plain;charset=utf-8" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `pulse-${title.replace(/\s+/g, "_").slice(0, 40) || "chat"}.txt`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  };
+
+  // Esc закрывает поиск/ответ/редактирование — как в больших мессенджерах
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      if (searchOpen) setSearchOpen(false);
+      else if (replyTo) setReplyTo(null);
+      else if (editing) setEditing(null);
+    };
+    window.addEventListener("keydown", h);
+    return () => window.removeEventListener("keydown", h);
+  }, [searchOpen, replyTo, editing]);
+
+  // Счётчик сообщений, пришедших, пока ты не внизу ленты
+  useEffect(() => {
+    if (messages.length > prevLenRef.current && loadedRef.current && !atBottomRef.current) {
+      setNewBelow((n) => n + (messages.length - prevLenRef.current));
+    }
+    prevLenRef.current = messages.length;
+  }, [messages.length]);
+
   const copyMessage = async (m: ChatMessage) => {
     const att = parseAttachment(m.type, m.content);
     const value = m.type === "text" ? m.content : (att?.caption ?? att?.url ?? "");
@@ -1104,7 +1165,7 @@ export default function ChatView({
           >
             <Search className="h-4.5 w-4.5" />
           </button>
-          {!isSaved && (
+          {!isSaved && kind !== "channel" && (
             <>
               <button
                 onClick={() => onCall("audio")}
@@ -1181,6 +1242,14 @@ export default function ChatView({
                         }}
                       />
                     )}
+                    <MenuItem
+                      icon={<Download className="h-4 w-4" />}
+                      label="Скачать историю (.txt)"
+                      onClick={() => {
+                        setMenuOpen(false);
+                        exportHistory();
+                      }}
+                    />
                     <div className="my-1 h-px bg-white/8" />
                     <MenuItem
                       icon={<Trash2 className="h-4 w-4 text-rose-300" />}
@@ -1349,6 +1418,13 @@ export default function ChatView({
       <div
         ref={scrollRef}
         className="nice-scroll relative z-10 min-h-0 flex-1 overflow-y-auto px-4 py-5"
+        onScroll={(e) => {
+          const el = e.currentTarget;
+          const gap = el.scrollHeight - el.scrollTop - el.clientHeight;
+          atBottomRef.current = gap < 120;
+          if (atBottomRef.current) setNewBelow(0);
+          setShowJump(gap > 400);
+        }}
         onDragOver={(e) => {
           if (!canPost) return;
           e.preventDefault();
@@ -1437,6 +1513,9 @@ export default function ChatView({
                       onOpenImage={setLightbox}
                       onDelete={() => requestDelete(m)}
                       onReply={() => startReply(m)}
+                      onDiscuss={
+                        kind === "channel" && onOpenDiscussion ? onOpenDiscussion : undefined
+                      }
                       onEdit={() => startEdit(m)}
                       onPin={() => void togglePin(m)}
                       onReact={(emoji) => void toggleReaction(m.id, emoji)}
@@ -1448,6 +1527,22 @@ export default function ChatView({
                 </div>
               );
             })}
+          </div>
+        )}
+        {showJump && (
+          <div className="sticky bottom-2 z-20 flex justify-end">
+            <button
+              onClick={() => {
+                scrollToEnd(true);
+                setNewBelow(0);
+                setShowJump(false);
+              }}
+              className="glass-strong flex items-center gap-1.5 rounded-full px-3.5 py-2 text-xs font-semibold text-white/80"
+              title="К новым сообщениям"
+            >
+              <ArrowDown className="h-3.5 w-3.5" />
+              {newBelow > 0 ? `Новых: ${newBelow}` : "Вниз"}
+            </button>
           </div>
         )}
       </div>
@@ -2416,6 +2511,7 @@ function MessageBubble({
   onPin,
   onReact,
   onMenu,
+  onDiscuss,
   onJump,
   onViewUser,
 }: {
@@ -2436,6 +2532,7 @@ function MessageBubble({
   onPin: () => void;
   onReact: (emoji: string) => void;
   onMenu: (x: number, y: number, message: ChatMessage) => void;
+  onDiscuss?: () => void;
   onJump: (id: string) => void;
   onViewUser: (u: PublicUser) => void;
 }) {
@@ -2512,6 +2609,7 @@ function MessageBubble({
         e.preventDefault();
         onMenu(e.clientX, e.clientY, message);
       }}
+      onDoubleClick={() => onReply()}
       onTouchStart={onTouchStart}
       onTouchMove={onTouchMove}
       onTouchEnd={onTouchEnd}
@@ -2614,6 +2712,16 @@ function MessageBubble({
             </p>
           )}
         </div>
+
+        {/* Комментарии канала — открывают привязанную группу-обсуждение */}
+        {onDiscuss && (
+          <button
+            onClick={onDiscuss}
+            className="mt-1 flex items-center gap-1 text-[11px] text-slate-400 transition-colors hover:text-slate-200"
+          >
+            <MessageSquare className="h-3 w-3" /> Комментарии
+          </button>
+        )}
 
         {/* Реакции */}
         {message.reactions && message.reactions.length > 0 && (

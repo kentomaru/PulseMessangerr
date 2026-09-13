@@ -39,6 +39,7 @@ export default function ProfileModal({ me, onClose, onSaved, onDeletedAccount }:
   /** Вкладки редактирования: «Профиль» и «Приватность» (пункт ТЗ №4). */
   const [tab, setTab] = useState<"profile" | "privacy">("profile");
   const [displayName, setDisplayName] = useState(me.displayName);
+  const [username, setUsername] = useState(me.username);
   const [bio, setBio] = useState(me.bio);
   const [avatarUrl, setAvatarUrl] = useState<string | null>(me.avatarUrl);
   const [bannerUrl, setBannerUrl] = useState<string | null>(me.bannerUrl);
@@ -101,6 +102,7 @@ export default function ProfileModal({ me, onClose, onSaved, onDeletedAccount }:
         method: "PATCH",
         body: JSON.stringify({
           displayName,
+          username,
           bio,
           avatarUrl,
           bannerUrl,
@@ -326,7 +328,7 @@ export default function ProfileModal({ me, onClose, onSaved, onDeletedAccount }:
             <span className="font-display text-lg font-bold">{displayName || me.username}</span>
             <StatusEmoji value={statusEmoji} size={32} />
           </p>
-          <p className="text-xs text-white/35">@{me.username}</p>
+          <p className="text-xs text-white/35">@{username}</p>
         </div>
 
         <label className="block">
@@ -339,6 +341,21 @@ export default function ProfileModal({ me, onClose, onSaved, onDeletedAccount }:
             maxLength={40}
             className="ring-focus w-full rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3 text-[15px] transition-all"
           />
+        </label>
+
+        <label className="block">
+          <span className="mb-1.5 block text-xs font-medium tracking-wide text-white/45 uppercase">
+            Юзернейм
+          </span>
+          <div className="flex items-center gap-1">
+            <span className="text-white/35">@</span>
+            <input
+              value={username}
+              onChange={(e) => setUsername(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, "").slice(0, 20))}
+              className="ring-focus w-full rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3 text-[15px] transition-all"
+            />
+          </div>
+          <p className="mt-1 text-[11px] text-white/30">3–20 символов: латиница, цифры, «_»</p>
         </label>
 
         <label className="block">

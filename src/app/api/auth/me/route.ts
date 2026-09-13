@@ -32,6 +32,25 @@ export const PATCH = withApi("auth/me", async ({ req, me, log }) => {
     patch.displayName = dn;
   }
   if (typeof body.bio === "string") patch.bio = body.bio.trim().slice(0, 280);
+  // Смена юзернейма: латиница/цифры/«_», 3–20 символов, уникальность
+  if (typeof body.username === "string") {
+    const un = body.username.trim().toLowerCase().replace(/^@+/, "").slice(0, 20);
+    if (!/^[a-z0-9_]{3,20}$/.test(un))
+      return NextResponse.json(
+        { error: "Юзернейм: 3–20 символов, латиница, цифры и «_»" },
+        { status: 400 },
+      );
+    if (un !== me.username) {
+      const [taken] = await db
+        .select({ id: users.id })
+        .from(users)
+        .where(eq(users.username, un))
+        .limit(1);
+      if (taken)
+        return NextResponse.json({ error: "Юзернейм уже занят" }, { status: 409 });
+      patch.username = un;
+    }
+  }
   // Кастомный статус-эмодзи: эмодзи или ссылка на анимированную гифку
   if (typeof body.statusEmoji === "string") patch.statusEmoji = body.statusEmoji.trim().slice(0, 300);
   if (typeof body.avatarUrl === "string" || body.avatarUrl === null)

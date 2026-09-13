@@ -23,7 +23,7 @@ body {
 
 body {
   font-family: "Manrope", "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
-    "Helvetica Neue", Arial, "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif;
+    "Helvetica Neue", Arial, "Noto Color Emoji", "Apple Color Emoji", "Segoe UI Emoji", sans-serif;
   color: rgb(255 255 255 / 0.88);
   font-size: 15px;
   line-height: 1.45;
@@ -328,3 +328,109 @@ select:focus-visible,
 .no-callout {
   -webkit-touch-callout: none;
 }
+
+/* ───────────────────  Пресеты тем  ─────────────────── */
+/* «Синяя» — как в Telegram Dark: синеватые панели и пузыри. */
+html[data-theme="tg"] body {
+  background: #0e1621;
+}
+html[data-theme="tg"] .glass {
+  background: #17212b;
+  border-color: rgb(255 255 255 / 0.05);
+}
+html[data-theme="tg"] .glass-strong {
+  background: #17212b;
+}
+html[data-theme="tg"] .bubble-own {
+  background: #2b5278;
+}
+html[data-theme="tg"] .bubble-peer {
+  background: #182533;
+  border-color: rgb(255 255 255 / 0.04);
+}
+html[data-theme="tg"] .btn-gradient {
+  background: #5288c1;
+}
+html[data-theme="tg"] .btn-gradient:hover {
+  background: #3f76ad;
+}
+html[data-theme="tg"] .chat-pattern {
+  background-image: radial-gradient(rgb(255 255 255 / 0.03) 1px, transparent 1.4px);
+}
+
+/* «Светлая» — белый/светло-серый фон, тёмный текст, синие свои пузыри. */
+html[data-theme="light"] body {
+  background: #eef1f5;
+  color: #1f2937;
+}
+html[data-theme="light"] .glass {
+  background: #ffffff;
+  border-color: #e5e7eb;
+}
+html[data-theme="light"] .glass-strong {
+  background: #ffffff;
+  border-color: #e5e7eb;
+}
+html[data-theme="light"] .btn-gradient {
+  background: #2563eb;
+}
+html[data-theme="light"] .btn-gradient:hover {
+  background: #1d4ed8;
+}
+html[data-theme="light"] .text-gradient {
+  color: #1d4ed8;
+}
+html[data-theme="light"] .bubble-own {
+  background: #d7e7fb;
+  border: 1px solid #c3daf5;
+}
+html[data-theme="light"] .bubble-peer {
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+}
+html[data-theme="light"] .chat-pattern {
+  background-image: radial-gradient(rgb(15 23 42 / 0.05) 1px, transparent 1.4px);
+}
+html[data-theme="light"] .story-ring {
+  background: #94a3b8;
+}
+html[data-theme="light"] .story-ring-seen {
+  background: #cbd5e1;
+}
+html[data-theme="light"] .nice-scroll {
+  scrollbar-color: rgb(100 116 139 / 0.4) transparent;
+}
+/* Светлая тема перекрашивает утилиты тёмного интерфейса. */
+html[data-theme="light"] .text-white { color: #111827; }
+html[data-theme="light"] .text-white\/90 { color: #111827; }
+html[data-theme="light"] .text-white\/80 { color: #1f2937; }
+html[data-theme="light"] .text-white\/75 { color: #374151; }
+html[data-theme="light"] .text-white\/70 { color: #374151; }
+html[data-theme="light"] .text-white\/60 { color: #4b5563; }
+html[data-theme="light"] .text-white\/50 { color: #6b7280; }
+html[data-theme="light"] .text-white\/45 { color: #6b7280; }
+html[data-theme="light"] .text-white\/40 { color: #6b7280; }
+html[data-theme="light"] .text-white\/35 { color: #9ca3af; }
+html[data-theme="light"] .text-white\/30 { color: #9ca3af; }
+html[data-theme="light"] .text-white\/25 { color: #9ca3af; }
+html[data-theme="light"] .text-white\/20 { color: #d1d5db; }
+html[data-theme="light"] .placeholder\:text-white\/30::placeholder { color: #9ca3af; }
+html[data-theme="light"] .bg-white\/5 { background-color: #f3f4f6; }
+html[data-theme="light"] .bg-white\/8 { background-color: #eef0f3; }
+html[data-theme="light"] .bg-white\/10 { background-color: #e5e7eb; }
+html[data-theme="light"] .bg-white\/15 { background-color: #e0e3e8; }
+html[data-theme="light"] .bg-white\/20 { background-color: #d7dbe2; }
+html[data-theme="light"] .bg-white\/\[0\.03\] { background-color: #f6f7f9; }
+html[data-theme="light"] .bg-white\/\[0\.04\] { background-color: #f3f4f6; }
+html[data-theme="light"] .bg-white\/\[0\.05\] { background-color: #eef0f3; }
+html[data-theme="light"] .hover\:bg-white\/8:hover { background-color: #e5e7eb; }
+html[data-theme="light"] .hover\:bg-white\/10:hover { background-color: #e5e7eb; }
+html[data-theme="light"] .hover\:bg-white\/15:hover { background-color: #d7dbe2; }
+html[data-theme="light"] .hover\:bg-white\/20:hover { background-color: #d1d5db; }
+html[data-theme="light"] .border-white\/5 { border-color: #e5e7eb; }
+html[data-theme="light"] .border-white\/8 { border-color: #e5e7eb; }
+html[data-theme="light"] .border-white\/10 { border-color: #e5e7eb; }
+html[data-theme="light"] .border-white\/12 { border-color: #d1d5db; }
+html[data-theme="light"] .border-white\/15 { border-color: #d1d5db; }
+html[data-theme="light"] .bg-black\/20 { background-color: rgb(15 23 42 / 0.06); }
+html[data-theme="light"] .bg-black\/60 { background-color: rgb(15 23 42 / 0.5); }

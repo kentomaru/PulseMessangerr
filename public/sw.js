@@ -1,4 +1,4 @@
-const CACHE = "pulse-shell-v2";
+const CACHE = "pulse-shell-v3";
 const SHELL = ["/", "/manifest.json"];
 
 self.addEventListener("install", (event) => {

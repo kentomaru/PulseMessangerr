@@ -34,6 +34,16 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
   const [conversations, setConversations] = useState<ConversationListItem[]>([]);
   const [storyGroups, setStoryGroups] = useState<StoryGroup[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
+  // Тема оформления: серый (по умолчанию), синий как в TG, светлая
+  const [theme, setTheme] = useState<"gray" | "tg" | "light">(() => {
+    try {
+      const t = localStorage.getItem("pulse_theme_v1");
+      return t === "tg" || t === "light" ? t : "gray";
+    } catch {
+      return "gray";
+    }
+  });
+  const [online, setOnline] = useState(true);
   const [showProfile, setShowProfile] = useState(false);
   const [viewUser, setViewUser] = useState<PublicUser | null>(null);
   const [storyComposer, setStoryComposer] = useState(false);
@@ -217,6 +227,36 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
   }, []);
   const zoom = uiScale === "s" ? 0.88 : uiScale === "l" ? 1.14 : 1;
 
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    try {
+      localStorage.setItem("pulse_theme_v1", theme);
+    } catch {
+      /* приватный режим */
+    }
+  }, [theme]);
+
+  // Баннер «нет сети» и хоткей Ctrl+K — фокус на поиск чатов
+  useEffect(() => {
+    const on = () => setOnline(true);
+    const off = () => setOnline(false);
+    setOnline(navigator.onLine);
+    window.addEventListener("online", on);
+    window.addEventListener("offline", off);
+    const keys = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        document.getElementById("pulse-chat-search")?.focus();
+      }
+    };
+    window.addEventListener("keydown", keys);
+    return () => {
+      window.removeEventListener("online", on);
+      window.removeEventListener("offline", off);
+      window.removeEventListener("keydown", keys);
+    };
+  }, []);
+
   /* ── Закреплённые и заглушённые чаты (хранятся локально) ── */
   const PINNED_KEY = "pulse_pinned_v1";
   const MUTED_KEY = "pulse_muted_v1";
@@ -301,6 +341,29 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
   }, [conversations, me.id, pushBrowserNotification]);
 
   const activeConv = conversations.find((c) => c.id === activeId) ?? null;
+
+  /** «Комментарии» под постом канала: вступление в обсуждение и переход в него. */
+  const openChannelDiscussion = async () => {
+    const conv = activeConv;
+    if (!conv || conv.kind !== "channel") return;
+    try {
+      const d = await api<{ discussion: { id: string } | null }>(
+        `/api/conversations/${conv.id}/discussion`,
+      );
+      if (!d.discussion) {
+        notify("Обсуждение не привязано. Владелец канала добавляет чат в настройках канала.");
+        return;
+      }
+      await api(`/api/conversations/${conv.id}/discussion`, {
+        method: "POST",
+        body: JSON.stringify({ join: true, groupId: d.discussion.id }),
+      }).catch(() => {});
+      await loadConversations();
+      setActiveId(d.discussion.id);
+    } catch (e) {
+      notify(e instanceof Error ? e.message : "Не удалось открыть комментарии");
+    }
+  };
 
   const openConversationWith = useCallback(
     async (user: PublicUser) => {
@@ -474,6 +537,11 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
       style={zoom !== 1 ? ({ zoom } as React.CSSProperties) : undefined}
     >
       <IframeNotice />
+      {!online && (
+        <div className="fixed inset-x-0 top-0 z-[130] bg-rose-600/90 px-4 py-1.5 text-center text-[12px] font-semibold text-white">
+          Нет соединения с сетью — сообщения и звонки не работают
+        </div>
+      )}
       <div
         className={`${activeId ? "hidden md:flex" : "flex"} w-full shrink-0 md:w-[var(--sbw,380px)]`}
         style={{ "--sbw": `${sidebarW}px` } as React.CSSProperties}
@@ -490,6 +558,8 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
           onToggleMute={toggleMuted}
           uiScale={uiScale}
           onSetUiScale={setUiScale}
+          theme={theme}
+          onSetTheme={setTheme}
           callSoundOn={callSoundOn}
           notifyOn={notifyOn}
           onToggleSound={toggleSound}
@@ -538,6 +608,9 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
             onViewPeer={() => activeConv.peer && setViewUser(activeConv.peer)}
             onViewUser={(u) => setViewUser(u)}
             onOpenInfo={() => setGroupInfoId(activeConv.id)}
+            onOpenDiscussion={
+              activeConv.kind === "channel" ? () => void openChannelDiscussion() : undefined
+            }
             callBusy={!!callCtl.session || !!callCtl.incoming || callCtl.starting}
             refreshConversations={loadConversations}
             notify={notify}
@@ -613,6 +686,7 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
             conversationId={groupInfoId}
             callBusy={!!callCtl.session || !!callCtl.incoming || callCtl.starting}
             onClose={() => setGroupInfoId(null)}
+            onOpenConversation={(id) => setActiveId(id)}
             onCall={(media) => {
               setGroupInfoId(null);
               void callCtl.startCall(groupInfoId, media);

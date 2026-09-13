@@ -51,6 +51,9 @@ type Props = {
   /** Масштаб интерфейса: мелкий / обычный / крупный. */
   uiScale: "s" | "m" | "l";
   onSetUiScale: (v: "s" | "m" | "l") => void;
+  /** Тема оформления: серый / синий / светлая. */
+  theme: "gray" | "tg" | "light";
+  onSetTheme: (t: "gray" | "tg" | "light") => void;
   /** Звук входящего звонка (рингтон). */
   callSoundOn: boolean;
   /** Браузерные уведомления (всплывающие, когда вкладка не активна). */
@@ -110,6 +113,8 @@ export default function Sidebar({
   onToggleMute,
   uiScale,
   onSetUiScale,
+  theme,
+  onSetTheme,
   callSoundOn,
   notifyOn,
   onSelect,
@@ -126,6 +131,18 @@ export default function Sidebar({
   onToggleNotify,
   onJoinByToken,
 }: Props) {
+  // Черновики: красный ярлык в списке чатов, как в больших мессенджерах
+  const drafts = useMemo(() => {
+    try {
+      return JSON.parse(localStorage.getItem("pulse_text_drafts_v1") ?? "{}") as Record<
+        string,
+        string
+      >;
+    } catch {
+      return {} as Record<string, string>;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [conversations]);
   const [query, setQuery] = useState("");
   const [notifyOpen, setNotifyOpen] = useState(false);
   const notifyBoxRef = useRef<HTMLDivElement | null>(null);
@@ -338,6 +355,30 @@ export default function Sidebar({
                     </button>
                   ))}
                 </div>
+                <p className="px-1 pt-3 pb-2 text-[10px] font-semibold tracking-wide text-white/40 uppercase">
+                  Тема оформления
+                </p>
+                <div className="grid grid-cols-3 gap-1 rounded-xl bg-white/[0.05] p-1">
+                  {(
+                    [
+                      ["gray", "Серая"],
+                      ["tg", "Синяя"],
+                      ["light", "Светлая"],
+                    ] as const
+                  ).map(([v, label]) => (
+                    <button
+                      key={v}
+                      onClick={() => onSetTheme(v)}
+                      className={`rounded-lg px-1 py-1.5 text-[11px] font-medium transition-colors ${
+                        theme === v
+                          ? "bg-white/10 text-white"
+                          : "text-white/50 hover:bg-white/8 hover:text-white/80"
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
               </motion.div>
             )}
           </AnimatePresence>
@@ -356,6 +397,7 @@ export default function Sidebar({
         <label className="ring-focus flex items-center gap-2.5 rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-2.5 transition-all">
           <Search className="h-4 w-4 shrink-0 text-white/35" />
           <input
+            id="pulse-chat-search"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Люди, группы, каналы или ссылка"
@@ -478,6 +520,7 @@ export default function Sidebar({
                   meId={me.id}
                   onSelect={onSelect}
                   pinned
+                  draft={drafts[conv.id] ?? ""}
                   muted={mutedIds.has(conv.id)}
                   onTogglePin={onTogglePin}
                   onToggleMute={onToggleMute}
@@ -559,6 +602,7 @@ function ConvRow({
   onSelect,
   pinned = false,
   muted = false,
+  draft = "",
   onTogglePin,
   onToggleMute,
 }: {
@@ -568,6 +612,7 @@ function ConvRow({
   onSelect: (id: string) => void;
   pinned?: boolean;
   muted?: boolean;
+  draft?: string;
   onTogglePin?: (id: string) => void;
   onToggleMute?: (id: string) => void;
 }) {
@@ -670,6 +715,7 @@ function ConvRow({
             </p>
           ) : (
             <p className="truncate text-[13px] text-white/40">
+              {draft && <span className="font-semibold text-rose-400">Черновик: </span>}
               <PreviewNode conv={conv} meId={meId} />
             </p>
           )}
