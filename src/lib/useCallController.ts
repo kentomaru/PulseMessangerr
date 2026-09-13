@@ -601,78 +601,12 @@ const syncMesh = useCallback(
   const watchdogRef = useRef<
     Record<string, { sent: number; recv: number; stuck: number }>
   >({});
-  const lastHealRef = useRef(0);
-
-  const healAudioNow = useCallback(async () => {
-    const now = Date.now();
-    if (now - lastHealRef.current < 15_000) return;
-    // Во время демонстрации звук — это микс «экран+микрофон»; не ломаем его.
-    if (screenStreamRef.current) return;
-    lastHealRef.current = now;
-    try {
-      const fresh = await navigator.mediaDevices.getUserMedia({
-        audio: audioConstraints(),
-      });
-      const nt = fresh.getAudioTracks()[0];
-      if (!nt) return;
-      const stream = localStreamRef.current;
-      const wasMuted = mutedRef.current;
-      if (stream) {
-        stream.getAudioTracks().forEach((t) => {
-          stream.removeTrack(t);
-          t.stop();
-        });
-        stream.addTrack(nt);
-        localStreamRef.current = stream;
-      }
-      nt.enabled = !wasMuted;
-      let added = false;
-      for (const l of linksRef.current.values()) {
-        const snd = l.pc.getSenders().find((x) => x.track?.kind === "audio");
-        if (snd) await snd.replaceTrack(nt).catch(() => {});
-        else {
-          l.pc.addTrack(nt, localStreamRef.current!);
-          added = true;
-        }
-      }
-      if (added) {
-        await renegotiateAllRef.current();
-      } else {
-        // Пересогласование с ICE-рестартом для каждого пира — перестраиваем
-        // маршрут звука начисто (то же самое, что «чинило» демку, но само).
-        const s2 = sessionRef.current;
-        if (s2) {
-          for (const [peerId, l] of linksRef.current) {
-            try {
-              l.offering = true;
-              l.offeringSince = Date.now();
-              const offer = await l.pc.createOffer({ iceRestart: true });
-              await l.pc.setLocalDescription(offer);
-              await sendSignal(s2.id, peerId, "offer", {
-                type: offer.type,
-                sdp: offer.sdp,
-              });
-            } catch {
-              l.offering = false;
-              l.offeringSince = null;
-            }
-          }
-        }
-      }
-      setStreamTick((v) => v + 1);
-      restartVoiceGateRef.current();
-    } catch {
-      /* микрофон занят — попробуем в следующий раз */
-    }
-  }, []);
-
   useEffect(() => {
     const s = session;
     if (!s || s.status !== "live") return;
     const t = setInterval(() => {
       (async () => {
         const diag: Record<string, { conn: string; sentKB: number; recvKB: number; frames: number }> = {};
-        let anyStuck = false;
         for (const [peerId, l] of linksRef.current) {
           let sent = 0;
           let recv = 0;
@@ -690,19 +624,7 @@ const syncMesh = useCallback(
           } catch {
             continue;
           }
-          const prev = watchdogRef.current[peerId] ?? { sent: -1, recv: -1, stuck: 0 };
-          if (prev.sent >= 0) {
-            // Байты должны РАСТИ каждый интервал, пока соединение живое.
-            if (sent <= prev.sent && recv <= prev.recv) prev.stuck += 1;
-            else prev.stuck = 0;
-            if (prev.stuck >= 4) {
-              anyStuck = true;
-              prev.stuck = 0;
-            }
-          }
-          prev.sent = sent;
-          prev.recv = recv;
-          watchdogRef.current[peerId] = prev;
+          watchdogRef.current[peerId] = { sent, recv, stuck: 0 };
           diag[peerId] = {
             conn: l.pc.connectionState,
             sentKB: Math.round(sent / 1024),
@@ -711,7 +633,6 @@ const syncMesh = useCallback(
           };
         }
         setAudioWatchdog(diag);
-        if (anyStuck) void healAudioNow();
 
         // Если участников больше одного, а соединений нет (сигнал потерялся,
         // вкладка засыпала) — принудительно пересинхронизируем mesh.
@@ -736,7 +657,7 @@ const syncMesh = useCallback(
   // сработать (3 с) — из-за этого диагностика вечно показывала
   // «Пока нет соединений», а сторож никогда не лечил тишину.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session?.id, session?.status, healAudioNow]);
+  }, [session?.id, session?.status]);
 
   /** Применить состояние комнаты к локальному состоянию + синхронизировать mesh. */
   const applyState = useCallback(
@@ -1203,62 +1124,7 @@ const syncMesh = useCallback(
   const renegotiateAllRef = useRef(renegotiateAll);
   renegotiateAllRef.current = renegotiateAll;
 
-  /* ─────────────────────────────────────────────────────────────────────
-   * АВТО-ПЕРЕГОВОРЫ после старта звонка + ОБНОВЛЕНИЕ ЗВУКОВОЙ ДОРОЖКИ.
-   * Симптом: звука нет, пока кто-то не включит демку. Демка работает,
-   * потому что ПОДМЕНЯЕТ дорожку у пиров. Значит, делаем то же самое для
-   * звука: через 4 секунды берём СВЕЖИЙ микрофон и подменяем дорожку —
-   * это тот же механизм, что «лечит» звук через демку. Плюс повторные
-   * согласования на 2.5-й и 6-й секунде.
-   * ───────────────────────────────────────────────────────────────────── */
-  useEffect(() => {
-    if (session?.status !== "live") return;
-    const t1 = setTimeout(() => void renegotiateAllRef.current(), 2_500);
-    const t2 = setTimeout(() => void renegotiateAllRef.current(), 6_000);
-    const t3 = setTimeout(() => {
-      void (async () => {
-        const local = localStreamRef.current;
-        if (!local || linksRef.current.size === 0) return;
-        // Идёт демонстрация — звук уже подменён миксом «экран+микрофон»,
-        // не ломаем его заменой дорожки.
-        if (screenStreamRef.current) return;
-        try {
-          const fresh = await navigator.mediaDevices.getUserMedia({
-            audio: audioConstraints(),
-          });
-          const [newAudio] = fresh.getAudioTracks();
-          if (!newAudio) return;
-          const old = local.getAudioTracks()[0];
-          // Сохраняем состояние мьюта
-          newAudio.enabled = old ? old.enabled : !mutedRef.current;
-          if (old) {
-            local.removeTrack(old);
-            old.stop();
-          }
-          local.addTrack(newAudio);
-          let added = false;
-          for (const l of linksRef.current.values()) {
-            const sender = l.pc.getSenders().find((x) => x.track?.kind === "audio");
-            if (sender) void sender.replaceTrack(newAudio).catch(() => {});
-            else {
-              l.pc.addTrack(newAudio, local);
-              added = true;
-            }
-          }
-          if (added) void renegotiateAllRef.current();
-          setStreamTick((v) => v + 1);
-          restartVoiceGateRef.current();
-        } catch {
-          /* микрофон занят/недоступен — остаёмся на старой дорожке */
-        }
-      })();
-    }, 4_000);
-    return () => {
-      clearTimeout(t1);
-      clearTimeout(t2);
-      clearTimeout(t3);
-    };
-  }, [session?.status, session?.id]);
+
 
   /**
    * Принудительное переподключение медиа со всеми (кнопка «перезвук»):
@@ -1292,6 +1158,13 @@ const syncMesh = useCallback(
    *    «закрыта» (собеседники не слышат фон), голос открывается мгновенно.
    * Ручной мьют всегда в приоритете.
    */
+  /**
+   * ИЗМЕРИТЕЛЬ УРОВНЯ МИКРОФОНА (только индикация для полоски в звонке).
+   * Раньше здесь был VOX-гейт, который сам дёргал track.enabled — любой сбой
+   * логики молча выключал микрофон насовсем («говоришь, а звука нет»).
+   * Теперь код звонка НИКОГДА не трогает enabled дорожки без явного мьюта
+   * пользователя — как в эталонных примерах WebRTC.
+   */
   const restartVoiceGate = useCallback(() => {
     if (gateRafRef.current !== null) {
       cancelAnimationFrame(gateRafRef.current);
@@ -1318,9 +1191,6 @@ const syncMesh = useCallback(
       gateNodesRef.current = { src, analyser };
 
       const data = new Uint8Array(analyser.fftSize);
-      let belowSince = 0;
-      let open = true;
-
       const loop = () => {
         gateRafRef.current = requestAnimationFrame(loop);
         analyser.getByteTimeDomainData(data);
@@ -1331,38 +1201,10 @@ const syncMesh = useCallback(
         }
         const rms = Math.sqrt(sum / data.length); // 0..1
         micLevelRef.current = Math.min(100, Math.round(rms * 400));
-
-        const gate = loadAudioSettings().voiceGate;
-        if (gate <= 0 || mutedRef.current) {
-          belowSince = 0;
-          // VOX выключен (или ручной мьют): не трогаем дорожку, кроме случая,
-          // когда гейт успел её закрыть до выключения.
-          if (gate <= 0 && !mutedRef.current && !track.enabled && !track.muted) {
-            track.enabled = true;
-          }
-          return;
-        }
-
-        const threshold = (gate / 100) * 0.06;
-        if (rms >= threshold * 1.15) {
-          // Голос появился — открываем сразу, чтобы не «съесть» начало фразы.
-          if (!open) {
-            open = true;
-            track.enabled = true;
-          }
-          belowSince = 0;
-        } else if (rms < threshold) {
-          if (belowSince === 0) belowSince = performance.now();
-          // Закрываем только после короткой паузы — чтобы не резать окончания слов.
-          if (open && performance.now() - belowSince > 350) {
-            open = false;
-            track.enabled = false;
-          }
-        }
       };
       gateRafRef.current = requestAnimationFrame(loop);
     } catch {
-      /* нет WebAudio — звонок работает без VOX */
+      /* нет WebAudio — индикатор просто не двигается */
     }
   }, []);
   const restartVoiceGateRef = useRef(restartVoiceGate);
