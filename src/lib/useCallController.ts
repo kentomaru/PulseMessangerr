@@ -610,6 +610,15 @@ const syncMesh = useCallback(
   const watchdogRef = useRef<
     Record<string, { sent: number; recv: number; stuck: number }>
   >({});
+  // Автолечение «односторонней тишины»: иногда аудио-м-линия договаривается
+  // только на приём (собеседника слышно, а нас — нет), пока кто-то не
+  // запустит демку (та запускает полное пересогласование). Сторож считает
+  // тики, где соединение «connected», микрофон жив, но отправлено 0 байт,
+  // и через ~12 секунд один раз делает то же самое пересогласование сам.
+  const healRef = useRef<{ zeroTicks: Record<string, number>; healed: boolean }>({
+    zeroTicks: {},
+    healed: false,
+  });
   useEffect(() => {
     const s = session;
     if (!s || s.status !== "live") return;
@@ -633,6 +642,22 @@ const syncMesh = useCallback(
           } catch {
             continue;
           }
+          const prevSent = watchdogRef.current[peerId]?.sent ?? -1;
+          const micLive =
+            localStreamRef.current?.getAudioTracks().some(
+              (t) => t.readyState === "live" && t.enabled,
+            ) ?? false;
+          const h = healRef.current;
+          if (
+            micLive &&
+            l.pc.connectionState === "connected" &&
+            prevSent >= 0 &&
+            sent - prevSent === 0
+          ) {
+            h.zeroTicks[peerId] = (h.zeroTicks[peerId] ?? 0) + 1;
+          } else {
+            h.zeroTicks[peerId] = 0;
+          }
           watchdogRef.current[peerId] = { sent, recv, stuck: 0 };
           diag[peerId] = {
             conn: l.pc.connectionState,
@@ -642,6 +667,16 @@ const syncMesh = useCallback(
           };
         }
         setAudioWatchdog(diag);
+
+        // Лечение: соединение стоит, микрофон не выключен, но звук не уходит
+        // уже ~12 секунд. Это ровно то, что пользователь чинил вручную,
+        // включая демку, — делаем полный ре-оффер автоматически.
+        const hh = healRef.current;
+        if (!hh.healed && Object.values(hh.zeroTicks).some((n) => n >= 4)) {
+          hh.healed = true;
+          hh.zeroTicks = {};
+          void renegotiateAllRef.current(false);
+        }
 
         // Если участников больше одного, а соединений нет (сигнал потерялся,
         // вкладка засыпала) — принудительно пересинхронизируем mesh.
@@ -660,6 +695,7 @@ const syncMesh = useCallback(
     return () => {
       clearInterval(t);
       watchdogRef.current = {};
+      healRef.current = { zeroTicks: {}, healed: false };
     };
   // В зависимостях ТОЛЬКО стабильные значения: объект session меняется
   // каждые 2 секунды опроса, и интервал пересоздавался раньше, чем успевал

@@ -24,7 +24,7 @@ export default function StoriesRow({ me, groups, onOpen, onAdd }: Props) {
           <div
             className={`rounded-full p-[2.5px] ${mine ? "story-ring" : "bg-white/10"} group-hover:bg-violet-500/40 transition-colors`}
           >
-            <div className="rounded-full bg-gray-200 p-[2px]">
+            <div className="rounded-full bg-[#0c0c17] p-[2px]">
               <Avatar name={me.displayName} src={me.avatarUrl} size={44} />
             </div>
           </div>
@@ -58,7 +58,7 @@ export default function StoriesRow({ me, groups, onOpen, onAdd }: Props) {
                 unseen ? "story-ring" : "story-ring-seen"
               }`}
             >
-              <div className="rounded-full bg-gray-200 p-[2px]">
+              <div className="rounded-full bg-[#0c0c17] p-[2px]">
                 <Avatar name={g.user.displayName} src={g.user.avatarUrl} size={44} />
               </div>
             </div>

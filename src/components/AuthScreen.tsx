@@ -77,7 +77,7 @@ export default function AuthScreen() {
         <div className="animate-float absolute top-[55%] left-[45%] h-64 w-64 rounded-full bg-fuchsia-600/15 blur-[100px] [animation-delay:-11s]" />
       </div>
 
-      <div className="relative z-10 grid w-full max-w-5xl overflow-hidden rounded-[2rem] border border-gray-200 shadow-[0_40px_120px_-30px_rgba(0,0,0,0.9)] md:grid-cols-[1.15fr_1fr]">
+      <div className="relative z-10 grid w-full max-w-5xl overflow-hidden rounded-[2rem] border border-white/10 shadow-[0_40px_120px_-30px_rgba(0,0,0,0.9)] md:grid-cols-[1.15fr_1fr]">
         {/* Hero panel */}
         <div className="relative hidden flex-col justify-between overflow-hidden bg-gradient-to-br from-[#15082e] via-[#120a24] to-[#041521] p-10 md:flex">
           <div className="absolute -top-24 -right-24 h-72 w-72 rounded-full bg-violet-600/30 blur-[90px]" />
@@ -85,13 +85,13 @@ export default function AuthScreen() {
 
           <div className="relative flex items-center gap-3">
             <div className="btn-gradient flex h-11 w-11 items-center justify-center rounded-2xl">
-              <Sparkles className="h-5 w-5 text-gray-900" />
+              <Sparkles className="h-5 w-5 text-white" />
             </div>
-            <span className="font-display text-xl font-bold tracking-[0.22em] text-gray-900">PULSE</span>
+            <span className="font-display text-xl font-bold tracking-[0.22em] text-white">PULSE</span>
           </div>
 
           <div className="relative">
-            <h1 className="font-display text-[2.6rem] leading-[1.05] font-bold text-gray-900">
+            <h1 className="font-display text-[2.6rem] leading-[1.05] font-bold text-white">
               Общайтесь.
               <br />
               <span className="text-gradient">Звоните.</span>
@@ -103,16 +103,16 @@ export default function AuthScreen() {
             </p>
           </div>
 
-          <div className="relative flex flex-col gap-3 text-sm text-gray-500">
+          <div className="relative flex flex-col gap-3 text-sm text-white/60">
             <div className="flex items-center gap-3">
               <div className="glass flex h-9 w-9 items-center justify-center rounded-xl">
-                <MessagesSquare className="h-4 w-4 text-blue-600" />
+                <MessagesSquare className="h-4 w-4 text-violet-300" />
               </div>
               Мгновенные сообщения и фото
             </div>
             <div className="flex items-center gap-3">
               <div className="glass flex h-9 w-9 items-center justify-center rounded-xl">
-                <PhoneCall className="h-4 w-4 text-blue-600" />
+                <PhoneCall className="h-4 w-4 text-cyan-300" />
               </div>
               Голосовые и видеозвонки в браузере
             </div>
@@ -123,12 +123,12 @@ export default function AuthScreen() {
         <div className="glass-strong relative p-7 sm:p-10">
           <div className="mb-8 flex items-center gap-3 md:hidden">
             <div className="btn-gradient flex h-10 w-10 items-center justify-center rounded-xl">
-              <Sparkles className="h-5 w-5 text-gray-900" />
+              <Sparkles className="h-5 w-5 text-white" />
             </div>
             <span className="font-display text-lg font-bold tracking-[0.22em]">PULSE</span>
           </div>
 
-          <div className="mb-7 flex rounded-2xl bg-gray-100 p-1">
+          <div className="mb-7 flex rounded-2xl bg-white/5 p-1">
             {(["login", "register"] as Mode[]).map((m) => (
               <button
                 key={m}
@@ -137,7 +137,7 @@ export default function AuthScreen() {
                   setError("");
                 }}
                 className={`relative flex-1 rounded-xl py-2.5 text-sm font-medium transition-colors ${
-                  mode === m ? "text-gray-900" : "text-white/45 hover:text-gray-600"
+                  mode === m ? "text-white" : "text-white/45 hover:text-white/70"
                 }`}
               >
                 {mode === m && (
@@ -167,19 +167,19 @@ export default function AuthScreen() {
               </h2>
 
               {mode === "register" && (
-                <label className="ring-focus flex items-center gap-3 rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3.5 transition-all">
+                <label className="ring-focus flex items-center gap-3 rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3.5 transition-all">
                   <User className="h-4.5 w-4.5 shrink-0 text-white/35" />
                   <input
                     value={displayName}
                     onChange={(e) => setDisplayName(e.target.value)}
                     placeholder="Отображаемое имя"
                     maxLength={40}
-                    className="w-full bg-transparent text-[15px] placeholder:text-gray-400"
+                    className="w-full bg-transparent text-[15px] placeholder:text-white/30"
                   />
                 </label>
               )}
 
-              <label className="ring-focus flex items-center gap-3 rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3.5 transition-all">
+              <label className="ring-focus flex items-center gap-3 rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3.5 transition-all">
                 <AtSign className="h-4.5 w-4.5 shrink-0 text-white/35" />
                 <input
                   value={username}
@@ -187,11 +187,11 @@ export default function AuthScreen() {
                   placeholder="Имя пользователя"
                   autoComplete="username"
                   required
-                  className="w-full bg-transparent text-[15px] placeholder:text-gray-400"
+                  className="w-full bg-transparent text-[15px] placeholder:text-white/30"
                 />
               </label>
 
-              <label className="ring-focus flex items-center gap-3 rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3.5 transition-all">
+              <label className="ring-focus flex items-center gap-3 rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3.5 transition-all">
                 <Lock className="h-4.5 w-4.5 shrink-0 text-white/35" />
                 <input
                   value={password}
@@ -200,13 +200,13 @@ export default function AuthScreen() {
                   type={showPassword ? "text" : "password"}
                   autoComplete={mode === "login" ? "current-password" : "new-password"}
                   required
-                  className="w-full bg-transparent text-[15px] placeholder:text-gray-400"
+                  className="w-full bg-transparent text-[15px] placeholder:text-white/30"
                 />
                 <button
                   type="button"
                   onClick={() => setShowPassword((v) => !v)}
                   tabIndex={-1}
-                  className="shrink-0 text-white/35 transition-colors hover:text-gray-600"
+                  className="shrink-0 text-white/35 transition-colors hover:text-white/70"
                   title={showPassword ? "Скрыть пароль" : "Показать пароль"}
                 >
                   {showPassword ? <EyeOff className="h-4.5 w-4.5" /> : <Eye className="h-4.5 w-4.5" />}
@@ -221,7 +221,7 @@ export default function AuthScreen() {
                       <span
                         key={i}
                         className={`h-full flex-1 rounded-full transition-colors ${
-                          i < strength ? strengthColor : "bg-gray-200"
+                          i < strength ? strengthColor : "bg-white/10"
                         }`}
                       />
                     ))}
@@ -233,7 +233,7 @@ export default function AuthScreen() {
               )}
 
               {mode === "register" && (
-                <label className="ring-focus flex items-center gap-3 rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3.5 transition-all">
+                <label className="ring-focus flex items-center gap-3 rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3.5 transition-all">
                   <Lock className="h-4.5 w-4.5 shrink-0 text-white/35" />
                   <input
                     value={password2}
@@ -242,7 +242,7 @@ export default function AuthScreen() {
                     type={showPassword ? "text" : "password"}
                     autoComplete="new-password"
                     required
-                    className="w-full bg-transparent text-[15px] placeholder:text-gray-400"
+                    className="w-full bg-transparent text-[15px] placeholder:text-white/30"
                   />
                   {password2.length > 0 && (
                     <span className="shrink-0">
@@ -273,13 +273,13 @@ export default function AuthScreen() {
               <button
                 type="submit"
                 disabled={loading}
-                className="btn-gradient mt-1 flex items-center justify-center gap-2 rounded-2xl py-3.5 text-[15px] font-semibold text-gray-900"
+                className="btn-gradient mt-1 flex items-center justify-center gap-2 rounded-2xl py-3.5 text-[15px] font-semibold text-white"
               >
                 {loading && <Loader2 className="h-4 w-4 animate-spin" />}
                 {mode === "login" ? "Войти" : "Зарегистрироваться"}
               </button>
 
-              <p className="text-center text-xs text-gray-400">
+              <p className="text-center text-xs text-white/30">
                 {mode === "login"
                   ? "Нет аккаунта? Переключитесь на регистрацию"
                   : "Имя пользователя — латиница, цифры и _, 3–24 символа. Пароль — не менее 6 символов"}
@@ -289,7 +289,7 @@ export default function AuthScreen() {
 
           <p className="mt-6 text-center text-[11px] text-white/25">
             Продолжая, вы соглашаетесь с{" "}
-            <a href="/privacy" target="_blank" rel="noreferrer" className="text-blue-600/70 transition-colors hover:text-violet-200">
+            <a href="/privacy" target="_blank" rel="noreferrer" className="text-violet-300/70 transition-colors hover:text-violet-200">
               политикой конфиденциальности
             </a>
           </p>
