@@ -142,7 +142,6 @@ export async function serializeConversation(
     myRole: normalizeRole(myMembership?.role ?? "member"),
     // Токен-юзернейм канала/группы видят только владельцы и админы
     inviteToken: isManager(myMembership?.role ?? "member") ? conv.inviteToken ?? null : null,
-    autoDeleteHours: conv.autoDeleteHours ?? 0,
     title: conversationTitle({ kind, name: conv.name }, peer),
     members: rows.map((r) => memberItem(r.member, r.user)),
   };

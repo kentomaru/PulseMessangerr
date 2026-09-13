@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { db } from "@/db";
 import { conversationMembers, conversations, messageReactions, messages, userBlocks, users } from "@/db/schema";
-import { and, desc, eq, gt, inArray, isNotNull, isNull, or } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, isNull, or } from "drizzle-orm";
 import { publicUser } from "@/lib/auth";
 import { isUuid, withApi } from "@/lib/api-helpers";
 import {
@@ -149,7 +149,6 @@ export const GET = withApi("messages", async ({ req, me }) => {
       and(
         eq(messages.conversationId, conversationId),
         isNull(messages.deletedAt),
-        or(isNull(messages.expiresAt), gt(messages.expiresAt, new Date())),
         replyToFilter && isUuid(replyToFilter) ? eq(messages.replyToId, replyToFilter) : undefined,
       ),
     )
@@ -185,7 +184,6 @@ export const GET = withApi("messages", async ({ req, me }) => {
         eq(messages.conversationId, conversationId),
         isNull(messages.deletedAt),
         isNotNull(messages.pinnedAt),
-        or(isNull(messages.expiresAt), gt(messages.expiresAt, new Date())),
       ),
     )
     .orderBy(desc(messages.pinnedAt))
@@ -380,21 +378,9 @@ export const POST = withApi("messages:send", async ({ req, me, log }) => {
     }
   }
 
-  // Таймер автоудаления чата: новые сообщения получают срок жизни.
-  let expiresAt: Date | null = null;
-  if (isUuid(conversationId)) {
-    const [timerConv] = await db
-      .select({ autoDeleteHours: conversations.autoDeleteHours })
-      .from(conversations)
-      .where(eq(conversations.id, conversationId))
-      .limit(1);
-    const hours = timerConv?.autoDeleteHours ?? 0;
-    if (hours > 0) expiresAt = new Date(Date.now() + hours * 3_600_000);
-  }
-
   const [msg] = await db
     .insert(messages)
-    .values({ conversationId, senderId: me.id, type, content, replyToId, silent, expiresAt })
+    .values({ conversationId, senderId: me.id, type, content, replyToId, silent })
     .returning();
   if (clientKey) rememberKey(clientKey, msg.id);
 

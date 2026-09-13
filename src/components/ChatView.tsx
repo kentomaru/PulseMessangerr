@@ -6,13 +6,7 @@ import {
   ArrowLeft,
   ArrowRight,
   Ban,
-  BarChart3,
-  BellOff,
-  BellRing,
   Bookmark,
-  History,
-  Link2,
-  Timer,
   Check,
   CheckCheck,
   ChevronLeft,
@@ -29,7 +23,6 @@ import {
   ImagePlus,
   ChevronUp,
   Clock,
-  Eye,
   EyeOff,
   MessageSquareText,
   Plus,
@@ -56,7 +49,6 @@ import {
   Radio,
   Reply,
   RotateCcw,
-  RotateCw,
   Search,
   Send,
   Smile,
@@ -126,15 +118,6 @@ type Props = {
   initialAvatar: string | null;
   /** Непрочитанные на момент открытия (для разделителя «Непрочитанные»). */
   initialUnread?: number;
-  /** Таймер автоудаления сообщений чата (часы, 0 — выключен). */
-  autoDeleteHours?: number;
-  /** Переход к сообщению по ссылке (#msg=…) сразу после загрузки истории. */
-  initialJumpId?: string | null;
-  onJumpConsumed?: () => void;
-  /** Чат заглушён. */
-  muted?: boolean;
-  /** Переключить мьют текущего чата. */
-  onToggleMuteChat?: () => void;
   peer: Peer | null;
   onBack: () => void;
   onCall: (media: CallMedia) => void;
@@ -264,11 +247,6 @@ export default function ChatView({
   initialKind,
   initialAvatar,
   initialUnread,
-  autoDeleteHours,
-  initialJumpId,
-  onJumpConsumed,
-  muted,
-  onToggleMuteChat,
   peer,
   onBack,
   onCall,
@@ -309,10 +287,6 @@ export default function ChatView({
   useEffect(() => setLbZoom(1), [lightbox]);
   /** Меню способов отправки: тихо, отложить, быстрые ответы. */
   const [sendMenu, setSendMenu] = useState(false);
-  /** Создание опроса. */
-  const [pollOpen, setPollOpen] = useState(false);
-  /** Выбор таймера автоудаления. */
-  const [timerOpen, setTimerOpen] = useState(false);
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const [scheduleTime, setScheduleTime] = useState("");
   const [scheduled, setScheduled] = useState<{ id: string; text: string; at: number }[]>([]);
@@ -359,20 +333,6 @@ export default function ChatView({
   const [dragOver, setDragOver] = useState(false);
   const [ctxMenu, setCtxMenu] = useState<ContextMenuState | null>(null);
   const [forwarding, setForwarding] = useState<ChatMessage | null>(null);
-  /** Мультивыбор сообщений: переслать/удалить пачкой. */
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const selectMode = selectedIds.size > 0;
-  const [forwardingList, setForwardingList] = useState<ChatMessage[] | null>(null);
-  /** Список всех закреплённых сообщений чата. */
-  const [pinnedListOpen, setPinnedListOpen] = useState(false);
-  /** «Кто прочитал» для моего сообщения. */
-  const [readsFor, setReadsFor] = useState<ChatMessage | null>(null);
-  /** «Кто отреагировал» для сообщения с реакциями. */
-  const [reactionsFor, setReactionsFor] = useState<ChatMessage | null>(null);
-  /** История правок сообщения. */
-  const [historyFor, setHistoryFor] = useState<ChatMessage | null>(null);
-  /** Редактирование фото-черновика (поворот). */
-  const [editingDraft, setEditingDraft] = useState<DraftFile | null>(null);
   /** Сообщение, ожидающее подтверждения удаления (защита от случайных кликов). */
   const [confirmDelete, setConfirmDelete] = useState<ChatMessage | null>(null);
   const [noteRecorder, setNoteRecorder] = useState(false);
@@ -381,8 +341,6 @@ export default function ChatView({
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchHits, setSearchHits] = useState<SearchHit[] | null>(null);
-  /** Вкладка фильтра поиска: все / фото / файлы / голосовые / ссылки. */
-  const [searchTab, setSearchTab] = useState<"all" | "photo" | "file" | "voice" | "link">("all");
   const [searching, setSearching] = useState(false);
   const [emojiOpen, setEmojiOpen] = useState(false);
   /** id сообщения, перед которым рисуем разделитель «Непрочитанные». */
@@ -1002,17 +960,6 @@ ${x.text}` : x.text));
     }
   }, [conversationId, kind, deleteChatForAll, deletingChat, onBack, refreshConversations, notify]);
 
-  /** Голосование в опросе: клики переключают/снимают голос. */
-  const votePoll = async (message: ChatMessage, option: number) => {
-    try {
-      await api(`/api/messages/${message.id}`, { method: "PATCH", body: JSON.stringify({ pollVote: option }) });
-      load();
-      refreshConversations();
-    } catch {
-      /* игнор: следующий рефреш покажет актуальное */
-    }
-  };
-
   const toggleReaction = async (messageId: string, emoji: string) => {
     // оптимистично — опрос подтвердит
     setMessages((ms) =>
@@ -1074,16 +1021,6 @@ ${x.text}` : x.text));
   };
 
   /* ─────────────────────────── поиск по чату ─────────────────────────── */
-
-  /** Фильтр результатов поиска по вкладке типа содержимого. */
-  const hitTab = (h: SearchHit): boolean => {
-    if (searchTab === "all") return true;
-    if (searchTab === "photo") return h.type === "image";
-    if (searchTab === "file") return h.type === "file";
-    if (searchTab === "voice") return h.type === "voice" || h.type === "video_note";
-    // ссылки — ищем в тексте сообщения
-    return h.type === "text" && /https?:\/\//i.test(h.content);
-  };
 
   useEffect(() => {
     if (!searchOpen) return;
@@ -1172,16 +1109,6 @@ ${x.text}` : x.text));
     setTimeout(() => setHighlight(null), 1400);
   };
 
-  // Открытие по ссылке «#msg=<id>»: как только история загрузилась — прыгаем.
-  useEffect(() => {
-    if (!initialJumpId || !loaded) return;
-    if (messages.some((m) => m.id === initialJumpId)) {
-      jumpTo(initialJumpId);
-      onJumpConsumed?.();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [initialJumpId, loaded, messages.length]);
-
   const startReply = (m: ChatMessage) => {
     setEditing(null);
     setReplyTo(m);
@@ -1231,14 +1158,13 @@ ${x.text}` : x.text));
         return;
       }
       if (e.key !== "Escape") return;
-      if (selectMode) setSelectedIds(new Set());
-      else if (searchOpen) setSearchOpen(false);
+      if (searchOpen) setSearchOpen(false);
       else if (replyTo) setReplyTo(null);
       else if (editing) setEditing(null);
     };
     window.addEventListener("keydown", h);
     return () => window.removeEventListener("keydown", h);
-  }, [searchOpen, replyTo, editing, selectMode]);
+  }, [searchOpen, replyTo, editing]);
 
   // Сколько комментариев в обсуждении канала — цифра под постами
   useEffect(() => {
@@ -1338,30 +1264,6 @@ ${x.text}` : x.text));
     }
   };
 
-  /** Переключить сообщение в мультивыборе. */
-  const toggleSelect = useCallback((id: string) => {
-    setSelectedIds((cur) => {
-      const next = new Set(cur);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  }, []);
-
-  /** Удалить все выбранные сообщения разом. */
-  const bulkDelete = async () => {
-    const ids = Array.from(selectedIds);
-    if (ids.length === 0) return;
-    if (!confirm(`Удалить выбранные сообщения (${ids.length} шт.)?`)) return;
-    for (const id of ids) {
-      await api(`/api/messages/${id}`, { method: "DELETE" }).catch(() => {});
-    }
-    setSelectedIds(new Set());
-    await load();
-    refreshConversations();
-    notify("Удалено");
-  };
-
   /** Быстрое сохранение сообщения в «Избранное» (чат с самим собой). */
   const saveToSaved = async (m: ChatMessage) => {
     try {
@@ -1449,57 +1351,9 @@ ${x.text}` : x.text));
         <div className="pointer-events-none absolute inset-0 bg-[#16181c]/70" aria-hidden />
       )}
 
-      {/* Панель мультивыбора — замещает шапку, пока выбраны сообщения */}
-      {selectMode && (
-        <div className="glass-strong relative z-30 flex items-center gap-2 border-b border-white/8 px-4 py-2.5">
-          <button
-            onClick={() => setSelectedIds(new Set())}
-            title="Отменить выбор"
-            className="rounded-full bg-white/8 p-2 text-white/70 hover:bg-white/15"
-          >
-            <X className="h-4 w-4" />
-          </button>
-          <p className="min-w-0 flex-1 truncate text-sm font-semibold">
-            Выбрано: {selectedIds.size}
-          </p>
-          <button
-            onClick={() => {
-              const sel = messages.filter((m) => selectedIds.has(m.id));
-              if (sel.length === 1) setForwarding(sel[0]);
-              else setForwardingList(sel);
-            }}
-            className="flex items-center gap-1.5 rounded-xl bg-[#5865f2] px-3 py-2 text-[13px] font-semibold text-white hover:bg-[#4752c4]"
-          >
-            <ChevronRight className="h-4 w-4" /> Переслать
-          </button>
-          <button
-            onClick={() => {
-              const sel = messages.filter((m) => selectedIds.has(m.id));
-              const joined = sel
-                .sort((x, y) => new Date(x.createdAt).getTime() - new Date(y.createdAt).getTime())
-                .map((m) => `${m.sender?.displayName ?? "—"}: ${m.type === "text" ? m.content : `[${m.type}]`}`)
-                .join("\n\n");
-              void navigator.clipboard.writeText(joined).then(
-                () => notify(`Скопировано сообщений: ${sel.length}`),
-                () => notify("Не удалось скопировать"),
-              );
-            }}
-            className="flex items-center gap-1.5 rounded-xl bg-white/8 px-3 py-2 text-[13px] font-semibold text-white/80 hover:bg-white/15"
-          >
-            <Copy className="h-4 w-4" /> Копировать
-          </button>
-          <button
-            onClick={() => void bulkDelete()}
-            className="flex items-center gap-1.5 rounded-xl bg-rose-500/15 px-3 py-2 text-[13px] font-semibold text-rose-300 hover:bg-rose-500/25"
-          >
-            <Trash2 className="h-4 w-4" /> Удалить
-          </button>
-        </div>
-      )}
-
       {/* Шапка — z-30: выпадающее меню «⋮» должно быть НАД областью сообщений
           (раньше оба блока были z-10, сообщения перекрывали меню — клики «не работали») */}
-      <div className={`glass-strong chrome-line relative z-30 flex items-center gap-3 border-b border-white/8 px-4 py-3 ${selectMode ? "hidden" : ""}`}>
+      <div className="glass-strong chrome-line relative z-30 flex items-center gap-3 border-b border-white/8 px-4 py-3">
         <button
           onClick={onBack}
           className="glass flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-white/70 md:hidden"
@@ -1566,72 +1420,6 @@ ${x.text}` : x.text));
           >
             <Search className="h-4.5 w-4.5" />
           </button>
-          {onToggleMuteChat && (
-            <button
-              onClick={onToggleMuteChat}
-              title={muted ? "Включить уведомления" : "Заглушить чат"}
-              className={`glass flex h-10 w-10 items-center justify-center rounded-xl transition-colors hover:text-white ${
-                muted ? "text-amber-300" : "text-white/75"
-              }`}
-            >
-              {muted ? <BellRing className="h-4.5 w-4.5" /> : <BellOff className="h-4.5 w-4.5" />}
-            </button>
-          )}
-          <div className="relative">
-            <button
-              onClick={() => setTimerOpen((v) => !v)}
-              title="Таймер автоудаления сообщений"
-              className={`glass flex h-10 w-10 items-center justify-center rounded-xl transition-colors hover:text-white ${
-                (autoDeleteHours ?? 0) > 0 ? "text-sky-300" : "text-white/75"
-              }`}
-            >
-              <Timer className="h-4.5 w-4.5" />
-            </button>
-            {timerOpen && (
-              <>
-                <div className="fixed inset-0 z-30" onClick={() => setTimerOpen(false)} />
-                <div className="glass-strong absolute top-[calc(100%+10px)] right-0 z-40 w-56 rounded-2xl p-2 shadow-2xl">
-                  <p className="px-2 pt-1 pb-2 text-[11px] font-semibold text-white/45">
-                    Автоудаление сообщений
-                  </p>
-                  {[
-                    { h: 0, label: "Выключено" },
-                    { h: 1, label: "1 час" },
-                    { h: 24, label: "24 часа" },
-                    { h: 168, label: "7 дней" },
-                  ].map((opt) => (
-                    <button
-                      key={opt.h}
-                      onClick={() => {
-                        setTimerOpen(false);
-                        void api(`/api/conversations/${conversationId}`, {
-                          method: "PATCH",
-                          body: JSON.stringify({ autoDeleteHours: opt.h }),
-                        })
-                          .then(() => {
-                            refreshConversations();
-                            notify(
-                              opt.h === 0
-                                ? "Автоудаление выключено"
-                                : `Новые сообщения будут удаляться через ${opt.label}`,
-                            );
-                          })
-                          .catch((e) =>
-                            notify(e instanceof Error ? e.message : "Не удалось изменить таймер"),
-                          );
-                      }}
-                      className={`flex w-full items-center justify-between rounded-xl px-3 py-2 text-[13px] transition-colors hover:bg-white/10 ${
-                        (autoDeleteHours ?? 0) === opt.h ? "text-sky-300" : "text-white/75"
-                      }`}
-                    >
-                      {opt.label}
-                      {(autoDeleteHours ?? 0) === opt.h && <Check className="h-4 w-4" />}
-                    </button>
-                  ))}
-                </div>
-              </>
-            )}
-          </div>
           {!isSaved && kind !== "channel" && (
             <>
               <button
@@ -1793,15 +1581,6 @@ ${x.text}` : x.text));
                   >
                     <ChevronRight className="h-3.5 w-3.5" />
                   </button>
-                  {pinned.length > 1 && (
-                    <button
-                      onClick={() => setPinnedListOpen(true)}
-                      className="ml-1 rounded-full bg-white/10 px-2 py-0.5 text-[10px] font-semibold hover:bg-white/20"
-                      title="Все закреплённые"
-                    >
-                      Список
-                    </button>
-                  )}
                 </span>
               )}
               {canPinMessage(pinnedCurrent) && (
@@ -1838,7 +1617,7 @@ ${x.text}` : x.text));
                   onKeyDown={(e) => {
                     if (e.key === "Escape") setSearchOpen(false);
                   }}
-                  placeholder="Поиск… или from:имя, чтобы найти сообщения человека"
+                  placeholder="Поиск по чату…"
                   maxLength={100}
                   className="ring-focus w-full rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-sm transition-all placeholder:text-white/30"
                 />
@@ -1851,33 +1630,9 @@ ${x.text}` : x.text));
                   <X className="h-4 w-4" />
                 </button>
               </div>
-              {/* Фильтры по типу содержимого */}
-              <div className="mt-2 flex items-center gap-1.5">
-                {(
-                  [
-                    ["all", "Все"],
-                    ["photo", "Фото"],
-                    ["file", "Файлы"],
-                    ["voice", "Голосовые"],
-                    ["link", "Ссылки"],
-                  ] as const
-                ).map(([id, label]) => (
-                  <button
-                    key={id}
-                    onClick={() => setSearchTab(id)}
-                    className={`rounded-full px-3 py-1 text-[11px] font-semibold transition-colors ${
-                      searchTab === id
-                        ? "bg-sky-400/20 text-sky-200"
-                        : "bg-white/5 text-white/45 hover:bg-white/10 hover:text-white/75"
-                    }`}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
-              {searchHits && searchHits.filter(hitTab).length > 0 && (
+              {searchHits && searchHits.length > 0 && (
                 <div className="nice-scroll mt-2 max-h-64 space-y-0.5 overflow-y-auto">
-                  {searchHits.filter(hitTab).map((h) => (
+                  {searchHits.map((h) => (
                     <button
                       key={h.id}
                       onClick={() => {
@@ -1897,7 +1652,7 @@ ${x.text}` : x.text));
                   ))}
                 </div>
               )}
-              {searchHits && searchHits.filter(hitTab).length === 0 && !searching && searchQuery.trim().length > 0 && (
+              {searchHits && searchHits.length === 0 && !searching && searchQuery.trim().length > 0 && (
                 <p className="px-2 pt-2 text-xs text-white/40">Ничего не найдено</p>
               )}
             </div>
@@ -2001,26 +1756,12 @@ ${x.text}` : x.text));
               const mentionMe =
                 !own && m.type === "text" && m.content.toLowerCase().includes(`@${me.username.toLowerCase()}`);
 
-              const isSel = selectedIds.has(m.id);
               return (
                 <div
                   key={m.id}
                   data-mid={m.id}
-                  onClick={selectMode ? () => toggleSelect(m.id) : undefined}
-                  className={`${mentionMe ? "rounded-xl bg-[#5865f2]/10 ring-1 ring-[#5865f2]/25" : ""} ${
-                    selectMode ? `cursor-pointer rounded-xl px-1 ${isSel ? "bg-[#5865f2]/15 ring-1 ring-[#5865f2]/40" : "hover:bg-white/5"}` : ""
-                  }`}
+                  className={mentionMe ? "rounded-xl bg-[#5865f2]/10 ring-1 ring-[#5865f2]/25" : undefined}
                 >
-                  {selectMode && (
-                    <span
-                      className={`absolute z-10 mt-3 ml-1 grid h-5 w-5 place-items-center rounded-full border transition-colors ${
-                        isSel ? "border-[#5865f2] bg-[#5865f2] text-white" : "border-white/30 bg-black/30"
-                      }`}
-                      aria-hidden
-                    >
-                      {isSel && <Check className="h-3 w-3" />}
-                    </span>
-                  )}
                   {unreadBefore === m.id && (
                     <div className="flex items-center gap-3 py-2">
                       <span className="h-px flex-1 bg-rose-400/30" />
@@ -2065,8 +1806,6 @@ ${x.text}` : x.text));
                       onMenu={openContextMenu}
                       onJump={jumpTo}
                       onViewUser={onViewUser}
-                      onVote={votePoll}
-                      onDoubleTap={selectMode ? undefined : () => void toggleReaction(m.id, "❤️")}
                     />
                   )}
                 </div>
@@ -2158,15 +1897,6 @@ ${x.text}` : x.text));
                         </span>
                         {d.preview && (
                           <button
-                            onClick={() => setEditingDraft(d)}
-                            className="rounded-full bg-black/60 p-1 text-white/70 transition-colors hover:text-white"
-                            title="Повернуть фото"
-                          >
-                            <RotateCw className="h-3.5 w-3.5" />
-                          </button>
-                        )}
-                        {d.preview && (
-                          <button
                             onClick={() =>
                               setDraftFiles((cur) =>
                                 cur.map((x) => (x.id === d.id ? { ...x, spoiler: !x.spoiler } : x)),
@@ -2211,18 +1941,7 @@ ${x.text}` : x.text));
                   <span className="text-white/50 tabular-nums">
                     {new Date(x.at).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" })}
                   </span>
-                  <button
-                    onClick={() => {
-                      // клик — забрать текст обратно в поле ввода и убрать из очереди
-                      setText((cur) => (cur ? `${cur} ${x.text}` : x.text));
-                      setScheduled((cur) => cur.filter((y) => y.id !== x.id));
-                      inputRef.current?.focus();
-                    }}
-                    className="min-w-0 flex-1 truncate text-left text-white/65 hover:text-white/90"
-                    title="Вернуть в поле ввода"
-                  >
-                    {x.text}
-                  </button>
+                  <span className="min-w-0 flex-1 truncate text-white/65">{x.text}</span>
                   <button
                     onClick={() => setScheduled((cur) => cur.filter((y) => y.id !== x.id))}
                     className="text-white/30 hover:text-rose-300"
@@ -2658,120 +2377,6 @@ ${x.text}` : x.text));
       </AnimatePresence>
 
       <AnimatePresence>
-        {readsFor && (
-          <ReadsModal key="reads" message={readsFor} onClose={() => setReadsFor(null)} />
-        )}
-        {reactionsFor && (
-          <ReactionsModal key="reactions" message={reactionsFor} onClose={() => setReactionsFor(null)} />
-        )}
-        {historyFor && (
-          <HistoryModal key="history" message={historyFor} onClose={() => setHistoryFor(null)} />
-        )}
-        {editingDraft && (
-          <ImageEditorModal
-            key="imgedit"
-            file={editingDraft.file}
-            onApply={(newFile) => {
-              setDraftFiles((cur) =>
-                cur.map((x) =>
-                  x.id === editingDraft.id
-                    ? { ...x, file: newFile, preview: URL.createObjectURL(newFile) }
-                    : x,
-                ),
-              );
-              setEditingDraft(null);
-            }}
-            onClose={() => setEditingDraft(null)}
-          />
-        )}
-        {pollOpen && (
-          <PollCreateModal
-            key="poll"
-            onCreate={(q, opts) => {
-              const payload = JSON.stringify({
-                poll: { q, opts: opts.map((t) => ({ t, v: [] as string[] })) },
-              });
-              void api(`/api/conversations/${conversationId}/messages`, {
-                method: "POST",
-                body: JSON.stringify({ content: payload, replyToId: replyTo?.id ?? undefined }),
-              })
-                .then(() => {
-                  setReplyTo(null);
-                  load();
-                  refreshConversations();
-                })
-                .catch((e) =>
-                  notify(e instanceof Error ? e.message : "Не удалось отправить опрос"),
-                );
-            }}
-            onClose={() => setPollOpen(false)}
-          />
-        )}
-
-        {pinnedListOpen && (
-          <motion.div
-            key="pinned-list"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            onClick={() => setPinnedListOpen(false)}
-            className="fixed inset-0 z-[80] grid place-items-center bg-black/70 p-4 backdrop-blur-sm"
-          >
-            <motion.div
-              initial={{ opacity: 0, scale: 0.94, y: 16 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.96, y: 12 }}
-              onClick={(e) => e.stopPropagation()}
-              className="glass-strong w-full max-w-md overflow-hidden rounded-[1.8rem] shadow-2xl"
-            >
-              <div className="flex items-center justify-between border-b border-white/8 px-6 py-4">
-                <h3 className="font-display text-lg font-bold">Закреплённые · {pinned.length}</h3>
-                <button
-                  onClick={() => setPinnedListOpen(false)}
-                  className="rounded-full bg-white/5 p-2 text-white/60 transition-colors hover:bg-white/10"
-                >
-                  <X className="h-4 w-4" />
-                </button>
-              </div>
-              <div className="nice-scroll max-h-[55vh] space-y-1 overflow-y-auto p-3">
-                {pinned.map((m) => (
-                  <button
-                    key={m.id}
-                    onClick={() => {
-                      setPinnedListOpen(false);
-                      jumpTo(m.id);
-                    }}
-                    className="flex w-full items-start gap-2.5 rounded-xl border border-white/8 bg-white/[0.03] px-3 py-2.5 text-left transition-colors hover:bg-white/8"
-                  >
-                    <Pin className="mt-0.5 h-3.5 w-3.5 shrink-0 text-slate-400" />
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-[12px] font-semibold text-white/60">
-                        {m.senderId === me.id ? "Вы" : (m.sender?.displayName ?? "Участник")} · {timeHHmm(m.createdAt)}
-                      </span>
-                      <span className="block truncate text-[13px] text-white/80">
-                        <PreviewLabel type={m.type} content={m.content} iconClassName="h-3 w-3" />
-                      </span>
-                    </span>
-                  </button>
-                ))}
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-
-        {forwardingList && (
-          <ForwardModal
-            key="forward-list"
-            message={forwardingList[0]}
-            messages={forwardingList}
-            onClose={() => {
-              setForwardingList(null);
-              setSelectedIds(new Set());
-            }}
-            notify={notify}
-          />
-        )}
-
         {forwarding && (
           <ForwardModal
             key="forward"
@@ -2925,53 +2530,6 @@ ${x.text}` : x.text));
               void saveToSaved(ctxMenu.message);
               setCtxMenu(null);
             }}
-            onSelect={() => {
-              toggleSelect(ctxMenu.message.id);
-              setCtxMenu(null);
-            }}
-            onReads={
-              ctxMenu.message.senderId === me.id && kind !== "channel"
-                ? () => {
-                    setReadsFor(ctxMenu.message);
-                    setCtxMenu(null);
-                  }
-                : undefined
-            }
-            onCopyLink={() => {
-              const url = `${window.location.origin}${window.location.pathname}#msg=${ctxMenu.message.id}`;
-              void navigator.clipboard.writeText(url).then(
-                () => notify("Ссылка на сообщение скопирована"),
-                () => notify("Не удалось скопировать ссылку"),
-              );
-              setCtxMenu(null);
-            }}
-            onCopyText={
-              ctxMenu.message.type === "text" && ctxMenu.message.content.trim()
-                ? () => {
-                    void navigator.clipboard.writeText(ctxMenu.message.content).then(
-                      () => notify("Текст скопирован"),
-                      () => notify("Не удалось скопировать"),
-                    );
-                    setCtxMenu(null);
-                  }
-                : undefined
-            }
-            onReactions={
-              (ctxMenu.message.reactions?.length ?? 0) > 0
-                ? () => {
-                    setReactionsFor(ctxMenu.message);
-                    setCtxMenu(null);
-                  }
-                : undefined
-            }
-            onHistory={
-              ctxMenu.message.editedAt
-                ? () => {
-                    setHistoryFor(ctxMenu.message);
-                    setCtxMenu(null);
-                  }
-                : undefined
-            }
             onDelete={() => {
               requestDelete(ctxMenu.message);
               setCtxMenu(null);
@@ -3047,12 +2605,6 @@ function MessageContextMenu({
   onCopy,
   onForward,
   onSave,
-  onSelect,
-  onReads,
-  onCopyLink,
-  onReactions,
-  onCopyText,
-  onHistory,
   onDelete,
 }: {
   state: ContextMenuState;
@@ -3068,18 +2620,6 @@ function MessageContextMenu({
   onForward: () => void;
   /** Быстрое сохранение в «Избранное». */
   onSave: () => void;
-  /** Включить мультивыбор с этого сообщения. */
-  onSelect: () => void;
-  /** «Кто прочитал» (только для своих сообщений). */
-  onReads?: () => void;
-  /** Скопировать ссылку на сообщение. */
-  onCopyLink: () => void;
-  /** «Кто отреагировал». */
-  onReactions?: () => void;
-  /** История правок сообщения. */
-  onHistory?: () => void;
-  /** Скопировать текст сообщения. */
-  onCopyText?: () => void;
   onDelete: () => void;
 }) {
   const m = state.message;
@@ -3180,44 +2720,6 @@ function MessageContextMenu({
         label="В Избранное"
         onClick={onSave}
       />
-      <ContextItem
-        icon={<CheckCheck className="h-4 w-4 text-slate-400" />}
-        label="Выбрать несколько"
-        onClick={onSelect}
-      />
-      {onReads && (
-        <ContextItem
-          icon={<Eye className="h-4 w-4 text-slate-400" />}
-          label="Кто прочитал"
-          onClick={onReads}
-        />
-      )}
-      <ContextItem
-        icon={<Link2 className="h-4 w-4 text-slate-400" />}
-        label="Ссылка на сообщение"
-        onClick={onCopyLink}
-      />
-      {onCopyText && (
-        <ContextItem
-          icon={<Copy className="h-4 w-4 text-slate-400" />}
-          label="Копировать текст"
-          onClick={onCopyText}
-        />
-      )}
-      {onReactions && (
-        <ContextItem
-          icon={<Smile className="h-4 w-4 text-slate-400" />}
-          label="Кто отреагировал"
-          onClick={onReactions}
-        />
-      )}
-      {onHistory && (
-        <ContextItem
-          icon={<History className="h-4 w-4 text-slate-400" />}
-          label="История правок"
-          onClick={onHistory}
-        />
-      )}
       {canDelete && (
         <ContextItem icon={<Trash2 className="h-4 w-4 text-rose-300" />} label="Удалить" onClick={onDelete} danger />
       )}
@@ -3254,13 +2756,10 @@ function ContextItem({
 
 function ForwardModal({
   message,
-  messages,
   onClose,
   notify,
 }: {
   message: ChatMessage;
-  /** Пересылка сразу нескольких выбранных сообщений. */
-  messages?: ChatMessage[];
   onClose: () => void;
   notify: (msg: string) => void;
 }) {
@@ -3277,19 +2776,16 @@ function ForwardModal({
     if (sendingTo) return;
     setSendingTo(conv.id);
     try {
-      const list = messages && messages.length > 0 ? messages : [message];
-      for (const m of list) {
-        await api("/api/messages", {
-          method: "POST",
-          body: JSON.stringify({
-            conversationId: conv.id,
-            type: m.type === "call" ? "text" : m.type,
-            content: m.content,
-            replyToId: null,
-          }),
-        });
-      }
-      notify(list.length > 1 ? `Переслано ${list.length} сообщ. в «${conv.title}»` : `Переслано в «${conv.title}»`);
+      await api("/api/messages", {
+        method: "POST",
+        body: JSON.stringify({
+          conversationId: conv.id,
+          type: message.type === "call" ? "text" : message.type,
+          content: message.content,
+          replyToId: null,
+        }),
+      });
+      notify(`Переслано в «${conv.title}»`);
       onClose();
     } catch (e) {
       notify(e instanceof Error ? e.message : "Не удалось переслать");
@@ -3313,7 +2809,7 @@ function ForwardModal({
         className="glass-strong w-full max-w-md overflow-hidden rounded-[1.8rem] shadow-2xl"
       >
         <div className="flex items-center justify-between border-b border-white/8 px-6 py-4">
-          <h3 className="font-display text-lg font-bold">{messages && messages.length > 1 ? `Переслать ${messages.length} сообщ.` : "Переслать сообщение"}</h3>
+          <h3 className="font-display text-lg font-bold">Переслать сообщение</h3>
           <button onClick={onClose} className="rounded-full bg-white/5 p-2 text-white/60 transition-colors hover:bg-white/10">
             <X className="h-4 w-4" />
           </button>
@@ -3739,8 +3235,6 @@ function MessageBubble({
   onOpenUsername,
   onJump,
   onViewUser,
-  onVote,
-  onDoubleTap,
 }: {
   message: ChatMessage;
   /** id текущего пользователя — чтобы в цитате писать «Вы», а не имя. */
@@ -3765,25 +3259,8 @@ function MessageBubble({
   onOpenUsername?: (name: string) => void;
   onJump: (id: string) => void;
   onViewUser: (u: PublicUser) => void;
-  /** Голос в опросе: (сообщение, индекс варианта). */
-  onVote: (message: ChatMessage, option: number) => void;
-  /** Двойной клик — быстрая реакция сердечком. */
-  onDoubleTap?: () => void;
 }) {
   const sender = message.sender;
-
-  /** Опросы хранятся как JSON в тексте: { poll: { q, opts: [{ t, v: [userIds] }] } }. */
-  let poll: { q: string; opts: { t: string; v: string[] }[] } | null = null;
-  if (message.type === "text" && message.content.trimStart().startsWith("{")) {
-    try {
-      const parsed: unknown = JSON.parse(message.content);
-      const maybe = parsed as { poll?: { q: string; opts: { t: string; v: string[] }[] } };
-      if (maybe.poll && typeof maybe.poll.q === "string" && Array.isArray(maybe.poll.opts))
-        poll = maybe.poll;
-    } catch {
-      poll = null;
-    }
-  }
   const alignRight = own && !space;
   // Редактируется только текст: у картинок/файлов/гифок-стикеров содержимое —
   // JSON-вложение, правка «как текста» ломала его (баг «изменено, но пусто»).
@@ -3856,7 +3333,7 @@ function MessageBubble({
         e.preventDefault();
         onMenu(e.clientX, e.clientY, message);
       }}
-      onDoubleClick={() => (onDoubleTap ? onDoubleTap() : onReply())}
+      onDoubleClick={() => onReply()}
       onTouchStart={onTouchStart}
       onTouchMove={onTouchMove}
       onTouchEnd={onTouchEnd}
@@ -3958,8 +3435,6 @@ function MessageBubble({
           ) : sticker ? (
             /* «Стикер»: только эмодзи — крупно, без пузыря (как в мессенджерах) */
             <p className="py-0.5 text-[52px] leading-none select-none">{message.content.trim()}</p>
-          ) : poll ? (
-            <PollBubble poll={poll} meId={meId} onVote={(i) => onVote(message, i)} />
           ) : (
             <LongText content={message.content} meUsername={meUsername} onOpenUsername={onOpenUsername} />
           )}
@@ -4741,479 +4216,5 @@ function EmojiPicker({
         </>
       )}
     </div>
-  );
-}
-
-
-/** «Кто прочитал» — список участников и статус для выбранного сообщения. */
-function ReadsModal({ message, onClose }: { message: ChatMessage; onClose: () => void }) {
-  const [readers, setReaders] = useState<
-    { user: { id: string; displayName: string; username: string; avatarUrl: string | null; online: boolean }; read: boolean }[] | null
-  >(null);
-  const [error, setError] = useState("");
-
-  useEffect(() => {
-    api<{ readers: { user: { id: string; displayName: string; username: string; avatarUrl: string | null; online: boolean }; read: boolean }[] }>(
-      `/api/messages/${message.id}`,
-    )
-      .then((d) => setReaders(d.readers))
-      .catch((e) => setError(e instanceof Error ? e.message : "Не удалось загрузить"));
-  }, [message.id]);
-
-  const readCount = readers?.filter((r) => r.read).length ?? 0;
-
-  return (
-    <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
-      onClick={onClose}
-      className="fixed inset-0 z-[80] grid place-items-center bg-black/70 p-4 backdrop-blur-sm"
-    >
-      <motion.div
-        initial={{ opacity: 0, scale: 0.94, y: 16 }}
-        animate={{ opacity: 1, scale: 1, y: 0 }}
-        exit={{ opacity: 0, scale: 0.96, y: 12 }}
-        onClick={(e) => e.stopPropagation()}
-        className="glass-strong w-full max-w-sm overflow-hidden rounded-[1.8rem] shadow-2xl"
-      >
-        <div className="flex items-center justify-between border-b border-white/8 px-6 py-4">
-          <h3 className="font-display text-lg font-bold">Кто прочитал</h3>
-          <button onClick={onClose} className="rounded-full bg-white/5 p-2 text-white/60 transition-colors hover:bg-white/10">
-            <X className="h-4 w-4" />
-          </button>
-        </div>
-        <div className="nice-scroll max-h-[50vh] overflow-y-auto p-3">
-          {error && <p className="px-3 py-4 text-center text-sm text-rose-300">{error}</p>}
-          {!error && readers === null && (
-            <p className="flex justify-center py-6">
-              <Loader2 className="h-5 w-5 animate-spin text-white/40" />
-            </p>
-          )}
-          {readers !== null && (
-            <>
-              <p className="px-3 pb-2 text-[11px] text-white/35">
-                Прочитали {readCount} из {readers.length}
-              </p>
-              {readers.map((r) => (
-                <div key={r.user.id} className="flex items-center gap-2.5 rounded-xl px-3 py-2">
-                  <Avatar name={r.user.displayName} src={r.user.avatarUrl} size={30} online={r.user.online} />
-                  <span className="min-w-0 flex-1 truncate text-sm font-medium">{r.user.displayName}</span>
-                  {r.read ? (
-                    <span className="flex items-center gap-1 text-[11px] text-emerald-300">
-                      <CheckCheck className="h-3.5 w-3.5" /> прочитано
-                    </span>
-                  ) : (
-                    <span className="flex items-center gap-1 text-[11px] text-white/30">
-                      <Clock className="h-3.5 w-3.5" /> не прочитано
-                    </span>
-                  )}
-                </div>
-              ))}
-              {readers.length === 0 && (
-                <p className="px-3 py-4 text-center text-sm text-white/35">В чате больше никого нет</p>
-              )}
-            </>
-          )}
-        </div>
-      </motion.div>
-    </motion.div>
-  );
-}
-
-
-/** Опрос: вопрос, варианты с прогресс-барами и голосованием кликом. */
-function PollBubble({
-  poll,
-  meId,
-  onVote,
-}: {
-  poll: { q: string; opts: { t: string; v: string[] }[] };
-  meId: string;
-  onVote: (option: number) => void;
-}) {
-  const total = poll.opts.reduce((s, o) => s + o.v.length, 0);
-  return (
-    <div className="min-w-56 py-1">
-      <div className="mb-2 flex items-center gap-1.5">
-        <BarChart3 className="h-4 w-4 text-white/45" />
-        <span className="msg-text font-semibold">{poll.q}</span>
-      </div>
-      <div className="space-y-1.5">
-        {poll.opts.map((o, i) => {
-          const mine = o.v.includes(meId);
-          const pct = total > 0 ? Math.round((o.v.length / total) * 100) : 0;
-          return (
-            <button
-              key={i}
-              onClick={() => onVote(i)}
-              title={mine ? "Снять голос" : "Голосовать"}
-              className="block w-full overflow-hidden rounded-xl border border-white/10 bg-white/5 text-left transition-colors hover:bg-white/10"
-            >
-              <div className="relative flex items-center gap-2 px-3 py-2">
-                <span
-                  className="absolute inset-y-0 left-0 bg-sky-400/15"
-                  style={{ width: `${pct}%` }}
-                />
-                {mine ? (
-                  <CheckCheck className="relative h-4 w-4 shrink-0 text-sky-300" />
-                ) : (
-                  <span className="relative h-4 w-4 shrink-0 rounded-full border border-white/25" />
-                )}
-                <span className="msg-text relative min-w-0 flex-1 truncate text-[13px]">{o.t}</span>
-                <span className="relative text-[11px] font-semibold text-white/45">
-                  {o.v.length} · {pct}%
-                </span>
-              </div>
-            </button>
-          );
-        })}
-      </div>
-      <p className="mt-1.5 text-[11px] text-white/35">
-        Проголосовало: {total}
-        {poll.opts.some((o) => o.v.includes(meId))
-          ? " · повторный клик снимает голос"
-          : " · нажмите на вариант, чтобы проголосовать"}
-      </p>
-    </div>
-  );
-}
-
-
-/** Создание опроса: вопрос + от двух до пяти вариантов. */
-function PollCreateModal({
-  onCreate,
-  onClose,
-}: {
-  onCreate: (question: string, options: string[]) => void;
-  onClose: () => void;
-}) {
-  const [q, setQ] = useState("");
-  const [opts, setOpts] = useState<string[]>(["", ""]);
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
-
-  const cleaned = opts.map((o) => o.trim()).filter(Boolean);
-  const ok = q.trim().length > 0 && cleaned.length >= 2;
-
-  return (
-    <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
-      onClick={onClose}
-      className="fixed inset-0 z-[70] grid place-items-center bg-black/60 p-4 backdrop-blur-sm"
-    >
-      <motion.div
-        initial={{ opacity: 0, scale: 0.96, y: 12 }}
-        animate={{ opacity: 1, scale: 1, y: 0 }}
-        exit={{ opacity: 0, scale: 0.96 }}
-        onClick={(e) => e.stopPropagation()}
-        className="glass-strong w-full max-w-md rounded-[1.8rem] p-6 shadow-2xl"
-      >
-        <div className="flex items-center justify-between">
-          <h3 className="font-display text-lg font-bold">Опрос</h3>
-          <button onClick={onClose} className="rounded-full bg-white/5 p-2 text-white/60 transition-colors hover:bg-white/10">
-            <X className="h-4 w-4" />
-          </button>
-        </div>
-        <input
-          autoFocus
-          value={q}
-          onChange={(e) => setQ(e.target.value.slice(0, 300))}
-          placeholder="Вопрос опроса…"
-          className="mt-4 w-full rounded-2xl border border-white/12 bg-white/6 px-4 py-3 text-sm placeholder-white/30 outline-none focus:border-white/25"
-        />
-        <div className="mt-3 space-y-2">
-          {opts.map((o, i) => (
-            <div key={i} className="flex items-center gap-2">
-              <input
-                value={o}
-                onChange={(e) =>
-                  setOpts((cur) => cur.map((x, j) => (j === i ? e.target.value.slice(0, 100) : x)))
-                }
-                placeholder={`Вариант ${i + 1}`}
-                className="min-w-0 flex-1 rounded-xl border border-white/10 bg-white/5 px-3.5 py-2.5 text-sm placeholder-white/30 outline-none focus:border-white/25"
-              />
-              {opts.length > 2 && (
-                <button
-                  onClick={() => setOpts((cur) => cur.filter((_, j) => j !== i))}
-                  title="Убрать вариант"
-                  className="rounded-lg bg-white/5 p-2 text-white/45 transition-colors hover:bg-rose-500/15 hover:text-rose-300"
-                >
-                  <X className="h-4 w-4" />
-                </button>
-              )}
-            </div>
-          ))}
-        </div>
-        {opts.length < 5 && (
-          <button
-            onClick={() => setOpts((cur) => [...cur, ""])}
-            className="mt-2.5 flex items-center gap-1.5 text-[12px] font-semibold text-sky-300 transition-colors hover:text-sky-200"
-          >
-            <Plus className="h-3.5 w-3.5" /> Добавить вариант
-          </button>
-        )}
-        <button
-          onClick={() => ok && onCreate(q.trim(), cleaned)}
-          disabled={!ok}
-          className="mt-5 w-full rounded-2xl bg-gradient-to-r from-sky-400 to-indigo-400 py-3 text-sm font-bold text-white shadow-lg shadow-sky-500/20 transition-transform hover:scale-[1.01] disabled:opacity-30"
-        >
-          Отправить опрос
-        </button>
-      </motion.div>
-    </motion.div>
-  );
-}
-
-
-/** «Кто отреагировал» — пользователи, сгруппированные по эмодзи. */
-function ReactionsModal({ message, onClose }: { message: ChatMessage; onClose: () => void }) {
-  const [groups, setGroups] = useState<{ emoji: string; users: PublicUser[] }[] | null>(null);
-
-  useEffect(() => {
-    api<{ reactions: { emoji: string; users: PublicUser[] }[] }>(
-      `/api/messages/${message.id}/reactions`,
-    )
-      .then((d) => setGroups(d.reactions))
-      .catch(() => setGroups([]));
-  }, [message.id]);
-
-  return (
-    <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
-      onClick={onClose}
-      className="fixed inset-0 z-[80] grid place-items-center bg-black/70 p-4 backdrop-blur-sm"
-    >
-      <motion.div
-        initial={{ opacity: 0, scale: 0.94, y: 16 }}
-        animate={{ opacity: 1, scale: 1, y: 0 }}
-        exit={{ opacity: 0, scale: 0.96, y: 12 }}
-        onClick={(e) => e.stopPropagation()}
-        className="glass-strong w-full max-w-sm overflow-hidden rounded-[1.8rem] shadow-2xl"
-      >
-        <div className="flex items-center justify-between border-b border-white/8 px-6 py-4">
-          <h3 className="font-display text-lg font-bold">Реакции</h3>
-          <button onClick={onClose} className="rounded-full bg-white/5 p-2 text-white/60 transition-colors hover:bg-white/10">
-            <X className="h-4 w-4" />
-          </button>
-        </div>
-        <div className="nice-scroll max-h-[50vh] overflow-y-auto p-3">
-          {groups === null && (
-            <p className="flex justify-center py-6">
-              <Loader2 className="h-5 w-5 animate-spin text-white/40" />
-            </p>
-          )}
-          {groups !== null && groups.length === 0 && (
-            <p className="px-3 py-4 text-center text-sm text-white/35">Реакций нет</p>
-          )}
-          {groups?.map((g) => (
-            <div key={g.emoji} className="mb-2">
-              <p className="px-3 py-1.5 text-[12px] font-semibold text-white/45">
-                {g.emoji} · {g.users.length}
-              </p>
-              {g.users.map((u) => (
-                <div key={u.id} className="flex items-center gap-2.5 rounded-xl px-3 py-1.5">
-                  <Avatar name={u.displayName} src={u.avatarUrl} size={30} online={u.online} />
-                  <span className="min-w-0 flex-1 truncate text-sm font-medium">{u.displayName}</span>
-                  <span className="truncate text-[11px] text-white/30">@{u.username}</span>
-                </div>
-              ))}
-            </div>
-          ))}
-        </div>
-      </motion.div>
-    </motion.div>
-  );
-}
-
-
-/** Поворот фото перед отправкой: предпросмотр с поворотами на 90° и применение. */
-function ImageEditorModal({
-  file,
-  onApply,
-  onClose,
-}: {
-  file: File;
-  onApply: (newFile: File) => void;
-  onClose: () => void;
-}) {
-  const [url] = useState(() => URL.createObjectURL(file));
-  const [angle, setAngle] = useState(0);
-  const imgRef = useRef<HTMLImageElement | null>(null);
-  const [busy, setBusy] = useState(false);
-
-  useEffect(() => () => URL.revokeObjectURL(url), [url]);
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
-
-  const apply = () => {
-    const img = imgRef.current;
-    if (!img) return;
-    setBusy(true);
-    const rad = (angle * Math.PI) / 180;
-    const swap = angle % 180 !== 0;
-    const canvas = document.createElement("canvas");
-    canvas.width = swap ? img.naturalHeight : img.naturalWidth;
-    canvas.height = swap ? img.naturalWidth : img.naturalHeight;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) {
-      setBusy(false);
-      return;
-    }
-    ctx.translate(canvas.width / 2, canvas.height / 2);
-    ctx.rotate(rad);
-    ctx.drawImage(img, -img.naturalWidth / 2, -img.naturalHeight / 2);
-    canvas.toBlob(
-      (blob) => {
-        setBusy(false);
-        if (!blob) return;
-        const name = file.name.replace(/\.[^.]+$/, "") + "-edited.jpg";
-        onApply(new File([blob], name, { type: "image/jpeg" }));
-      },
-      "image/jpeg",
-      0.92,
-    );
-  };
-
-  return (
-    <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
-      onClick={onClose}
-      className="fixed inset-0 z-[80] grid place-items-center bg-black/75 p-4 backdrop-blur-sm"
-    >
-      <motion.div
-        initial={{ opacity: 0, scale: 0.94, y: 16 }}
-        animate={{ opacity: 1, scale: 1, y: 0 }}
-        exit={{ opacity: 0, scale: 0.96, y: 12 }}
-        onClick={(e) => e.stopPropagation()}
-        className="glass-strong w-full max-w-lg overflow-hidden rounded-[1.8rem] shadow-2xl"
-      >
-        <div className="flex items-center justify-between border-b border-white/8 px-6 py-4">
-          <h3 className="font-display text-lg font-bold">Повернуть фото</h3>
-          <button onClick={onClose} className="rounded-full bg-white/5 p-2 text-white/60 transition-colors hover:bg-white/10">
-            <X className="h-4 w-4" />
-          </button>
-        </div>
-        <div className="grid place-items-center bg-black/30 p-6">
-          <div className="overflow-hidden">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              ref={imgRef}
-              src={url}
-              alt="Редактирование"
-              crossOrigin="anonymous"
-              className="max-h-[40vh] max-w-full object-contain transition-transform duration-300"
-              style={{ transform: `rotate(${angle}deg)` }}
-              draggable={false}
-            />
-          </div>
-        </div>
-        <div className="flex items-center gap-2.5 border-t border-white/8 px-6 py-4">
-          <button
-            onClick={() => setAngle((a) => a - 90)}
-            className="glass flex items-center gap-1.5 rounded-xl px-3.5 py-2.5 text-sm text-white/75 transition-colors hover:bg-white/10"
-            title="Повернуть влево"
-          >
-            <RotateCw className="h-4 w-4 -scale-x-100" /> Влево
-          </button>
-          <button
-            onClick={() => setAngle((a) => a + 90)}
-            className="glass flex items-center gap-1.5 rounded-xl px-3.5 py-2.5 text-sm text-white/75 transition-colors hover:bg-white/10"
-            title="Повернуть вправо"
-          >
-            <RotateCw className="h-4 w-4" /> Вправо
-          </button>
-          <button
-            onClick={apply}
-            disabled={busy || angle % 360 === 0}
-            className="ml-auto rounded-xl bg-gradient-to-r from-sky-400 to-indigo-400 px-5 py-2.5 text-sm font-bold text-white shadow-lg shadow-sky-500/20 transition-transform hover:scale-[1.02] disabled:opacity-30"
-          >
-            {busy ? "Сохраняю…" : "Применить"}
-          </button>
-        </div>
-      </motion.div>
-    </motion.div>
-  );
-}
-
-
-/** История правок: старые версии текста сообщения. */
-function HistoryModal({ message, onClose }: { message: ChatMessage; onClose: () => void }) {
-  const [data, setData] = useState<{
-    current: string;
-    versions: { content: string; createdAt: string }[];
-  } | null>(null);
-
-  useEffect(() => {
-    api<{ current: string; versions: { content: string; createdAt: string }[] }>(
-      `/api/messages/${message.id}/history`,
-    )
-      .then(setData)
-      .catch(() => setData({ current: "", versions: [] }));
-  }, [message.id]);
-
-  return (
-    <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
-      onClick={onClose}
-      className="fixed inset-0 z-[80] grid place-items-center bg-black/70 p-4 backdrop-blur-sm"
-    >
-      <motion.div
-        initial={{ opacity: 0, scale: 0.94, y: 16 }}
-        animate={{ opacity: 1, scale: 1, y: 0 }}
-        exit={{ opacity: 0, scale: 0.96, y: 12 }}
-        onClick={(e) => e.stopPropagation()}
-        className="glass-strong w-full max-w-md overflow-hidden rounded-[1.8rem] shadow-2xl"
-      >
-        <div className="flex items-center justify-between border-b border-white/8 px-6 py-4">
-          <h3 className="font-display text-lg font-bold">История правок</h3>
-          <button onClick={onClose} className="rounded-full bg-white/5 p-2 text-white/60 transition-colors hover:bg-white/10">
-            <X className="h-4 w-4" />
-          </button>
-        </div>
-        <div className="nice-scroll max-h-[55vh] overflow-y-auto p-4">
-          {data === null && (
-            <p className="flex justify-center py-6">
-              <Loader2 className="h-5 w-5 animate-spin text-white/40" />
-            </p>
-          )}
-          {data !== null && data.versions.length === 0 && (
-            <p className="py-4 text-center text-sm text-white/35">
-              Версий нет — сообщение ещё не меняли
-            </p>
-          )}
-          {data?.versions.map((v, i) => (
-            <div key={v.createdAt} className="mb-3 rounded-2xl border border-white/8 bg-white/4 p-3">
-              <p className="mb-1 flex items-center justify-between text-[11px] text-white/35">
-                <span>Версия {data.versions.length - i}</span>
-                <span>
-                  {dayLabel(v.createdAt)} {timeHHmm(v.createdAt)}
-                </span>
-              </p>
-              <p className="msg-text whitespace-pre-wrap break-words text-[13px]">{v.content}</p>
-            </div>
-          ))}
-        </div>
-      </motion.div>
-    </motion.div>
   );
 }

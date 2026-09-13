@@ -115,22 +115,7 @@ const INLINE_RULES: InlineRule[] = [
     re: /(^|[^a-zA-Z0-9_])@([a-zA-Z0-9_]{2,32})/,
     render: (m, meUsername, onMention) => {
       const name = m[2].toLowerCase();
-      // @all — обращение ко всем участникам чата (не кликается как профиль).
-      const isAll = name === "all";
       const mine = !!meUsername && name === meUsername.toLowerCase();
-      if (isAll) {
-        return (
-          <span key={`m-${m.index}`} className="inline">
-            {m[1]}
-            <span
-              title="Упоминание всех участников"
-              className="rounded-md bg-sky-400/20 px-1 py-px font-semibold text-sky-200"
-            >
-              @{m[2]}
-            </span>
-          </span>
-        );
-      }
       return (
         <span key={`m-${m.index}`} className="inline">
           {m[1]}

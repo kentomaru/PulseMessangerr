@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { db } from "@/db";
-import { conversationBans, conversations } from "@/db/schema";
-import { and, eq, or } from "drizzle-orm";
+import { conversations } from "@/db/schema";
+import { eq, or } from "drizzle-orm";
 import { isUuid, withApi } from "@/lib/api-helpers";
 import { ensureMember, serializeConversation } from "@/lib/conversations";
 
@@ -45,15 +45,6 @@ export const POST = withApi("conversations:join", async ({ req, me, log }) => {
 
   if (conv.kind === "direct")
     return NextResponse.json({ error: "Это личный чат" }, { status: 400 });
-
-  // Забаненные админами не могут вернуться по приглашению.
-  const banned = await db
-    .select({ userId: conversationBans.userId })
-    .from(conversationBans)
-    .where(and(eq(conversationBans.conversationId, conv.id), eq(conversationBans.userId, me.id)))
-    .limit(1);
-  if (banned.length > 0)
-    return NextResponse.json({ error: "Вы исключены из этого чата" }, { status: 403 });
 
   await ensureMember(conv.id, me.id, "member");
   log.info("Пользователь вступил в диалог", {

@@ -85,8 +85,6 @@ export const conversations = pgTable(
     /** Токен постоянной ссылки-приглашения: /#group=<token>. */
     inviteToken: text("invite_token").unique(),
     ownerId: uuid("owner_id").references(() => users.id, { onDelete: "set null" }),
-    /** Таймер автоудаления сообщений в часах (0 — выключен). */
-    autoDeleteHours: integer("auto_delete_hours").notNull().default(0),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [index("conversations_kind_idx").on(t.kind, t.isPrivate)],
@@ -117,40 +115,6 @@ export const conversationMembers = pgTable(
 );
 
 export type ConversationMember = typeof conversationMembers.$inferSelect;
-
-/** Забаненные в группе/канале: не могут писать и вступать по приглашению. */
-export const conversationBans = pgTable(
-  "conversation_bans",
-  {
-    conversationId: uuid("conversation_id")
-      .notNull()
-      .references(() => conversations.id, { onDelete: "cascade" }),
-    userId: uuid("user_id")
-      .notNull()
-      .references(() => users.id, { onDelete: "cascade" }),
-    bannedBy: uuid("banned_by").references(() => users.id, { onDelete: "set null" }),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-  },
-  (t) => [uniqueIndex("conversation_bans_key").on(t.conversationId, t.userId)],
-);
-
-export type ConversationBan = typeof conversationBans.$inferSelect;
-
-/** История правок сообщения: старые версии текста (до 10 на сообщение). */
-export const messageEdits = pgTable(
-  "message_edits",
-  {
-    id: uuid("id").primaryKey().defaultRandom(),
-    messageId: uuid("message_id")
-      .notNull()
-      .references(() => messages.id, { onDelete: "cascade" }),
-    content: text("content").notNull(),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-  },
-  (t) => [index("message_edits_msg_idx").on(t.messageId, t.createdAt)],
-);
-
-export type MessageEdit = typeof messageEdits.$inferSelect;
 
 /**
  * Звонки. Одна строка = одна «комната» на диалог: в ней может быть
@@ -287,8 +251,6 @@ export const messages = pgTable(
     replyToId: uuid("reply_to_id"),
     /** Тихое сообщение: без звука у получателей. */
     silent: boolean("silent").notNull().default(false),
-    /** Автоудаление: сообщение исчезает после этого времени. */
-    expiresAt: timestamp("expires_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
     editedAt: timestamp("edited_at", { withTimezone: true }),

@@ -73,11 +73,6 @@ export const PATCH = withApi<{ id: string }>("conversations:update", async ({ re
     patch.name = name;
   }
   if (typeof body.about === "string") patch.about = body.about.trim().slice(0, 280);
-  // Таймер автоудаления сообщений чата (часы; 0 — выключить).
-  if (typeof body.autoDeleteHours === "number") {
-    const h = Math.round(body.autoDeleteHours);
-    if (h >= 0 && h <= 24 * 30) patch.autoDeleteHours = h;
-  }
   if (typeof body.avatarUrl === "string" || body.avatarUrl === null)
     patch.avatarUrl = body.avatarUrl && String(body.avatarUrl).startsWith("/api/files/") ? body.avatarUrl : null;
   if (typeof body.isPrivate === "boolean") patch.isPrivate = body.isPrivate;

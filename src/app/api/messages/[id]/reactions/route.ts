@@ -1,18 +1,42 @@
 import { NextResponse } from "next/server";
 import { db } from "@/db";
-import { conversationMembers, messageReactions, messages, users } from "@/db/schema";
+import { conversationMembers, messageReactions, messages } from "@/db/schema";
 import { and, eq } from "drizzle-orm";
 import { isUuid, withApi } from "@/lib/api-helpers";
-import { publicUser } from "@/lib/auth";
+
+/** Разрешённые эмодзи (белый список, чтобы в базу не летел мусор). */
+const ALLOWED_EMOJI = new Set([
+  "👍",
+  "👎",
+  "❤️",
+  "😂",
+  "🔥",
+  "😮",
+  "😢",
+  "🎉",
+  "🤔",
+  "💯",
+  "🥰",
+  "😎",
+  "🫡",
+  "👀",
+]);
 
 /**
- * GET /api/messages/[id]/reactions — «кто отреагировал»:
- * список пользователей, сгруппированный по эмодзи.
+ * POST /api/messages/[id]/reactions { emoji } — поставить/снять реакцию.
+ * Повторный клик по той же реакции — снимает её (toggle, как в Discord).
  */
-export const GET = withApi<{ id: string }>("messages:reactions", async ({ params, me }) => {
+export const POST = withApi<{ id: string }>("messages:react", async ({ req, params, me }) => {
   const { id } = params;
   if (!isUuid(id)) return NextResponse.json({ error: "Сообщение не найдено" }, { status: 404 });
-  const [msg] = await db.select().from(messages).where(eq(messages.id, id)).limit(1);
+
+  const body = await req.json().catch(() => ({}));
+  const emoji = typeof body.emoji === "string" ? body.emoji : "";
+  if (!ALLOWED_EMOJI.has(emoji))
+    return NextResponse.json({ error: "Недопустимая реакция" }, { status: 400 });
+
+  const rows = await db.select().from(messages).where(eq(messages.id, id)).limit(1);
+  const msg = rows[0];
   if (!msg || msg.deletedAt)
     return NextResponse.json({ error: "Сообщение не найдено" }, { status: 404 });
 
@@ -26,22 +50,46 @@ export const GET = withApi<{ id: string }>("messages:reactions", async ({ params
       ),
     )
     .limit(1);
-  if (membership.length === 0)
-    return NextResponse.json({ error: "Нет доступа" }, { status: 403 });
+  if (!membership[0]) return NextResponse.json({ error: "Нет доступа" }, { status: 403 });
 
-  const rows = await db
-    .select({ reaction: messageReactions, user: users })
+  const existing = await db
+    .select()
     .from(messageReactions)
-    .innerJoin(users, eq(users.id, messageReactions.userId))
-    .where(eq(messageReactions.messageId, id));
+    .where(
+      and(
+        eq(messageReactions.messageId, id),
+        eq(messageReactions.userId, me.id),
+        eq(messageReactions.emoji, emoji),
+      ),
+    )
+    .limit(1);
 
-  const byEmoji = new Map<string, ReturnType<typeof publicUser>[]>();
-  for (const { reaction, user } of rows) {
-    const list = byEmoji.get(reaction.emoji) ?? [];
-    list.push(publicUser(user));
-    byEmoji.set(reaction.emoji, list);
+  if (existing[0]) {
+    await db
+      .delete(messageReactions)
+      .where(
+        and(
+          eq(messageReactions.messageId, id),
+          eq(messageReactions.userId, me.id),
+          eq(messageReactions.emoji, emoji),
+        ),
+      );
+  } else {
+    await db.insert(messageReactions).values({ messageId: id, userId: me.id, emoji });
   }
 
-  const reactions = [...byEmoji.entries()].map(([emoji, list]) => ({ emoji, users: list }));
-  return NextResponse.json({ reactions });
+  // возвращаем актуальную сводку реакций
+  const all = await db.select().from(messageReactions).where(eq(messageReactions.messageId, id));
+  const byEmoji = new Map<string, { count: number; mine: boolean }>();
+  for (const r of all) {
+    const cur = byEmoji.get(r.emoji) ?? { count: 0, mine: false };
+    cur.count += 1;
+    if (r.userId === me.id) cur.mine = true;
+    byEmoji.set(r.emoji, cur);
+  }
+  const reactions = Array.from(byEmoji.entries())
+    .map(([e, { count, mine }]) => ({ emoji: e, count, mine }))
+    .sort((a, b) => b.count - a.count);
+
+  return NextResponse.json({ reactions, active: !existing[0] });
 });

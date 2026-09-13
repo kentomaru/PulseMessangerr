@@ -43,8 +43,6 @@ export type ConversationInfo = {
   title: string;
   /** Юзернейм/токен приглашения (@имя) — видят только владелец и админы. */
   inviteToken?: string | null;
-  /** Таймер автоудаления сообщений чата (часы, 0 — выключен). */
-  autoDeleteHours?: number;
 };
 
 export type ConversationMemberItem = {
@@ -94,8 +92,6 @@ export type ConversationListItem = {
   activeCall: CallSummary | null;
   /** «Избранное» — личный чат с самим собой (сохранённые сообщения). */
   saved?: boolean;
-  /** Таймер автоудаления сообщений чата (часы, 0 — выключен). */
-  autoDeleteHours?: number;
 };
 
 export type ReplyPreview = {
