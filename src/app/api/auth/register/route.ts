@@ -19,9 +19,9 @@ export const POST = withPublicApi("auth/register", async ({ req, log }) => {
       { status: 400 },
     );
   }
-  if (password.length < 6) {
+  if (password.length < 8) {
     return NextResponse.json(
-      { error: "Пароль должен быть не короче 6 символов" },
+      { error: "Пароль должен быть не короче 8 символов" },
       { status: 400 },
     );
   }

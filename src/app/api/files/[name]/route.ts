@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createLogger } from "@/lib/logger";
+import { presignedGetUrl, storageEnabled } from "@/lib/storage";
 import { createReadStream, statSync, writeFileSync, mkdirSync } from "fs";
 import path from "path";
 import { Readable } from "stream";
@@ -125,6 +126,18 @@ export async function GET(
     // загружался, он продублирован в таблицу files.
     const restored = await restoreFromDb(name, filePath);
     if (!restored) {
+      // Ни на диске, ни в БД — файл может жить только в B2 (после редеплоя
+      // диск эфемерный, а в базу файлы >100 МБ не копируются). Редиректим
+      // на подписанную ссылку: Range/перемотку B2 обработает сам.
+      if (storageEnabled()) {
+        const url = await presignedGetUrl(name, name, mime, disposition);
+        if (url) {
+          return NextResponse.redirect(url, {
+            status: 302,
+            headers: { "Cache-Control": "private, max-age=0" },
+          });
+        }
+      }
       log.debug("Файл не найден", { name });
       return NextResponse.json({ error: "Не найден" }, { status: 404 });
     }

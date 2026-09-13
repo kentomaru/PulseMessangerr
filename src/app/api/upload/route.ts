@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionUser } from "@/lib/auth";
 import { createLogger } from "@/lib/logger";
+import { storageEnabled, uploadToStorage } from "@/lib/storage";
 import { randomUUID } from "crypto";
 import { mkdir, readFile } from "fs/promises";
 import { createWriteStream } from "fs";
@@ -168,8 +169,14 @@ export async function POST(req: NextRequest) {
         );
       }
 
-      // Копия в БД — чтобы файл пережил редеплой/рестарт контейнера.
-      if (written <= DB_MIRROR_MAX_BYTES) {
+      // Основное хранилище — B2 (переживает редеплои). Диск — горячий кэш,
+      // копия в БД — запасной путь, только если B2 не настроен/недоступен.
+      let inB2 = false;
+      if (storageEnabled()) {
+        const { createReadStream } = await import("fs");
+        inB2 = await uploadToStorage(fileName, createReadStream(filePath), mime ?? "");
+      }
+      if (!inB2 && written <= DB_MIRROR_MAX_BYTES) {
         try {
           await mirrorToDb(fileName, await readFile(filePath), mime ?? "");
         } catch (err) {
@@ -184,7 +191,7 @@ export async function POST(req: NextRequest) {
         userId: me.id,
         name: fileName,
         size: String(written),
-        db: String(written <= DB_MIRROR_MAX_BYTES),
+        b2: String(inB2),
         ms: String(Date.now() - started),
       });
       return NextResponse.json({ url: `/api/files/${fileName}`, size: written });
@@ -204,14 +211,16 @@ export async function POST(req: NextRequest) {
     const { writeFile } = await import("fs/promises");
     await writeFile(path.join(uploadsDir(), fileName), buffer);
 
-    // Копия в БД — чтобы файл пережил редеплой/рестарт контейнера.
-    await mirrorToDb(fileName, buffer, file.type ?? "");
+    // Основное хранилище — B2; копия в БД — только если B2 недоступен.
+    let inB2 = false;
+    if (storageEnabled()) inB2 = await uploadToStorage(fileName, buffer, file.type ?? "");
+    if (!inB2) await mirrorToDb(fileName, buffer, file.type ?? "");
 
     log.info("Файл загружен (form)", {
       userId: me.id,
       name: fileName,
       size: String(file.size),
-      db: String(buffer.length <= DB_MIRROR_MAX_BYTES),
+      b2: String(inB2),
       ms: String(Date.now() - started),
     });
     return NextResponse.json({ url: `/api/files/${fileName}`, size: file.size });
