@@ -79,7 +79,7 @@ export default function AuthScreen() {
 
       <div className="relative z-10 grid w-full max-w-5xl overflow-hidden rounded-[2rem] border border-white/10 shadow-[0_40px_120px_-30px_rgba(0,0,0,0.9)] md:grid-cols-[1.15fr_1fr]">
         {/* Hero panel */}
-        <div className="relative hidden flex-col justify-between overflow-hidden bg-gradient-to-br from-[#15082e] via-[#120a24] to-[#041521] p-10 md:flex">
+        <div className="relative hidden flex-col justify-between overflow-hidden bg-gradient-to-br from-[#262930] via-[#1e2127] to-[#16181c] p-10 md:flex">
           <div className="absolute -top-24 -right-24 h-72 w-72 rounded-full bg-white/10 blur-[90px]" />
           <div className="absolute -bottom-20 -left-16 h-64 w-64 rounded-full bg-white/10 blur-[80px]" />
 

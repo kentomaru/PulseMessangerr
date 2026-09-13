@@ -393,6 +393,37 @@ export function useCallController(
         }
         publishStreams();
       };
+      if (t.kind === "video") {
+        // Часть браузеров на остановку видео у собеседника шлёт не «ended»,
+        // а «mute» (дорожка как бы замирает). Если видео молчит 2.5 секунды —
+        // убираем плитку сами; если ожило — возвращаем.
+        let muteTimer: ReturnType<typeof setTimeout> | null = null;
+        t.onmute = () => {
+          if (muteTimer) clearTimeout(muteTimer);
+          muteTimer = setTimeout(() => {
+            try {
+              remote.removeTrack(t);
+            } catch {
+              /* уже убрана */
+            }
+            publishStreams();
+          }, 2500);
+        };
+        t.onunmute = () => {
+          if (muteTimer) {
+            clearTimeout(muteTimer);
+            muteTimer = null;
+          }
+          if (!remote.getTracks().some((x) => x.id === t.id)) {
+            try {
+              remote.addTrack(t);
+            } catch {
+              /* уже есть */
+            }
+            publishStreams();
+          }
+        };
+      }
     };
       pc.onicecandidate = (e) => {
         if (e.candidate && callId) void sendSignal(callId, peerId, "ice", e.candidate.toJSON());
@@ -1518,16 +1549,22 @@ const syncMesh = useCallback(
         void sender.replaceTrack(cameraTrack).catch(() => {});
       } else {
         l.pc.removeTrack(sender);
-        // ВАЖНО: сам видеотрансивер переводим в «неактивный». Если просто
-        // убрать трек, оффер с опцией «хочу принимать видео» оставлял
-        // m=видео как recvonly — у собеседника дорожка не заканчивалась,
-        // и ЧЁРНАЯ плитка демки висела вечно.
+        // ВАЖНО: полностью ОСТАНАВЛИВАЕМ видеотрансивер (линия в оффере
+        // становится «отклонённой», порт 0). Именно на отклонённую линию
+        // браузер собеседника гарантированно отвечает событием «ended»
+        // дорожки — плитка исчезает. Направление «inactive» даёт только
+        // «mute», дорожка не заканчивается, и чёрная плитка висит дальше.
+        // Камера потом добавится новым трансивером — это штатно.
         const tr = l.pc.getTransceivers().find((t) => t.sender === sender);
         if (tr) {
           try {
-            tr.direction = "inactive";
+            tr.stop();
           } catch {
-            /* браузер сам разберётся */
+            try {
+              tr.direction = "inactive";
+            } catch {
+              /* браузер сам разберётся */
+            }
           }
         }
         needsRenegotiate = true;
