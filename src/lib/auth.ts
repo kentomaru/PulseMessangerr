@@ -88,5 +88,7 @@ export function publicUser(u: User) {
     allowCalls: u.allowCalls,
     allowMessages: u.allowMessages,
     allowGroupInvites: u.allowGroupInvites,
+    discoverable: u.discoverable,
+    birthday: u.birthday,
   };
 }

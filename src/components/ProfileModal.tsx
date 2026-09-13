@@ -3,15 +3,20 @@
 import { useEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import {
+  Ban,
   Camera,
   CircleDot,
   ImageIcon,
   Loader2,
   LogOut,
   MessageSquareLock,
+  Palette,
   PhoneOff,
   Shield,
   Trash2,
+  UserCheck,
+  UserPlus,
+  UsersRound,
   X,
 } from "lucide-react";
 import Avatar, { paletteFor } from "./Avatar";
@@ -33,15 +38,46 @@ type Props = {
   onClose: () => void;
   onSaved: (u: PublicUser) => void;
   onDeletedAccount: () => void;
+  /** Настройки оформления — переехали сюда из сайдбара. */
+  theme?: "gray" | "tg" | "light";
+  onSetTheme?: (t: "gray" | "tg" | "light") => void;
+  uiScale?: "s" | "m" | "l";
+  onSetUiScale?: (v: "s" | "m" | "l") => void;
+  custom?: import("./Sidebar").CustomSettings;
+  onSetCustom?: (c: import("./Sidebar").CustomSettings) => void;
+  soundOn?: boolean;
+  callSoundOn?: boolean;
+  notifyOn?: boolean;
+  onToggleSound?: () => void;
+  onToggleCallSound?: () => void;
+  onToggleNotify?: () => void;
 };
 
-export default function ProfileModal({ me, onClose, onSaved, onDeletedAccount }: Props) {
-  /** Вкладки редактирования: «Профиль» и «Приватность» (пункт ТЗ №4). */
-  const [tab, setTab] = useState<"profile" | "privacy">("profile");
+export default function ProfileModal({
+  me,
+  onClose,
+  onSaved,
+  onDeletedAccount,
+  theme = "gray",
+  onSetTheme,
+  uiScale = "m",
+  onSetUiScale,
+  custom,
+  onSetCustom,
+  soundOn = true,
+  callSoundOn = true,
+  notifyOn = false,
+  onToggleSound,
+  onToggleCallSound,
+  onToggleNotify,
+}: Props) {
+  /** Вкладки: профиль, приватность, оформление (с превью), друзья. */
+  const [tab, setTab] = useState<"profile" | "privacy" | "appearance" | "friends">("profile");
   const [displayName, setDisplayName] = useState(me.displayName);
   const [username, setUsername] = useState(me.username);
   const [copiedName, setCopiedName] = useState(false);
   const [bio, setBio] = useState(me.bio);
+  const [birthday, setBirthday] = useState(me.birthday ?? "");
   const [avatarUrl, setAvatarUrl] = useState<string | null>(me.avatarUrl);
   const [bannerUrl, setBannerUrl] = useState<string | null>(me.bannerUrl);
   /** Кастомный статус-эмодзи: эмодзи или анимированная гифка. */
@@ -108,6 +144,7 @@ export default function ProfileModal({ me, onClose, onSaved, onDeletedAccount }:
           avatarUrl,
           bannerUrl,
           statusEmoji,
+          birthday,
         }),
       });
       onSaved(d.user);
@@ -289,6 +326,8 @@ export default function ProfileModal({ me, onClose, onSaved, onDeletedAccount }:
           [
             ["profile", "Профиль", null],
             ["privacy", "Приватность", <Shield key="i" className="h-3.5 w-3.5" />],
+            ["appearance", "Оформление", <Palette key="p" className="h-3.5 w-3.5" />],
+            ["friends", "Друзья", <UsersRound key="f" className="h-3.5 w-3.5" />],
           ] as const
         ).map(([t, label, icon]) => (
           <button
@@ -308,7 +347,24 @@ export default function ProfileModal({ me, onClose, onSaved, onDeletedAccount }:
       </div>
 
       <div className="nice-scroll max-h-[60vh] space-y-5 overflow-y-auto px-7 pt-4 pb-7">
-        {tab === "privacy" ? (
+        {tab === "appearance" ? (
+          <AppearanceTab
+            theme={theme}
+            onSetTheme={onSetTheme}
+            uiScale={uiScale}
+            onSetUiScale={onSetUiScale}
+            custom={custom}
+            onSetCustom={onSetCustom}
+            soundOn={soundOn}
+            callSoundOn={callSoundOn}
+            notifyOn={notifyOn}
+            onToggleSound={onToggleSound}
+            onToggleCallSound={onToggleCallSound}
+            onToggleNotify={onToggleNotify}
+          />
+        ) : tab === "friends" ? (
+          <FriendsTab me={me} />
+        ) : tab === "privacy" ? (
           <>
             <p className="text-xs leading-relaxed text-white/35">
               Эти настройки применяются сразу после сохранения и действуют на всех, кто пытается
@@ -388,6 +444,20 @@ export default function ProfileModal({ me, onClose, onSaved, onDeletedAccount }:
             className="ring-focus nice-scroll w-full resize-none rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3 text-[15px] transition-all placeholder:text-white/25"
           />
           <span className="mt-1 block text-right text-[11px] text-white/25">{bio.length}/280</span>
+        </label>
+
+        {/* Дата рождения */}
+        <label className="block">
+          <span className="mb-1.5 block text-xs font-medium tracking-wide text-white/45 uppercase">
+            Дата рождения
+          </span>
+          <input
+            value={birthday}
+            onChange={(e) => setBirthday(e.target.value)}
+            maxLength={20}
+            placeholder="31.12.1999"
+            className="ring-focus w-full rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3 text-[15px] transition-all placeholder:text-white/25"
+          />
         </label>
 
         {/* Кастомный статус-эмодзи: обычный эмодзи или анимированная гифка */}
@@ -494,6 +564,540 @@ export default function ProfileModal({ me, onClose, onSaved, onDeletedAccount }:
         )}
       </div>
     </ModalShell>
+  );
+}
+
+const BUBBLE_COLORS: Record<string, string> = {
+  blue: "#2f4b7c",
+  green: "#2f6b4f",
+  red: "#7c3a3a",
+  purple: "#54407c",
+  gray: "#3a3f47",
+};
+const RADIUS: Record<string, string> = {
+  sm: "0.6rem 0.6rem 0.25rem 0.6rem",
+  md: "1rem 1rem 0.35rem 1rem",
+  lg: "1.6rem 1.6rem 0.6rem 1.6rem",
+};
+const CHATFS: Record<string, string> = { s: "12px", m: "14px", l: "16px" };
+const THEMES: Record<string, { bg: string; panel: string; label: string }> = {
+  gray: { bg: "#20232a", panel: "#2a2e36", label: "Серая" },
+  tg: { bg: "#12202f", panel: "#17293a", label: "Синяя" },
+  light: { bg: "#eef1f5", panel: "#ffffff", label: "Светлая" },
+};
+
+/**
+ * Вкладка «Оформление» — все настройки вида переехали из сайдбара.
+ * Внизу живой предпросмотр: мини-чат сразу показывает выбранный вид.
+ */
+function AppearanceTab({
+  theme,
+  onSetTheme,
+  uiScale,
+  onSetUiScale,
+  custom,
+  onSetCustom,
+  soundOn,
+  callSoundOn,
+  notifyOn,
+  onToggleSound,
+  onToggleCallSound,
+  onToggleNotify,
+}: {
+  theme: "gray" | "tg" | "light";
+  onSetTheme?: (t: "gray" | "tg" | "light") => void;
+  uiScale: "s" | "m" | "l";
+  onSetUiScale?: (v: "s" | "m" | "l") => void;
+  custom?: import("./Sidebar").CustomSettings;
+  onSetCustom?: (c: import("./Sidebar").CustomSettings) => void;
+  soundOn: boolean;
+  callSoundOn: boolean;
+  notifyOn: boolean;
+  onToggleSound?: () => void;
+  onToggleCallSound?: () => void;
+  onToggleNotify?: () => void;
+}) {
+  const t = THEMES[theme] ?? THEMES.gray;
+  const light = theme === "light";
+  const ownColor = BUBBLE_COLORS[custom?.bubbles ?? "blue"] ?? BUBBLE_COLORS.blue;
+  const ownRadius = RADIUS[custom?.radius ?? "md"] ?? RADIUS.md;
+  const peerRadius = ownRadius.split(" ").reverse().join(" ");
+  const fs = CHATFS[custom?.chatfs ?? "m"] ?? CHATFS.m;
+  const roundFont = custom?.font === "round";
+  const font = roundFont ? "'Nunito', 'Comic Sans MS', ui-rounded, sans-serif" : "inherit";
+
+  const set = (patch: Partial<NonNullable<typeof custom>>) => {
+    if (!custom || !onSetCustom) return;
+    onSetCustom({ ...custom, ...patch });
+  };
+
+  return (
+    <div className="space-y-5">
+      <p className="text-xs leading-relaxed text-white/35">
+        Всё оформление живёт здесь и применяется сразу. Внизу — живой предпросмотр того, как будет
+        выглядеть чат.
+      </p>
+
+      {/* Живой предпросмотр */}
+      <div
+        className="overflow-hidden rounded-2xl border border-white/10"
+        style={{ background: t.bg, fontFamily: font }}
+      >
+        <div
+          className="flex items-center gap-2 px-3 py-2 text-[12px] font-semibold"
+          style={{ background: t.panel, color: light ? "#111" : "#fff" }}
+        >
+          <span className="inline-block h-2 w-2 rounded-full bg-emerald-400" />
+          Предпросмотр · @{`имя`}
+        </div>
+        <div className="space-y-2 px-3 py-3">
+          <div className="flex justify-start">
+            <div
+              className="max-w-[70%] px-3 py-1.5"
+              style={{
+                background: light ? "#fff" : "rgba(255,255,255,0.08)",
+                color: light ? "#111" : "#e7e9ee",
+                borderRadius: peerRadius,
+                fontSize: fs,
+              }}
+            >
+              Привет! Так будет выглядеть чужое сообщение
+            </div>
+          </div>
+          <div className="flex justify-end">
+            <div
+              className="max-w-[70%] px-3 py-1.5 text-white"
+              style={{ background: ownColor, borderRadius: ownRadius, fontSize: fs }}
+            >
+              А так — твоё, с выбранным цветом и формой
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Тема */}
+      <div>
+        <p className="mb-2 text-xs font-semibold tracking-wide text-white/45 uppercase">Тема</p>
+        <div className="grid grid-cols-3 gap-1.5">
+          {(Object.keys(THEMES) as (keyof typeof THEMES)[]).map((k) => (
+            <button
+              key={k}
+              onClick={() => onSetTheme?.(k as "gray" | "tg" | "light")}
+              className={`rounded-xl border px-2 py-2.5 text-[12px] font-medium transition-all ${
+                theme === k
+                  ? "border-[#5865f2] bg-[#5865f2]/15 text-white"
+                  : "border-white/10 bg-white/[0.04] text-white/55 hover:bg-white/8"
+              }`}
+            >
+              {THEMES[k].label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Размер интерфейса */}
+      <div>
+        <p className="mb-2 text-xs font-semibold tracking-wide text-white/45 uppercase">
+          Размер интерфейса
+        </p>
+        <div className="grid grid-cols-3 gap-1.5">
+          {(
+            [
+              ["s", "Мелкий"],
+              ["m", "Обычный"],
+              ["l", "Крупный"],
+            ] as const
+          ).map(([v, label]) => (
+            <button
+              key={v}
+              onClick={() => onSetUiScale?.(v)}
+              className={`rounded-xl border px-2 py-2 text-[12px] font-medium transition-all ${
+                uiScale === v
+                  ? "border-[#5865f2] bg-[#5865f2]/15 text-white"
+                  : "border-white/10 bg-white/[0.04] text-white/55 hover:bg-white/8"
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Цвет своих пузырей */}
+      <div>
+        <p className="mb-2 text-xs font-semibold tracking-wide text-white/45 uppercase">
+          Цвет своих сообщений
+        </p>
+        <div className="flex items-center gap-2">
+          {Object.entries(BUBBLE_COLORS).map(([k, col]) => (
+            <button
+              key={k}
+              onClick={() => set({ bubbles: k })}
+              className={`h-8 w-8 rounded-lg transition-all ${
+                custom?.bubbles === k ? "ring-2 ring-white ring-offset-2 ring-offset-black/40" : "hover:scale-110"
+              }`}
+              style={{ background: col }}
+              title={k}
+            />
+          ))}
+        </div>
+      </div>
+
+      {/* Форма пузырей + размер текста */}
+      <div className="grid grid-cols-2 gap-4">
+        <div>
+          <p className="mb-2 text-xs font-semibold tracking-wide text-white/45 uppercase">Углы</p>
+          <div className="grid grid-cols-3 gap-1.5">
+            {(
+              [
+                ["sm", "Острые"],
+                ["md", "Средние"],
+                ["lg", "Круглые"],
+              ] as const
+            ).map(([v, label]) => (
+              <button
+                key={v}
+                onClick={() => set({ radius: v })}
+                className={`rounded-xl border px-1 py-2 text-[11px] font-medium transition-all ${
+                  custom?.radius === v
+                    ? "border-[#5865f2] bg-[#5865f2]/15 text-white"
+                    : "border-white/10 bg-white/[0.04] text-white/55 hover:bg-white/8"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div>
+          <p className="mb-2 text-xs font-semibold tracking-wide text-white/45 uppercase">
+            Размер текста
+          </p>
+          <div className="grid grid-cols-3 gap-1.5">
+            {(
+              [
+                ["s", "S"],
+                ["m", "M"],
+                ["l", "L"],
+              ] as const
+            ).map(([v, label]) => (
+              <button
+                key={v}
+                onClick={() => set({ chatfs: v })}
+                className={`rounded-xl border px-1 py-2 text-[11px] font-medium transition-all ${
+                  custom?.chatfs === v
+                    ? "border-[#5865f2] bg-[#5865f2]/15 text-white"
+                    : "border-white/10 bg-white/[0.04] text-white/55 hover:bg-white/8"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* Переключатели */}
+      <div className="space-y-3">
+        <Toggle
+          checked={!!custom?.compact}
+          onChange={(v) => set({ compact: v })}
+          icon={<CircleDot className="h-4 w-4 text-white/50" />}
+          label="Компактный список чатов"
+          hint="Меньше отступов — больше диалогов на экране"
+        />
+        <Toggle
+          checked={custom?.font === "round"}
+          onChange={(v) => set({ font: v ? "round" : "sys" })}
+          icon={<CircleDot className="h-4 w-4 text-white/50" />}
+          label="Округлый шрифт"
+          hint="Более мягкий, «пузырчатый» шрифт во всём интерфейсе"
+        />
+        <Toggle
+          checked={custom?.anims ?? true}
+          onChange={(v) => set({ anims: v })}
+          icon={<CircleDot className="h-4 w-4 text-white/50" />}
+          label="Анимации"
+          hint="Плавные появления сообщений и переходы"
+        />
+        {onToggleSound && (
+          <Toggle
+            checked={soundOn}
+            onChange={() => onToggleSound()}
+            icon={<CircleDot className="h-4 w-4 text-white/50" />}
+            label="Звук сообщений"
+            hint="Короткий сигнал о новом сообщении"
+          />
+        )}
+        {onToggleCallSound && (
+          <Toggle
+            checked={callSoundOn}
+            onChange={() => onToggleCallSound()}
+            icon={<CircleDot className="h-4 w-4 text-white/50" />}
+            label="Звук входящего звонка"
+            hint="Рингтон, когда вам звонят"
+          />
+        )}
+        {onToggleNotify && (
+          <Toggle
+            checked={notifyOn}
+            onChange={() => onToggleNotify()}
+            icon={<CircleDot className="h-4 w-4 text-white/50" />}
+            label="Браузерные уведомления"
+            hint="Всплывают, даже когда вкладка скрыта"
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** Вкладка «Друзья» — заявки как в Discord: входящие, исходящие, список. */
+function FriendsTab({ me }: { me: PublicUser }) {
+  const [friends, setFriends] = useState<PublicUser[]>([]);
+  const [incoming, setIncoming] = useState<PublicUser[]>([]);
+  const [outgoing, setOutgoing] = useState<PublicUser[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [q, setQ] = useState("");
+  const [results, setResults] = useState<PublicUser[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [busyId, setBusyId] = useState("");
+
+  const reload = async () => {
+    try {
+      const d = await api<{ friends: PublicUser[]; incoming: PublicUser[]; outgoing: PublicUser[] }>(
+        "/api/friends",
+      );
+      setFriends(d.friends);
+      setIncoming(d.incoming);
+      setOutgoing(d.outgoing);
+    } finally {
+      setLoading(false);
+    }
+  };
+  useEffect(() => {
+    void reload();
+  }, []);
+
+  const act = async (userId: string, action: string) => {
+    setBusyId(userId);
+    try {
+      await api("/api/friends", { method: "POST", body: JSON.stringify({ userId, action }) });
+      await reload();
+      setResults([]);
+      setQ("");
+    } finally {
+      setBusyId("");
+    }
+  };
+
+  const search = async () => {
+    const query = q.trim();
+    if (!query) return;
+    setSearching(true);
+    try {
+      const d = await api<{ users: PublicUser[] }>(`/api/users/search?q=${encodeURIComponent(query)}`);
+      setResults(d.users.filter((u) => u.id !== me.id));
+    } finally {
+      setSearching(false);
+    }
+  };
+
+  const friendIds = new Set(friends.map((f) => f.id));
+  const incomingIds = new Set(incoming.map((f) => f.id));
+  const outgoingIds = new Set(outgoing.map((f) => f.id));
+
+  const Row = ({ u, right }: { u: PublicUser; right: React.ReactNode }) => (
+    <div className="flex items-center gap-3 rounded-xl bg-white/[0.03] px-3 py-2">
+      <Avatar name={u.displayName} src={u.avatarUrl} online={u.online} size={34} />
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-sm font-medium text-white/85">{u.displayName}</p>
+        <p className="truncate text-xs text-white/35">@{u.username}</p>
+      </div>
+      {right}
+    </div>
+  );
+
+  const ActionBtn = ({
+    label,
+    tone,
+    onClick,
+    disabled,
+  }: {
+    label: string;
+    tone: "accent" | "ghost" | "danger";
+    onClick: () => void;
+    disabled?: boolean;
+  }) => (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      className={`rounded-lg px-2.5 py-1.5 text-[11px] font-semibold transition-colors disabled:opacity-40 ${
+        tone === "accent"
+          ? "bg-[#5865f2] text-white hover:bg-[#4752c4]"
+          : tone === "danger"
+          ? "bg-rose-500/15 text-rose-300 hover:bg-rose-500/25"
+          : "bg-white/10 text-white/70 hover:bg-white/15"
+      }`}
+    >
+      {label}
+    </button>
+  );
+
+  return (
+    <div className="space-y-5">
+      <p className="text-xs leading-relaxed text-white/35">
+        Добавляйте людей в друзья — как в Discord. Входящие заявки ждут подтверждения.
+      </p>
+
+      {/* Поиск для добавления */}
+      <div className="flex gap-2">
+        <input
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && void search()}
+          placeholder="Найти по имени или @никнейму…"
+          className="ring-focus flex-1 rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2.5 text-sm transition-all placeholder:text-white/25"
+        />
+        <button
+          onClick={() => void search()}
+          disabled={searching || !q.trim()}
+          className="flex items-center gap-1.5 rounded-xl bg-[#5865f2] px-3.5 text-sm font-semibold text-white transition-colors hover:bg-[#4752c4] disabled:opacity-40"
+        >
+          {searching ? <Loader2 className="h-4 w-4 animate-spin" /> : <UserPlus className="h-4 w-4" />}
+          Найти
+        </button>
+      </div>
+
+      {results.length > 0 && (
+        <div className="space-y-1.5">
+          <p className="text-[11px] font-semibold tracking-wide text-white/40 uppercase">Результаты</p>
+          {results.map((u) => {
+            const isFriend = friendIds.has(u.id);
+            const isOut = outgoingIds.has(u.id);
+            const isIn = incomingIds.has(u.id);
+            return (
+              <Row
+                key={u.id}
+                u={u}
+                right={
+                  isFriend ? (
+                    <span className="text-[11px] text-emerald-300">Уже в друзьях</span>
+                  ) : isOut ? (
+                    <ActionBtn
+                      label="Отменить"
+                      tone="ghost"
+                      disabled={busyId === u.id}
+                      onClick={() => void act(u.id, "remove")}
+                    />
+                  ) : isIn ? (
+                    <ActionBtn
+                      label="Принять"
+                      tone="accent"
+                      disabled={busyId === u.id}
+                      onClick={() => void act(u.id, "accept")}
+                    />
+                  ) : (
+                    <ActionBtn
+                      label="Добавить"
+                      tone="accent"
+                      disabled={busyId === u.id}
+                      onClick={() => void act(u.id, "request")}
+                    />
+                  )
+                }
+              />
+            );
+          })}
+        </div>
+      )}
+
+      {loading ? (
+        <div className="flex items-center justify-center py-6 text-white/40">
+          <Loader2 className="h-5 w-5 animate-spin" />
+        </div>
+      ) : (
+        <>
+          {incoming.length > 0 && (
+            <div className="space-y-1.5">
+              <p className="text-[11px] font-semibold tracking-wide text-white/40 uppercase">
+                Входящие заявки · {incoming.length}
+              </p>
+              {incoming.map((u) => (
+                <Row
+                  key={u.id}
+                  u={u}
+                  right={
+                    <div className="flex gap-1.5">
+                      <ActionBtn
+                        label="Принять"
+                        tone="accent"
+                        disabled={busyId === u.id}
+                        onClick={() => void act(u.id, "accept")}
+                      />
+                      <ActionBtn
+                        label="Отклонить"
+                        tone="danger"
+                        disabled={busyId === u.id}
+                        onClick={() => void act(u.id, "decline")}
+                      />
+                    </div>
+                  }
+                />
+              ))}
+            </div>
+          )}
+
+          {outgoing.length > 0 && (
+            <div className="space-y-1.5">
+              <p className="text-[11px] font-semibold tracking-wide text-white/40 uppercase">
+                Исходящие · {outgoing.length}
+              </p>
+              {outgoing.map((u) => (
+                <Row
+                  key={u.id}
+                  u={u}
+                  right={
+                    <ActionBtn
+                      label="Отменить"
+                      tone="ghost"
+                      disabled={busyId === u.id}
+                      onClick={() => void act(u.id, "remove")}
+                    />
+                  }
+                />
+              ))}
+            </div>
+          )}
+
+          <div className="space-y-1.5">
+            <p className="text-[11px] font-semibold tracking-wide text-white/40 uppercase">
+              Мои друзья · {friends.length}
+            </p>
+            {friends.length === 0 ? (
+              <p className="rounded-xl bg-white/[0.03] px-3 py-4 text-center text-sm text-white/30">
+                Пока никого нет. Найдите человека выше и отправьте заявку.
+              </p>
+            ) : (
+              friends.map((u) => (
+                <Row
+                  key={u.id}
+                  u={u}
+                  right={
+                    <ActionBtn
+                      label="Убрать"
+                      tone="ghost"
+                      disabled={busyId === u.id}
+                      onClick={() => void act(u.id, "remove")}
+                    />
+                  }
+                />
+              ))
+            )}
+          </div>
+        </>
+      )}
+    </div>
   );
 }
 

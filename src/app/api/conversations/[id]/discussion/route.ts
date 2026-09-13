@@ -46,14 +46,23 @@ export const GET = withApi<{ id: string }>("conversations/:id/discussion", async
     .where(eq(conversations.about, DISCUSSION_MARKER + id))
     .limit(1);
 
-  // Сколько комментариев в обсуждении — цифра под постами канала
+  // Сколько комментариев в обсуждении — всего и по каждому посту
   let discCount = 0;
+  const postCounts: Record<string, number> = {};
   if (disc) {
     const [c] = await db
       .select({ n: count() })
       .from(messages)
       .where(eq(messages.conversationId, disc.id));
     discCount = c?.n ?? 0;
+    // комментарии привязаны к посту через replyToId — считаем по постам
+    const rows = await db
+      .select({ replyToId: messages.replyToId })
+      .from(messages)
+      .where(eq(messages.conversationId, disc.id));
+    for (const r of rows) {
+      if (r.replyToId) postCounts[r.replyToId] = (postCounts[r.replyToId] ?? 0) + 1;
+    }
   }
 
   // Мои группы, которыми владею — из них выбираем чат для комментариев
@@ -73,7 +82,7 @@ export const GET = withApi<{ id: string }>("conversations/:id/discussion", async
       ),
     );
 
-  return NextResponse.json({ discussion: disc ?? null, myGroups, count: discCount });
+  return NextResponse.json({ discussion: disc ?? null, myGroups, count: discCount, postCounts });
 });
 
 export const POST = withApi<{ id: string }>("conversations/:id/discussion", async ({ req, params, me }) => {

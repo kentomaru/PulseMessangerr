@@ -7,12 +7,14 @@ import {
   BellOff,
   BellRing,
   Bookmark,
+  CheckCheck,
   Compass,
   Hash,
   Loader2,
   Lock,
   LogOut,
   Megaphone,
+  Mic,
   MonitorSmartphone,
   Phone,
   Pin,
@@ -21,6 +23,7 @@ import {
   Search,
   SearchX,
   Sparkles,
+  MessageCircle,
   UserPlus,
   Users,
   Video,
@@ -82,14 +85,59 @@ type Props = {
 };
 
 /** Превью последнего сообщения: префикс + иконка типа (SVG) + текст. */
+/** URL вложения из content сообщения (сам контент или JSON вложения). */
+function previewUrl(type: string, content: string): string | null {
+  if (type === "image" || type === "video_note" || type === "voice" || type === "file") {
+    if (content.startsWith("/api/files/")) return content;
+    try {
+      const att = JSON.parse(content) as { url?: string };
+      if (typeof att.url === "string" && att.url) return att.url;
+    } catch {
+      /* не JSON */
+    }
+  }
+  return null;
+}
+
 function PreviewNode({ conv, meId }: { conv: ConversationListItem; meId: string }) {
   const lm = conv.lastMessage;
   if (!lm) return <>Нет сообщений</>;
   const prefix = lm.senderId === meId ? "Вы: " : conv.kind === "direct" ? "" : `${lm.senderName ?? ""}: `;
+  const url = previewUrl(lm.type, lm.content);
+  // подпись: у фото/видео — подпись из вложения или тип
+  let caption = "";
+  if (lm.type === "image" || lm.type === "video_note" || lm.type === "voice" || lm.type === "file") {
+    try {
+      const att = JSON.parse(lm.content) as { caption?: string; name?: string };
+      caption = att.caption ?? att.name ?? "";
+    } catch {
+      caption = "";
+    }
+  }
+  const label =
+    lm.type === "image" ? caption || "Фото"
+    : lm.type === "video_note" ? caption || "Видеосообщение"
+    : lm.type === "voice" ? caption || "Голосовое"
+    : null;
   return (
     <span className="inline-flex min-w-0 items-center gap-1.5">
+      {url && lm.type === "image" && (
+        <img src={url} alt="" className="h-9 w-9 shrink-0 rounded-lg object-cover" loading="lazy" />
+      )}
+      {url && lm.type === "video_note" && (
+        <img src={url} alt="" className="h-9 w-9 shrink-0 rounded-full object-cover" loading="lazy" />
+      )}
+      {lm.type === "voice" && (
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white/10">
+          <Mic className="h-4 w-4 text-white/60" />
+        </span>
+      )}
       {prefix && <span className="shrink-0">{prefix}</span>}
-      <PreviewLabel type={lm.type} content={lm.content} iconClassName="h-3.5 w-3.5" />
+      {label !== null ? (
+        <span className="truncate">{label}</span>
+      ) : (
+        <PreviewLabel type={lm.type} content={lm.content} iconClassName="h-3.5 w-3.5" />
+      )}
     </span>
   );
 }
@@ -144,8 +192,19 @@ export default function Sidebar({
       ),
     );
   };
-  // Черновики: красный ярлык в списке чатов, как в больших мессенджерах
+  // Черновики: красный ярлык в списке чатов, обновляется на лету
+  const [draftTick, setDraftTick] = useState(0);
+  useEffect(() => {
+    const on = () => setDraftTick((v) => v + 1);
+    window.addEventListener("pulse-drafts", on);
+    window.addEventListener("storage", on);
+    return () => {
+      window.removeEventListener("pulse-drafts", on);
+      window.removeEventListener("storage", on);
+    };
+  }, []);
   const drafts = useMemo(() => {
+    void draftTick;
     try {
       return JSON.parse(localStorage.getItem("pulse_text_drafts_v1") ?? "{}") as Record<
         string,
@@ -154,13 +213,14 @@ export default function Sidebar({
     } catch {
       return {} as Record<string, string>;
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [conversations]);
+  }, [draftTick, conversations]);
   const [query, setQuery] = useState("");
-  const [notifyOpen, setNotifyOpen] = useState(false);
-  const notifyBoxRef = useRef<HTMLDivElement | null>(null);
   const [users, setUsers] = useState<PublicUser[]>([]);
   const [groups, setGroups] = useState<DiscoverItem[]>([]);
+  /** Глобальный поиск по сообщениям во всех моих чатах. */
+  const [msgHits, setMsgHits] = useState<
+    { id: string; conversationId: string; conversationName: string | null; snippet: string }[]
+  >([]);
   const [searching, setSearching] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const searchBoxRef = useRef<HTMLDivElement | null>(null);
@@ -171,21 +231,34 @@ export default function Sidebar({
     if (q.length < 1) {
       setUsers([]);
       setGroups([]);
+      setMsgHits([]);
       setSearching(false);
       return;
     }
     setSearching(true);
     const t = setTimeout(async () => {
       try {
-        const [u, g] = await Promise.all([
+        const [u, g, m] = await Promise.all([
           api<{ users: PublicUser[] }>(`/api/users/search?q=${encodeURIComponent(q)}`),
           api<{ items: DiscoverItem[] }>(`/api/discover?q=${encodeURIComponent(q)}`),
+          q.length >= 2
+            ? api<{
+                results: {
+                  id: string;
+                  conversationId: string;
+                  conversationName: string | null;
+                  snippet: string;
+                }[];
+              }>(`/api/messages/search?q=${encodeURIComponent(q)}`).catch(() => ({ results: [] }))
+            : Promise.resolve({ results: [] }),
         ]);
         setUsers(u.users);
         setGroups(g.items);
+        setMsgHits(m.results.slice(0, 6));
       } catch {
         setUsers([]);
         setGroups([]);
+        setMsgHits([]);
       } finally {
         setSearching(false);
       }
@@ -193,12 +266,10 @@ export default function Sidebar({
     return () => clearTimeout(t);
   }, [query]);
 
-  // Клик вне поиска / меню создания / панели уведомлений — закрыть
+  // Клик вне поиска / меню создания — закрыть
   useEffect(() => {
     const onClick = (e: MouseEvent) => {
       if (createRef.current && !createRef.current.contains(e.target as Node)) setCreateOpen(false);
-      if (notifyBoxRef.current && !notifyBoxRef.current.contains(e.target as Node))
-        setNotifyOpen(false);
     };
     document.addEventListener("mousedown", onClick);
     return () => document.removeEventListener("mousedown", onClick);
@@ -297,224 +368,14 @@ export default function Sidebar({
         >
           <Bookmark className="h-4 w-4" />
         </button>
-        {/* Настройки уведомлений: звук сообщений, рингтон, браузерные уведомления */}
-        <div ref={notifyBoxRef} className="relative">
-          <button
-            onClick={() => setNotifyOpen((v) => !v)}
-            title="Настройки уведомлений"
-            className={`glass flex h-9 w-9 items-center justify-center rounded-xl transition-colors ${
-              soundOn || notifyOn
-                ? "text-white/50 hover:text-emerald-300"
-                : "text-white/30 hover:text-white/70"
-            }`}
-          >
-            {soundOn || notifyOn ? <Bell className="h-4 w-4" /> : <BellOff className="h-4 w-4" />}
-          </button>
-
-          <AnimatePresence>
-            {notifyOpen && (
-              <motion.div
-                initial={{ opacity: 0, y: 6, scale: 0.97 }}
-                animate={{ opacity: 1, y: 0, scale: 1 }}
-                exit={{ opacity: 0, y: 6, scale: 0.97 }}
-                transition={{ duration: 0.14 }}
-                className="glass-strong absolute top-11 right-0 z-50 w-64 rounded-2xl p-3 shadow-2xl"
-              >
-                <p className="px-1 pb-2 text-[10px] font-semibold tracking-wide text-white/40 uppercase">
-                  Уведомления
-                </p>
-                <NotifyRow
-                  icon={soundOn ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}
-                  label="Звук сообщений"
-                  hint="Короткий сигнал о новом сообщении"
-                  active={soundOn}
-                  onClick={onToggleSound}
-                />
-                <NotifyRow
-                  icon={<Phone className="h-4 w-4" />}
-                  label="Звук входящего звонка"
-                  hint="Рингтон, когда вам звонят"
-                  active={callSoundOn}
-                  onClick={onToggleCallSound}
-                />
-                <NotifyRow
-                  icon={<MonitorSmartphone className="h-4 w-4" />}
-                  label="Браузерные уведомления"
-                  hint="Всплывают, даже когда вкладка скрыта"
-                  active={notifyOn}
-                  onClick={onToggleNotify}
-                />
-                <p className="px-1 pt-3 pb-2 text-[10px] font-semibold tracking-wide text-white/40 uppercase">
-                  Размер интерфейса
-                </p>
-                <div className="grid grid-cols-3 gap-1 rounded-xl bg-white/[0.05] p-1">
-                  {(
-                    [
-                      ["s", "Мелкий"],
-                      ["m", "Обычный"],
-                      ["l", "Крупный"],
-                    ] as const
-                  ).map(([v, label]) => (
-                    <button
-                      key={v}
-                      onClick={() => onSetUiScale(v)}
-                      className={`rounded-lg px-1 py-1.5 text-[11px] font-medium transition-colors ${
-                        uiScale === v
-                          ? "bg-white/10 text-white"
-                          : "text-white/50 hover:bg-white/8 hover:text-white/80"
-                      }`}
-                    >
-                      {label}
-                    </button>
-                  ))}
-                </div>
-                <p className="px-1 pt-3 pb-2 text-[10px] font-semibold tracking-wide text-white/40 uppercase">
-                  Тема оформления
-                </p>
-                <div className="grid grid-cols-3 gap-1 rounded-xl bg-white/[0.05] p-1">
-                  {(
-                    [
-                      ["gray", "Серая"],
-                      ["tg", "Синяя"],
-                      ["light", "Светлая"],
-                    ] as const
-                  ).map(([v, label]) => (
-                    <button
-                      key={v}
-                      onClick={() => onSetTheme(v)}
-                      className={`rounded-lg px-1 py-1.5 text-[11px] font-medium transition-colors ${
-                        theme === v
-                          ? "bg-white/10 text-white"
-                          : "text-white/50 hover:bg-white/8 hover:text-white/80"
-                      }`}
-                    >
-                      {label}
-                    </button>
-                  ))}
-                </div>
-                <p className="px-1 pt-3 pb-2 text-[10px] font-semibold tracking-wide text-white/40 uppercase">
-                  Внешний вид
-                </p>
-                <div className="flex items-center gap-1.5 px-1">
-                  <span className="text-[11px] text-white/40">Пузыри:</span>
-                  {(
-                    [
-                      ["blue", "#2f4b7c"],
-                      ["green", "#2f6b4f"],
-                      ["red", "#7c3a3a"],
-                      ["purple", "#54407c"],
-                      ["gray", "#3a3f47"],
-                    ] as const
-                  ).map(([v, col]) => (
-                    <button
-                      key={v}
-                      title="Цвет своих пузырей"
-                      onClick={() => onSetCustom({ ...custom, bubbles: v })}
-                      className={`h-5 w-5 rounded-full border-2 transition-transform hover:scale-110 ${
-                        custom.bubbles === v ? "border-white" : "border-transparent"
-                      }`}
-                      style={{ background: col }}
-                    />
-                  ))}
-                </div>
-                <div className="mt-2 grid grid-cols-3 gap-1 rounded-xl bg-white/[0.05] p-1">
-                  {(
-                    [
-                      ["sm", "Углы S"],
-                      ["md", "Углы M"],
-                      ["lg", "Углы L"],
-                    ] as const
-                  ).map(([v, label]) => (
-                    <button
-                      key={v}
-                      onClick={() => onSetCustom({ ...custom, radius: v })}
-                      className={`rounded-lg px-1 py-1.5 text-[11px] font-medium transition-colors ${
-                        custom.radius === v
-                          ? "bg-white/10 text-white"
-                          : "text-white/50 hover:bg-white/8 hover:text-white/80"
-                      }`}
-                    >
-                      {label}
-                    </button>
-                  ))}
-                </div>
-                <div className="mt-1 grid grid-cols-3 gap-1 rounded-xl bg-white/[0.05] p-1">
-                  {(
-                    [
-                      ["s", "Текст S"],
-                      ["m", "Текст M"],
-                      ["l", "Текст L"],
-                    ] as const
-                  ).map(([v, label]) => (
-                    <button
-                      key={v}
-                      onClick={() => onSetCustom({ ...custom, chatfs: v })}
-                      className={`rounded-lg px-1 py-1.5 text-[11px] font-medium transition-colors ${
-                        custom.chatfs === v
-                          ? "bg-white/10 text-white"
-                          : "text-white/50 hover:bg-white/8 hover:text-white/80"
-                      }`}
-                    >
-                      {label}
-                    </button>
-                  ))}
-                </div>
-                <div className="mt-2 space-y-1">
-                  <SettingToggle
-                    label="Компактный список чатов"
-                    on={custom.compact}
-                    onClick={() => onSetCustom({ ...custom, compact: !custom.compact })}
-                  />
-                  <SettingToggle
-                    label="Анимации интерфейса"
-                    on={custom.anims}
-                    onClick={() => onSetCustom({ ...custom, anims: !custom.anims })}
-                  />
-                  <SettingToggle
-                    label="Отправка по Enter"
-                    on={(() => {
-                      try {
-                        return localStorage.getItem("pulse_enter_send") !== "0";
-                      } catch {
-                        return true;
-                      }
-                    })()}
-                    onClick={() => {
-                      try {
-                        const cur = localStorage.getItem("pulse_enter_send") !== "0";
-                        localStorage.setItem("pulse_enter_send", cur ? "0" : "1");
-                        onSetCustom({ ...custom });
-                      } catch {
-                        /* ignore */
-                      }
-                    }}
-                  />
-                  <SettingToggle
-                    label="Округлый шрифт"
-                    on={custom.font === "round"}
-                    onClick={() => onSetCustom({ ...custom, font: custom.font === "round" ? "sys" : "round" })}
-                  />
-                  <SettingToggle
-                    label="Не беспокоить 1 час"
-                    on={custom.dndUntil > Date.now()}
-                    onClick={() =>
-                      onSetCustom({
-                        ...custom,
-                        dndUntil: custom.dndUntil > Date.now() ? 0 : Date.now() + 3600_000,
-                      })
-                    }
-                  />
-                </div>
-                <button
-                  onClick={() => void markAllRead()}
-                  className="mt-2 w-full rounded-xl bg-white/10 px-3 py-2 text-[12px] font-medium text-white/70 hover:bg-white/15"
-                >
-                  Отметить всё прочитанным
-                </button>
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </div>
+        {/* Отметить всё прочитанным — быстрое действие */}
+        <button
+          onClick={() => void markAllRead()}
+          title="Отметить всё прочитанным"
+          className="glass flex h-9 w-9 items-center justify-center rounded-xl text-white/50 transition-colors hover:text-emerald-300"
+        >
+          <CheckCheck className="h-4 w-4" />
+        </button>
         <button
           onClick={onLogout}
           title="Выйти"
@@ -623,7 +484,33 @@ export default function Sidebar({
                 </button>
               ))}
 
-              {users.length === 0 && groups.length === 0 && !searching && !linkToken && (
+              {msgHits.length > 0 && (
+                <p className="px-3 pt-2 pb-1 text-[10px] font-semibold tracking-widest text-white/25 uppercase">
+                  Сообщения
+                </p>
+              )}
+              {msgHits.map((m) => (
+                <button
+                  key={m.id}
+                  onClick={() => {
+                    onSelect(m.conversationId);
+                    setQuery("");
+                  }}
+                  className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left transition-colors hover:bg-white/8"
+                >
+                  <span className="glass flex h-8 w-8 shrink-0 items-center justify-center rounded-lg">
+                    <MessageCircle className="h-3.5 w-3.5 text-slate-400" />
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-sm font-medium">
+                      {m.conversationName ?? "Личный чат"}
+                    </span>
+                    <span className="block truncate text-xs text-white/40">{m.snippet}</span>
+                  </span>
+                </button>
+              ))}
+
+              {users.length === 0 && groups.length === 0 && msgHits.length === 0 && !searching && !linkToken && (
                 <p className="flex items-center gap-2 px-3 py-3 text-sm text-white/40">
                   <SearchX className="h-4 w-4" />
                   Ничего не нашли
@@ -897,49 +784,6 @@ function CreateItem({
 }
 
 /** Строка настройки уведомлений: иконка + подпись + переключатель. */
-function NotifyRow({
-  icon,
-  label,
-  hint,
-  active,
-  onClick,
-}: {
-  icon: React.ReactNode;
-  label: string;
-  hint: string;
-  active: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      className="flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left transition-colors hover:bg-white/8"
-    >
-      <span
-        className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${
-          active ? "bg-white/10 text-slate-300" : "bg-white/6 text-white/35"
-        }`}
-      >
-        {icon}
-      </span>
-      <span className="min-w-0 flex-1">
-        <span className="block truncate text-[13px] font-medium">{label}</span>
-        <span className="block truncate text-[11px] text-white/35">{hint}</span>
-      </span>
-      <span
-        className={`relative h-5 w-9 shrink-0 rounded-full transition-colors ${
-          active ? "bg-[#5865f2]" : "bg-white/15"
-        }`}
-      >
-        <span
-          className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition-all ${
-            active ? "left-[18px]" : "left-0.5"
-          }`}
-        />
-      </span>
-    </button>
-  );
-}
 
 
 export type CustomSettings = {

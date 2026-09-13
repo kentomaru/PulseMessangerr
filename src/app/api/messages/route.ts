@@ -1,10 +1,11 @@
 import { NextResponse } from "next/server";
 import { db } from "@/db";
-import { conversationMembers, conversations, messageReactions, messages, users } from "@/db/schema";
-import { and, desc, eq, inArray, isNotNull, isNull } from "drizzle-orm";
+import { conversationMembers, conversations, messageReactions, messages, userBlocks, users } from "@/db/schema";
+import { and, desc, eq, inArray, isNotNull, isNull, or } from "drizzle-orm";
 import { publicUser } from "@/lib/auth";
 import { isUuid, withApi } from "@/lib/api-helpers";
 import {
+  DISCUSSION_MARKER,
   isManager,
   listMembers,
   memberItem,
@@ -136,11 +137,20 @@ export const GET = withApi("messages", async ({ req, me }) => {
   if (!conv) return NextResponse.json({ error: "Чат не найден" }, { status: 404 });
   const kind = normalizeKind(conv.kind);
 
+  // фильтр «комментарии поста»: &replyToId=<postId> (обсуждение канала)
+  const replyToFilter = req.nextUrl.searchParams.get("replyToId");
+
   // последние 200 сообщений (свежие), затем в хронологическом порядке
   const latest = await db
     .select()
     .from(messages)
-    .where(and(eq(messages.conversationId, conversationId), isNull(messages.deletedAt)))
+    .where(
+      and(
+        eq(messages.conversationId, conversationId),
+        isNull(messages.deletedAt),
+        replyToFilter && isUuid(replyToFilter) ? eq(messages.replyToId, replyToFilter) : undefined,
+      ),
+    )
     .orderBy(desc(messages.createdAt))
     .limit(200);
   const list = latest.reverse();
@@ -264,6 +274,41 @@ export const POST = withApi("messages:send", async ({ req, me, log }) => {
     return NextResponse.json({ error: "Чат не найден" }, { status: 404 });
   const content = String(body.content ?? "").trim();
 
+  // Чёрный список: в личном чате заблокированные не переписываются
+  if (conversationId && isUuid(conversationId)) {
+    const [convRow] = await db
+      .select({ kind: conversations.kind })
+      .from(conversations)
+      .where(eq(conversations.id, conversationId))
+      .limit(1);
+    if (convRow && normalizeKind(convRow.kind) === "direct") {
+      const memberIds = (
+        await db
+          .select({ userId: conversationMembers.userId })
+          .from(conversationMembers)
+          .where(eq(conversationMembers.conversationId, conversationId))
+      ).map((m) => m.userId);
+      const peerId = memberIds.find((id) => id !== me.id);
+      if (peerId) {
+        const [block] = await db
+          .select()
+          .from(userBlocks)
+          .where(
+            or(
+              and(eq(userBlocks.blockerId, me.id), eq(userBlocks.blockedId, peerId)),
+              and(eq(userBlocks.blockerId, peerId), eq(userBlocks.blockedId, me.id)),
+            ),
+          )
+          .limit(1);
+        if (block)
+          return NextResponse.json(
+            { error: "Сообщения недоступны: вы в чёрном списке" },
+            { status: 403 },
+          );
+      }
+    }
+  }
+
   if (!conversationId || !content)
     return NextResponse.json({ error: "Пустое сообщение" }, { status: 400 });
   if (content.length > 4000)
@@ -309,12 +354,26 @@ export const POST = withApi("messages:send", async ({ req, me, log }) => {
 
   if (replyToId) {
     const target = await db
-      .select({ id: messages.id })
+      .select({ id: messages.id, conversationId: messages.conversationId })
       .from(messages)
-      .where(and(eq(messages.id, replyToId), eq(messages.conversationId, conversationId)))
+      .where(and(eq(messages.id, replyToId), isNull(messages.deletedAt)))
       .limit(1);
     if (!target[0])
       return NextResponse.json({ error: "Сообщение для ответа не найдено" }, { status: 404 });
+    if (target[0].conversationId !== conversationId) {
+      // Разрешаем отвечать на пост канала из его чата-обсуждения
+      const [targetConv] = await db
+        .select({ kind: conversations.kind })
+        .from(conversations)
+        .where(eq(conversations.id, target[0].conversationId))
+        .limit(1);
+      const about = conv?.about ?? "";
+      const isCommentToPost =
+        normalizeKind(targetConv?.kind ?? "") === "channel" &&
+        about === DISCUSSION_MARKER + target[0].conversationId;
+      if (!isCommentToPost)
+        return NextResponse.json({ error: "Сообщение для ответа не найдено" }, { status: 404 });
+    }
   }
 
   const [msg] = await db

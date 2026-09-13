@@ -331,6 +331,23 @@ export async function ensureSchema(): Promise<void> {
       size bigint not null default 0,
       created_at timestamptz not null default now()
     );
+
+    /* Друзья (заявки как в Discord) и чёрный список — без шага миграций. */
+    alter table users add column if not exists discoverable boolean not null default true;
+    alter table users add column if not exists birthday text not null default '';
+    create table if not exists friend_requests (
+      from_id uuid not null references users(id) on delete cascade,
+      to_id uuid not null references users(id) on delete cascade,
+      status text not null default 'pending',
+      created_at timestamptz not null default now(),
+      primary key (from_id, to_id)
+    );
+    create table if not exists user_blocks (
+      blocker_id uuid not null references users(id) on delete cascade,
+      blocked_id uuid not null references users(id) on delete cascade,
+      created_at timestamptz not null default now(),
+      primary key (blocker_id, blocked_id)
+    );
   `);
   log.info("Схема базы данных проверена (ensureSchema: ok)");
 }

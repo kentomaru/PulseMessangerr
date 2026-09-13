@@ -15,6 +15,10 @@ export type PublicUser = {
   allowCalls: boolean;
   allowMessages: boolean;
   allowGroupInvites: boolean;
+  /** Видно ли меня в глобальном поиске. Ссылка-инвайт работает всегда. */
+  discoverable: boolean;
+  /** Дата рождения (строка, необязательно). */
+  birthday: string;
 };
 
 export type Peer = PublicUser & { lastReadAt?: string | null; typingAt?: string | null };
@@ -37,6 +41,8 @@ export type ConversationInfo = {
   myRole: MemberRole;
   /** Заголовок для шапки/списка: имя собеседника или название группы. */
   title: string;
+  /** Юзернейм/токен приглашения (@имя) — видят только владелец и админы. */
+  inviteToken?: string | null;
 };
 
 export type ConversationMemberItem = {

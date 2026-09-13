@@ -62,6 +62,8 @@ export const PATCH = withApi("auth/me", async ({ req, me, log }) => {
   if (typeof body.allowCalls === "boolean") patch.allowCalls = body.allowCalls;
   if (typeof body.allowMessages === "boolean") patch.allowMessages = body.allowMessages;
   if (typeof body.allowGroupInvites === "boolean") patch.allowGroupInvites = body.allowGroupInvites;
+  if (typeof body.discoverable === "boolean") patch.discoverable = body.discoverable;
+  if (typeof body.birthday === "string") patch.birthday = body.birthday.trim().slice(0, 20);
 
   if (Object.keys(patch).length === 0)
     return NextResponse.json({ error: "Нечего обновлять" }, { status: 400 });

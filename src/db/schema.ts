@@ -40,6 +40,9 @@ export const users = pgTable("users", {
   allowCalls: boolean("allow_calls").notNull().default(true),
   allowMessages: boolean("allow_messages").notNull().default(true),
   allowGroupInvites: boolean("allow_group_invites").notNull().default(true),
+    /** Приватность: видно ли в поиске. Ссылка-инвайт работает всегда. */
+    discoverable: boolean("discoverable").notNull().default(true),
+    birthday: text("birthday").notNull().default(""),
 });
 
 export type User = typeof users.$inferSelect;
@@ -342,3 +345,34 @@ export function newJoinToken(): string {
   globalThis.crypto.getRandomValues(bytes);
   return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("").slice(0, 16);
 }
+
+/** Заявки в друзья (статусы: pending | accepted). */
+export const friendRequests = pgTable(
+  "friend_requests",
+  {
+    fromId: uuid("from_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    toId: uuid("to_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    status: text("status").notNull().default("pending"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.fromId, t.toId] })],
+);
+
+/** Чёрный список: блокирующий не шлёт/не получает личные сообщения. */
+export const userBlocks = pgTable(
+  "user_blocks",
+  {
+    blockerId: uuid("blocker_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    blockedId: uuid("blocked_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.blockerId, t.blockedId] })],
+);

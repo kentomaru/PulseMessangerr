@@ -210,7 +210,7 @@ export default function GroupInfoModal({
     try {
       await api(`/api/conversations/${conversationId}`, {
         method: "PATCH",
-        body: JSON.stringify({ name, about, isPrivate, avatarUrl, username }),
+        body: JSON.stringify({ name, about, isPrivate, avatarUrl, ...(info?.myRole === "owner" ? { username } : {}) }),
       });
       notify("Сохранено");
       setEdit(false);

@@ -46,6 +46,12 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
   const [online, setOnline] = useState(true);
   // Полная кастомизация: цвет/радиус пузырей, размер текста, компактность,
   // шрифт, анимации, Enter, «не беспокоить». Хранится локально.
+  // Режим «комментарии поста»: чат обсуждения с фильтром по replyToId
+  const [commentFilter, setCommentFilter] = useState<{
+    postId: string;
+    channelId: string;
+    channelTitle: string;
+  } | null>(null);
   const [custom, setCustom] = useState(() => {
     try {
       const c = JSON.parse(localStorage.getItem("pulse_custom_v1") ?? "{}") as Record<string, unknown>;
@@ -423,7 +429,7 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
   };
 
   /** «Комментарии» под постом канала: вступление в обсуждение и переход в него. */
-  const openChannelDiscussion = async () => {
+  const openChannelDiscussion = async (postId: string) => {
     const conv = activeConv;
     if (!conv || conv.kind !== "channel") return;
     try {
@@ -439,6 +445,7 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
         body: JSON.stringify({ join: true, groupId: d.discussion.id }),
       }).catch(() => {});
       await loadConversations();
+      setCommentFilter({ postId, channelId: conv.id, channelTitle: conv.title });
       setActiveId(d.discussion.id);
     } catch (e) {
       notify(e instanceof Error ? e.message : "Не удалось открыть комментарии");
@@ -647,7 +654,10 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
           onToggleSound={toggleSound}
           onToggleCallSound={toggleCallSound}
           onToggleNotify={toggleNotify}
-          onSelect={setActiveId}
+          onSelect={(id) => {
+            setCommentFilter(null);
+            setActiveId(id);
+          }}
           onOpenProfile={() => setShowProfile(true)}
           onOpenChat={openConversationWith}
           onLogout={logout}
@@ -691,8 +701,19 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
             onViewUser={(u) => setViewUser(u)}
             onOpenInfo={() => setGroupInfoId(activeConv.id)}
             onOpenDiscussion={
-              activeConv.kind === "channel" ? () => void openChannelDiscussion() : undefined
+              activeConv.kind === "channel"
+                ? (postId) => void openChannelDiscussion(postId)
+                : undefined
             }
+            commentFilter={
+              commentFilter && commentFilter.channelId !== activeConv.id ? null : commentFilter
+            }
+            onExitCommentMode={() => {
+              if (commentFilter) {
+                setActiveId(commentFilter.channelId);
+                setCommentFilter(null);
+              }
+            }}
             onOpenUsername={(name) => void openUsername(name)}
             callBusy={!!callCtl.session || !!callCtl.incoming || callCtl.starting}
             refreshConversations={loadConversations}
@@ -712,6 +733,18 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
           <ProfileModal
             key="profile"
             me={me}
+            theme={theme}
+            onSetTheme={setTheme}
+            uiScale={uiScale}
+            onSetUiScale={setUiScaleState}
+            custom={custom}
+            onSetCustom={setCustom}
+            soundOn={soundOn}
+            callSoundOn={callSoundOn}
+            notifyOn={notifyOn}
+            onToggleSound={toggleSound}
+            onToggleCallSound={toggleCallSound}
+            onToggleNotify={toggleNotify}
             onClose={() => setShowProfile(false)}
             onSaved={(u: PublicUser) => {
               // Приватность сохраняется во вкладке профиля и НЕ закрывает окно;

@@ -118,8 +118,11 @@ type Props = {
   onViewPeer: () => void;
   onViewUser: (user: PublicUser) => void;
   onOpenInfo: () => void;
-  onOpenDiscussion?: () => void;
+  onOpenDiscussion?: (postId: string) => void;
   onOpenUsername?: (name: string) => void;
+  /** Режим «комментарии поста»: показываем только ответы на postId. */
+  commentFilter?: { postId: string; channelTitle: string } | null;
+  onExitCommentMode?: () => void;
   callBusy: boolean;
   refreshConversations: () => void;
   notify: (msg: string) => void;
@@ -236,6 +239,8 @@ export default function ChatView({
   onOpenInfo,
   onOpenDiscussion,
   onOpenUsername,
+  commentFilter = null,
+  onExitCommentMode,
   callBusy,
   refreshConversations,
   notify,
@@ -281,7 +286,7 @@ export default function ChatView({
       total: number;
     }[]
   >([]);
-  const [discussionCount, setDiscussionCount] = useState<number | null>(null);
+  const [postCounts, setPostCounts] = useState<Record<string, number>>({});
   const [enterSend] = useState(() => {
     try {
       return localStorage.getItem("pulse_enter_send") !== "0";
@@ -350,7 +355,11 @@ export default function ChatView({
 
   const load = useCallback(async () => {
     try {
-      const d = await api<MessageLoad>(`/api/messages?conversationId=${conversationId}`);
+      const d = await api<MessageLoad>(
+        `/api/messages?conversationId=${conversationId}${
+          commentFilter ? `&replyToId=${commentFilter.postId}` : ""
+        }`,
+      );
       // Сравниваем с прошлым снимком: если ничего не поменялось, не трогаем
       // state — это убирает лишние перерисовки и «подтормаживание» интерфейса.
       let fp = "";
@@ -398,8 +407,8 @@ export default function ChatView({
       if (e instanceof ApiError && e.status === 401) onUnauthorized();
       /* иначе сеть моргнула — следующий опрос поправит */
     }
-    // ВАЖНО: зависимость только от conversationId (см. комментарий в истории правок)
-  }, [conversationId, onUnauthorized, scrollToEnd, me.id]);
+    // Зависимость от conversationId и фильтра комментариев (режим «комментарии поста»)
+  }, [conversationId, onUnauthorized, scrollToEnd, me.id, commentFilter]);
 
   useEffect(() => {
     loadedRef.current = false;
@@ -424,6 +433,7 @@ export default function ChatView({
   useEffect(() => {
     draftStore.set(conversationId, { text, files: draftFiles });
     writeTextDraft(conversationId, text);
+    window.dispatchEvent(new Event("pulse-drafts"));
   }, [conversationId, text, draftFiles]);
 
   // при уходе из чата — останавливаем запись голоса; черновики НЕ трогаем,
@@ -518,7 +528,9 @@ export default function ChatView({
         for (let i = 0; i < files.length; i++) {
           const d = files[i];
           const lid = `up-${Date.now()}_${i}`;
-          const isImage = d.file.type.startsWith("image/");
+          const extImg = /\.(gif|webp|png|jpe?g|bmp|avif|svg)$/i.test(d.file.name);
+          const extVid = /\.(mp4|webm|mov|m4v|mkv|avi)$/i.test(d.file.name);
+          const isImage = d.file.type.startsWith("image/") || (extImg && !d.file.type.startsWith("video/"));
           const cap = i === 0 && caption ? caption : undefined;
           setPendingUploads((ps) => [
             ...ps,
@@ -543,7 +555,9 @@ export default function ChatView({
             const att: AttachmentInfo = {
               url,
               name: d.file.name,
-              mimeType: d.file.type || "application/octet-stream",
+              mimeType:
+                d.file.type ||
+                (extVid ? "video/mp4" : extImg ? "image/png" : "application/octet-stream"),
               size: d.file.size,
             };
             if (cap) att.caption = cap;
@@ -605,11 +619,28 @@ export default function ChatView({
     fallbackName: string,
   ) => {
     if (!canPost) return;
-    setUploading(true);
+    const lid = `rec-${Date.now()}`;
+    setPendingUploads((ps) => [
+      ...ps,
+      {
+        lid,
+        isImage: false,
+        att: {
+          url: "",
+          name: type === "voice" ? "Голосовое сообщение" : "Видеокружок",
+          mimeType: blob.type,
+          size: blob.size,
+        },
+        loaded: 0,
+        total: blob.size,
+      },
+    ]);
     try {
       const ext = blob.type.includes("mp4") ? "m4a" : blob.type.includes("ogg") ? "ogg" : "webm";
       const file = new File([blob], `${type}.${ext}`, { type: blob.type });
-      const url = await uploadFile(file);
+      const url = await uploadFileWithProgress(file, (loaded, total) => {
+        setPendingUploads((ps) => ps.map((x) => (x.lid === lid ? { ...x, loaded, total } : x)));
+      });
       await api("/api/messages", {
         method: "POST",
         body: JSON.stringify({
@@ -631,7 +662,7 @@ export default function ChatView({
     } catch (e) {
       notify(e instanceof Error ? e.message : "Не удалось отправить");
     } finally {
-      setUploading(false);
+      setPendingUploads((ps) => ps.filter((x) => x.lid !== lid));
     }
   };
 
@@ -1043,10 +1074,10 @@ export default function ChatView({
   // Сколько комментариев в обсуждении канала — цифра под постами
   useEffect(() => {
     if (kind !== "channel") return;
-    api<{ discussion: { id: string } | null; count?: number }>(
+    api<{ discussion: { id: string } | null; postCounts?: Record<string, number> }>(
       `/api/conversations/${conversationId}/discussion`,
     )
-      .then((d) => setDiscussionCount(d.count ?? 0))
+      .then((d) => setPostCounts(d.postCounts ?? {}))
       .catch(() => {});
   }, [kind, conversationId]);
 
@@ -1187,7 +1218,16 @@ export default function ChatView({
           />
           <div className="min-w-0">
             <p className="flex items-center gap-1.5 truncate text-[15px] font-semibold">
-              <span className="truncate">{title}</span>
+              {commentFilter && onExitCommentMode && (
+                <button
+                  onClick={onExitCommentMode}
+                  title="Назад в канал"
+                  className="flex items-center gap-1 rounded-lg bg-white/10 px-2 py-0.5 text-[12px] text-white/70 hover:bg-white/15"
+                >
+                  <ArrowLeft className="h-3 w-3" /> {commentFilter.channelTitle}
+                </button>
+              )}
+              <span className="truncate">{commentFilter ? "Комментарии" : title}</span>
               {/* Кастомный статус-эмодзи собеседника (эмодзи или анимированная гифка) */}
               {kind === "direct" && peerState?.statusEmoji && (
                 <StatusEmoji value={peerState.statusEmoji} size={28} />
@@ -1575,7 +1615,7 @@ export default function ChatView({
                       onDiscuss={
                         kind === "channel" && onOpenDiscussion ? onOpenDiscussion : undefined
                       }
-                      discussionCount={discussionCount}
+                      commentCount={postCounts?.[m.id] ?? 0}
                       meUsername={me.username}
                       onOpenUsername={onOpenUsername}
                       onEdit={() => startEdit(m)}
@@ -2605,7 +2645,7 @@ function MessageBubble({
   onReact,
   onMenu,
   onDiscuss,
-  discussionCount,
+  commentCount,
   meUsername,
   onOpenUsername,
   onJump,
@@ -2628,8 +2668,8 @@ function MessageBubble({
   onPin: () => void;
   onReact: (emoji: string) => void;
   onMenu: (x: number, y: number, message: ChatMessage) => void;
-  onDiscuss?: () => void;
-  discussionCount?: number | null;
+  onDiscuss?: (postId: string) => void;
+  commentCount?: number | null;
   meUsername?: string;
   onOpenUsername?: (name: string) => void;
   onJump: (id: string) => void;
@@ -2831,10 +2871,10 @@ function MessageBubble({
         {/* Комментарии канала — открывают привязанную группу-обсуждение */}
         {onDiscuss && (
           <button
-            onClick={onDiscuss}
+            onClick={() => onDiscuss(message.id)}
             className="mt-1 flex items-center gap-1 text-[11px] text-slate-400 transition-colors hover:text-slate-200"
           >
-            <MessageSquare className="h-3 w-3" /> Комментарии{discussionCount != null ? ` · ${discussionCount}` : ""}
+            <MessageSquare className="h-3 w-3" /> Комментарии{commentCount != null && commentCount > 0 ? ` · ${commentCount}` : ""}
           </button>
         )}
 

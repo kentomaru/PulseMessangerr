@@ -41,6 +41,7 @@ export function PrivacySettings({
   const [allowCalls, setAllowCalls] = useState(me.allowCalls);
   const [allowMessages, setAllowMessages] = useState(me.allowMessages);
   const [allowGroupInvites, setAllowGroupInvites] = useState(me.allowGroupInvites);
+  const [discoverable, setDiscoverable] = useState(me.discoverable ?? true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
@@ -48,7 +49,8 @@ export function PrivacySettings({
     showOnline !== me.showOnline ||
     allowCalls !== me.allowCalls ||
     allowMessages !== me.allowMessages ||
-    allowGroupInvites !== me.allowGroupInvites;
+    allowGroupInvites !== me.allowGroupInvites ||
+    discoverable !== (me.discoverable ?? true);
 
   const save = async () => {
     setSaving(true);
@@ -56,7 +58,7 @@ export function PrivacySettings({
     try {
       const d = await api<{ user: PublicUser }>("/api/auth/me", {
         method: "PATCH",
-        body: JSON.stringify({ showOnline, allowCalls, allowMessages, allowGroupInvites }),
+        body: JSON.stringify({ showOnline, allowCalls, allowMessages, allowGroupInvites, discoverable }),
       });
       onSaved(d.user);
       onDone?.();
@@ -102,6 +104,13 @@ export function PrivacySettings({
           icon={<UsersRound className="h-4 w-4 text-white/50" />}
           label="Добавление в группы"
           hint="Если выключить — никто не сможет добавить вас в группу или канал"
+        />
+        <Toggle
+          checked={discoverable}
+          onChange={setDiscoverable}
+          icon={<CircleDot className="h-4 w-4 text-white/50" />}
+          label="Кто может меня найти"
+          hint="Если выключить — вас не видно в поиске, но по ссылке-инвайту найти можно"
         />
 
         {error && (
