@@ -18,6 +18,7 @@ import StoryViewer from "./StoryViewer";
 import GroupCreateModal from "./GroupCreateModal";
 import GroupInfoModal from "./GroupInfoModal";
 import DiscoverModal from "./DiscoverModal";
+import IframeNotice from "./IframeNotice";
 
 type Toast = { id: number; msg: string };
 
@@ -472,6 +473,7 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
       // Масштаб интерфейса («Мелкий / Обычный / Крупный» в настройках)
       style={zoom !== 1 ? ({ zoom } as React.CSSProperties) : undefined}
     >
+      <IframeNotice />
       <div
         className={`${activeId ? "hidden md:flex" : "flex"} w-full shrink-0 md:w-[var(--sbw,380px)]`}
         style={{ "--sbw": `${sidebarW}px` } as React.CSSProperties}
