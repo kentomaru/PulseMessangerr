@@ -333,6 +333,7 @@ export async function ensureSchema(): Promise<void> {
     );
 
     /* Друзья (заявки как в Discord) и чёрный список — без шага миграций. */
+    alter table messages add column if not exists silent boolean not null default false;
     alter table users add column if not exists discoverable boolean not null default true;
     alter table users add column if not exists birthday text not null default '';
     create table if not exists friend_requests (

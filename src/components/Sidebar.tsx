@@ -1,12 +1,13 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   Bell,
   BellOff,
   BellRing,
   Bookmark,
+  Check,
   CheckCheck,
   Compass,
   Hash,
@@ -51,6 +52,8 @@ type Props = {
   mutedIds: Set<string>;
   onTogglePin: (id: string) => void;
   onToggleMute: (id: string) => void;
+  /** Заглушить чат на срок (мс; 0 = навсегда). */
+  onMuteFor?: (id: string, ms: number) => void;
   /** Масштаб интерфейса: мелкий / обычный / крупный. */
   uiScale: "s" | "m" | "l";
   onSetUiScale: (v: "s" | "m" | "l") => void;
@@ -100,6 +103,12 @@ function previewUrl(type: string, content: string): string | null {
 }
 
 function PreviewNode({ conv, meId }: { conv: ConversationListItem; meId: string }) {
+  // Индикатор «печатает…» — свежий typingAt (не старше 10 секунд)
+  const typingPeer = [conv.peer, ...(conv.members ?? []).map((m) => ({
+    ...m.user,
+    typingAt: m.typingAt,
+  }))].find((u) => u && u.id !== meId && u.typingAt && Date.now() - new Date(u.typingAt).getTime() < 10_000);
+  if (typingPeer) return <span className="italic text-emerald-300/90">печатает…</span>;
   const lm = conv.lastMessage;
   if (!lm) return <>Нет сообщений</>;
   const prefix = lm.senderId === meId ? "Вы: " : conv.kind === "direct" ? "" : `${lm.senderName ?? ""}: `;
@@ -148,7 +157,9 @@ function extractToken(value: string): string | null {
   if (!v) return null;
   const m = v.match(/#group=([A-Za-z0-9_-]+)/);
   if (m) return m[1];
-  if (/^[A-Za-z0-9_-]{8,32}$/.test(v)) return v;
+  // Голый токен/юзернейм: допускаем @префикс и длину 4–32 (юзернеймы бывают короткими)
+  const bare = v.replace(/^@/, "");
+  if (/^[A-Za-z0-9_-]{4,32}$/.test(bare)) return bare;
   return null;
 }
 
@@ -162,6 +173,7 @@ export default function Sidebar({
   mutedIds,
   onTogglePin,
   onToggleMute,
+  onMuteFor,
   uiScale,
   onSetUiScale,
   theme,
@@ -214,6 +226,20 @@ export default function Sidebar({
       return {} as Record<string, string>;
     }
   }, [draftTick, conversations]);
+  /** Папки чатов: фильтр списка по типу (как вкладки в мессенджерах). */
+  const [folder, setFolder] = useState<"all" | "direct" | "group" | "channel" | "unread">(() => {
+    try {
+      const f = localStorage.getItem("pulse_folder_v1");
+      if (f === "direct" || f === "group" || f === "channel" || f === "unread") return f;
+    } catch { /* ignore */ }
+    return "all";
+  });
+  const pickFolder = (f: typeof folder) => {
+    setFolder(f);
+    try {
+      localStorage.setItem("pulse_folder_v1", f);
+    } catch { /* ignore */ }
+  };
   const [query, setQuery] = useState("");
   const [users, setUsers] = useState<PublicUser[]>([]);
   const [groups, setGroups] = useState<DiscoverItem[]>([]);
@@ -275,12 +301,28 @@ export default function Sidebar({
     return () => document.removeEventListener("mousedown", onClick);
   }, []);
 
-  const spaces = useMemo(() => conversations.filter((c) => c.kind !== "direct"), [conversations]);
-  const dms = useMemo(() => conversations.filter((c) => c.kind === "direct"), [conversations]);
+  // Папки: фильтруем список по выбранной вкладке
+  const inFolder = useCallback(
+    (c: ConversationListItem) => {
+      if (folder === "all") return true;
+      if (folder === "unread") return c.unreadCount > 0;
+      if (folder === "direct") return c.kind === "direct";
+      return c.kind === folder; // group | channel
+    },
+    [folder],
+  );
+  const spaces = useMemo(
+    () => conversations.filter((c) => c.kind !== "direct" && inFolder(c)),
+    [conversations, inFolder],
+  );
+  const dms = useMemo(
+    () => conversations.filter((c) => c.kind === "direct" && inFolder(c)),
+    [conversations, inFolder],
+  );
   // Закреплённые чаты выводим отдельной секцией сверху (и убираем из обычных)
   const pinned = useMemo(
-    () => conversations.filter((c) => pinnedIds.has(c.id)),
-    [conversations, pinnedIds],
+    () => conversations.filter((c) => pinnedIds.has(c.id) && inFolder(c)),
+    [conversations, pinnedIds, inFolder],
   );
   const unpinnedSpaces = useMemo(
     () => spaces.filter((c) => !pinnedIds.has(c.id)),
@@ -521,6 +563,44 @@ export default function Sidebar({
         </AnimatePresence>
       </div>
 
+      {/* Папки чатов — быстрый фильтр по типу */}
+      <div className="flex gap-1 px-4 pb-2">
+        {(
+          [
+            ["all", "Все"],
+            ["direct", "Личные"],
+            ["group", "Группы"],
+            ["channel", "Каналы"],
+            ["unread", "Не прочитано"],
+          ] as const
+        ).map(([f, label]) => {
+          const n =
+            f === "unread"
+              ? conversations.filter((c) => c.unreadCount > 0).length
+              : f === "all"
+              ? conversations.reduce((s, c) => s + c.unreadCount, 0)
+              : 0;
+          return (
+            <button
+              key={f}
+              onClick={() => pickFolder(f)}
+              className={`flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-medium transition-colors ${
+                folder === f
+                  ? "bg-[#5865f2]/25 text-white ring-1 ring-[#5865f2]/60"
+                  : "bg-white/[0.05] text-white/45 hover:bg-white/10 hover:text-white/70"
+              }`}
+            >
+              {label}
+              {n > 0 && (
+                <span className="rounded-full bg-[#5865f2] px-1.5 text-[9px] font-bold leading-4 text-white">
+                  {n}
+                </span>
+              )}
+            </button>
+          );
+        })}
+      </div>
+
       {/* Истории */}
       <StoriesRow me={me} groups={storyGroups} onOpen={onOpenStories} onAdd={onAddStory} />
 
@@ -544,6 +624,7 @@ export default function Sidebar({
                   muted={mutedIds.has(conv.id)}
                   onTogglePin={onTogglePin}
                   onToggleMute={onToggleMute}
+                  onMuteFor={onMuteFor}
                 />
               ))}
             </div>
@@ -628,6 +709,7 @@ function ConvRow({
   compact = false,
   onTogglePin,
   onToggleMute,
+  onMuteFor,
 }: {
   conv: ConversationListItem;
   active: boolean;
@@ -639,8 +721,16 @@ function ConvRow({
   compact?: boolean;
   onTogglePin?: (id: string) => void;
   onToggleMute?: (id: string) => void;
+  onMuteFor?: (id: string, ms: number) => void;
 }) {
+  /** Открытое меню выбора длительности мьюта. */
+  const [muteMenu, setMuteMenu] = useState(false);
   const lm = conv.lastMessage;
+  /** Прочитано ли моё последнее сообщение (по lastReadAt собеседника). */
+  const lmRead =
+    !!lm &&
+    !!conv.peer?.lastReadAt &&
+    new Date(lm.createdAt).getTime() <= new Date(conv.peer.lastReadAt).getTime();
   const call = conv.activeCall;
   const isSpace = conv.kind !== "direct";
 
@@ -698,11 +788,40 @@ function ConvRow({
                 title={muted ? "Включить уведомления" : "Заглушить чат"}
                 onClick={(e) => {
                   e.stopPropagation();
-                  onToggleMute(conv.id);
+                  if (muted || !onMuteFor) onToggleMute(conv.id);
+                  else setMuteMenu((v) => !v);
                 }}
-                className="grid h-6 w-6 place-items-center rounded-lg text-white/35 hover:bg-white/10 hover:text-white/80"
+                className="relative grid h-6 w-6 place-items-center rounded-lg text-white/35 hover:bg-white/10 hover:text-white/80"
               >
                 {muted ? <BellRing className="h-3 w-3" /> : <BellOff className="h-3 w-3" />}
+                {muteMenu && (
+                  <>
+                    {/* фон-подложка: клик мимо закрывает меню */}
+                    <span className="fixed inset-0 z-40 cursor-default" onClick={(e) => { e.stopPropagation(); setMuteMenu(false); }} />
+                    <span className="glass-strong absolute top-6 right-0 z-50 w-36 rounded-xl p-1 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+                      {(
+                        [
+                          ["На 1 час", 3_600_000],
+                          ["На 8 часов", 8 * 3_600_000],
+                          ["На 2 дня", 2 * 86_400_000],
+                          ["Навсегда", 0],
+                        ] as const
+                      ).map(([label, ms]) => (
+                        <button
+                          key={label}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onMuteFor?.(conv.id, ms);
+                            setMuteMenu(false);
+                          }}
+                          className="block w-full rounded-lg px-2.5 py-1.5 text-left text-[12px] text-white/70 hover:bg-white/10 hover:text-white"
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </span>
+                  </>
+                )}
               </span>
             )}
             {onTogglePin && (
@@ -722,7 +841,13 @@ function ConvRow({
             )}
           </span>
           {!pinned && lm && (
-            <span className="hidden shrink-0 text-[11px] text-white/30 group-hover/row:hidden">
+            <span className="hidden shrink-0 items-center gap-0.5 text-[11px] text-white/30 group-hover/row:hidden">
+              {/* Статус моего последнего сообщения в личке: ✓ / ✓✓ */}
+              {conv.kind === "direct" && lm.senderId === meId && (
+                <span className={lmRead ? "text-slate-400" : ""} title={lmRead ? "Прочитано" : "Доставлено"}>
+                  {lmRead ? <CheckCheck className="h-3 w-3" /> : <Check className="h-3 w-3" />}
+                </span>
+              )}
               {timeHHmm(lm.createdAt)}
             </span>
           )}

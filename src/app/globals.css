@@ -27,8 +27,8 @@ body {
   color: rgb(255 255 255 / 0.88);
   font-size: 15px;
   line-height: 1.45;
-  /* Ровный тёмно-серый фон без анимаций — как в обычных мессенджерах. */
-  background: #16181c;
+  /* Фон всего приложения следует теме (серый/синий/светлый). */
+  background: var(--app-bg);
   -webkit-font-smoothing: antialiased;
 }
 
@@ -62,12 +62,12 @@ select:focus-visible,
 /* ───────────────────  Поверхности  ─────────────────── */
 
 .glass {
-  background: #212429;
+  background: var(--glass);
   border: 1px solid rgb(255 255 255 / 0.06);
 }
 
 .glass-strong {
-  background: #24272d;
+  background: var(--glass-strong);
   border: 1px solid rgb(255 255 255 / 0.08);
   box-shadow: var(--shadow-pop);
 }
@@ -328,6 +328,65 @@ select:focus-visible,
 .no-callout {
   -webkit-touch-callout: none;
 }
+
+/* ─── Переменные тем: поверхности и акцент ВСЕГО приложения ─── */
+:root {
+  --app-bg: #14161a;
+  --panel: #1b1e24;
+  --panel-2: #16181c;
+  --panel-3: #1e2127;
+  --panel-4: #262930;
+  --glass: #212429;
+  --glass-strong: #24272d;
+  --accent: #5865f2;
+  --accent-h: #4752c4;
+}
+html[data-theme="tg"] {
+  --app-bg: #0e1621;
+  --panel: #17212b;
+  --panel-2: #101a24;
+  --panel-3: #1d2a38;
+  --panel-4: #24344a;
+  --glass: #1c2733;
+  --glass-strong: #21303f;
+  --accent: #5288c1;
+  --accent-h: #3f76ad;
+}
+html[data-theme="light"] {
+  --app-bg: #eef1f5;
+  --panel: #ffffff;
+  --panel-2: #e4e8ee;
+  --panel-3: #f5f6f8;
+  --panel-4: #dbe0e8;
+  --glass: #ffffff;
+  --glass-strong: #ffffff;
+  --accent: #2563eb;
+  --accent-h: #1d4ed8;
+}
+
+/* Хардкод-поверхности перекрашиваются переменными — тема на весь дизайн */
+.bg-\[\#1b1e24\] { background-color: var(--panel) !important; }
+.bg-\[\#16181c\] { background-color: var(--panel-2) !important; }
+.bg-\[\#1e2127\] { background-color: var(--panel-3) !important; }
+.from-\[\#262930\] { --tw-gradient-from: var(--panel-4) !important; }
+.via-\[\#1e2127\] { --tw-gradient-stops: var(--tw-gradient-from), var(--panel-3), var(--tw-gradient-to) !important; }
+.to-\[\#16181c\] { --tw-gradient-to: var(--panel-2) !important; }
+.border-\[\#1b1e24\] { border-color: var(--panel) !important; }
+.border-\[\#16181c\] { border-color: var(--panel-2) !important; }
+.ring-\[\#1b1e24\] { --tw-ring-color: var(--panel) !important; }
+
+/* Акцент (индиго) тоже зависит от темы */
+.bg-\[\#5865f2\] { background-color: var(--accent) !important; }
+.hover\:bg-\[\#4752c4\]:hover { background-color: var(--accent-h) !important; }
+.bg-\[\#4752c4\] { background-color: var(--accent-h) !important; }
+.border-\[\#5865f2\] { border-color: var(--accent) !important; }
+.ring-\[\#5865f2\] { --tw-ring-color: var(--accent) !important; }
+.from-\[\#5865f2\] { --tw-gradient-from: var(--accent) !important; }
+.to-\[\#7289da\] { --tw-gradient-to: var(--accent-h) !important; }
+.text-\[\#5865f2\] { color: var(--accent) !important; }
+.btn-gradient { background: var(--accent); }
+.btn-gradient:hover { background: var(--accent-h); }
+.ring-focus:focus, .ring-focus:focus-within { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
 
 /* ───────────────────  Пресеты тем  ─────────────────── */
 /* «Синяя» — как в Telegram Dark: синеватые панели и пузыри. */

@@ -85,6 +85,8 @@ export type ConversationListItem = {
     senderId: string;
     senderName: string | null;
     createdAt: string;
+    /** Тихое сообщение — без звука. */
+    silent?: boolean;
   } | null;
   unreadCount: number;
   activeCall: CallSummary | null;
@@ -117,6 +119,8 @@ export type AttachmentInfo = {
   caption?: string;
   /** Картинка-стикер: рисуется крупно и без пузыря (гифки в т.ч.). */
   sticker?: boolean;
+  /** Спойлер: размыто до клика. */
+  spoiler?: boolean;
 };
 
 /** Реакция на сообщение (агрегированная по эмодзи). */
@@ -134,6 +138,8 @@ export type ChatMessage = {
   type: "text" | "image" | "voice" | "video_note" | "file" | "call";
   content: string;
   replyToId: string | null;
+  /** Тихое сообщение — без звука у получателей. */
+  silent?: boolean;
   createdAt: string;
   deletedAt: string | null;
   /** Когда сообщение отредактировано. */

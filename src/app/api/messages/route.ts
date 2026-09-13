@@ -103,6 +103,7 @@ async function serializeMessages(list: MessageRow[], meId: string): Promise<Chat
       type: m.type as ChatMessage["type"],
       content: m.content,
       replyToId: m.replyToId,
+      silent: !!(m as { silent?: boolean }).silent,
       createdAt: new Date(m.createdAt).toISOString(),
       deletedAt: m.deletedAt ? new Date(m.deletedAt).toISOString() : null,
       editedAt: m.editedAt ? new Date(m.editedAt).toISOString() : null,
@@ -270,6 +271,7 @@ export const POST = withApi("messages:send", async ({ req, me, log }) => {
   const ALLOWED_TYPES = ["text", "image", "voice", "video_note", "file"] as const;
   const type = ALLOWED_TYPES.includes(body.type) ? (body.type as (typeof ALLOWED_TYPES)[number]) : "text";
   const replyToId = typeof body.replyToId === "string" && isUuid(body.replyToId) ? body.replyToId : null;
+  const silent = body.silent === true;
   if (conversationId && !isUuid(conversationId))
     return NextResponse.json({ error: "Чат не найден" }, { status: 404 });
   const content = String(body.content ?? "").trim();
@@ -378,7 +380,7 @@ export const POST = withApi("messages:send", async ({ req, me, log }) => {
 
   const [msg] = await db
     .insert(messages)
-    .values({ conversationId, senderId: me.id, type, content, replyToId })
+    .values({ conversationId, senderId: me.id, type, content, replyToId, silent })
     .returning();
   if (clientKey) rememberKey(clientKey, msg.id);
 

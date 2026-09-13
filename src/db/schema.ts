@@ -249,6 +249,8 @@ export const messages = pgTable(
     content: text("content").notNull(),
     /** Ответ на другое сообщение (reply/quote). */
     replyToId: uuid("reply_to_id"),
+    /** Тихое сообщение: без звука у получателей. */
+    silent: boolean("silent").notNull().default(false),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
     editedAt: timestamp("edited_at", { withTimezone: true }),

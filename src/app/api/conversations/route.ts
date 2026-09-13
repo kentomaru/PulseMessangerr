@@ -142,6 +142,7 @@ export const GET = withApi("conversations", async ({ me }) => {
             senderId: lastMessage.senderId,
             senderName: userNameById.get(lastMessage.senderId) ?? null,
             createdAt: new Date(lastMessage.createdAt).toISOString(),
+            silent: !!(lastMessage as { silent?: boolean }).silent,
           }
         : null,
       unreadCount: unreadByConv.get(conv.id) ?? 0,

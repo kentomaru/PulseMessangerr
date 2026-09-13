@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   ArrowLeft,
+  ArrowRight,
   Ban,
   Bookmark,
   Check,
@@ -20,6 +21,12 @@ import {
   Film,
   Hash,
   ImagePlus,
+  ChevronUp,
+  Clock,
+  EyeOff,
+  MessageSquareText,
+  Plus,
+  VolumeX,
   Info,
   Loader2,
   Lock,
@@ -156,6 +163,8 @@ type DraftFile = {
   file: File;
   /** Превью (для картинок). */
   preview: string | null;
+  /** Спойлер: фото придёт размытым. */
+  spoiler?: boolean;
 };
 
 /**
@@ -207,6 +216,14 @@ type ContextMenuState = {
 
 /** Быстрые реакции (те же, что в белом списке сервера). */
 const QUICK_EMOJIS = ["👍", "❤️", "😂", "🔥", "😮", "😢", "🎉", "🤔", "👀", "💯"];
+/** Дополнительный набор реакций — открывается по «+». */
+const EXTRA_REACTIONS = [
+  "😀","😅","😊","😍","😘","😜","🤗","😎","🥳","😇",
+  "🙃","😉","🤩","😐","😴","🤯","😱","😤","😭","🤡",
+  "💀","👻","🤖","💩","❤️‍🔥","💔","💕","✨","⚡","🌟",
+  "🍀","🌈","🎂","🍾","🏆","🎯","🚀","💎","🙏","👏",
+  "🤝","💪","✌️","🤘","🫡","🤌","👎","🖕","🥱","😬",
+];
 
 const MAX_UPLOAD_BYTES = 500 * 1024 * 1024;
 
@@ -265,6 +282,25 @@ export default function ChatView({
   const [deleteChatForAll, setDeleteChatForAll] = useState(false);
   const [deletingChat, setDeletingChat] = useState(false);
   const [lightbox, setLightbox] = useState<string | null>(null);
+  /** Зум фото в лайтбоксе колесом мыши. */
+  const [lbZoom, setLbZoom] = useState(1);
+  useEffect(() => setLbZoom(1), [lightbox]);
+  /** Меню способов отправки: тихо, отложить, быстрые ответы. */
+  const [sendMenu, setSendMenu] = useState(false);
+  const [scheduleOpen, setScheduleOpen] = useState(false);
+  const [scheduleTime, setScheduleTime] = useState("");
+  const [scheduled, setScheduled] = useState<{ id: string; text: string; at: number }[]>([]);
+  const [snippetsOpen, setSnippetsOpen] = useState(false);
+  const [snippets, setSnippets] = useState<{ id: string; text: string }[]>(() => {
+    try {
+      return JSON.parse(localStorage.getItem("pulse_snippets_v1") ?? "[]") as { id: string; text: string }[];
+    } catch {
+      return [];
+    }
+  });
+  /** @-автодополнение: текущий набираемый префикс. */
+  const [mentionQ, setMentionQ] = useState<string | null>(null);
+  const [chatMembers, setChatMembers] = useState<{ id: string; username: string; displayName: string; avatarUrl: string | null }[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [replyTo, setReplyTo] = useState<ChatMessage | null>(null);
   // Кнопка «вниз» + счётчик новых сообщений, пока читаешь историю
@@ -377,6 +413,8 @@ export default function ChatView({
         setPinned(d.pinned ?? []);
       }
       setMeta(d.conversation);
+      const ms = (d.conversation as unknown as { members?: { user: { id: string; username: string; displayName: string; avatarUrl: string | null } }[] }).members;
+      if (ms) setChatMembers(ms.map((m) => m.user));
       setMembers(d.members);
       setActiveCall(d.activeCall);
       if (d.peer) setPeerState(d.peer);
@@ -428,6 +466,35 @@ export default function ChatView({
     return () => clearInterval(t);
   }, [load]);
 
+  // Отложенные сообщения: раз в секунду проверяем, не пора ли отправить
+  useEffect(() => {
+    if (scheduled.length === 0) return;
+    const t = setInterval(() => {
+      const now = Date.now();
+      const due = scheduled.filter((x) => x.at <= now);
+      if (due.length === 0) return;
+      setScheduled((cur) => cur.filter((x) => x.at > now));
+      due.forEach((x) => {
+        api("/api/messages", {
+          method: "POST",
+          body: JSON.stringify({
+            conversationId,
+            type: "text",
+            content: x.text,
+            replyToId: commentFilter?.postId ?? null,
+          }),
+        })
+          .then(() => load())
+          .catch(() => {
+            setText((cur) => (cur ? `${cur}
+${x.text}` : x.text));
+            notify("Не удалось отправить отложенное сообщение — вернул в поле ввода");
+          });
+      });
+    }, 1000);
+    return () => clearInterval(t);
+  }, [scheduled, conversationId, commentFilter, load, notify]);
+
   // Черновик (текст + файлы) держим в общем хранилище, чтобы при переключении
   // чатов он не пропадал. Синхронизируем на каждое изменение.
   useEffect(() => {
@@ -460,8 +527,22 @@ export default function ChatView({
    * Отправка сообщения. `directText` — отправить сразу (например, стикер),
    * минуя поле ввода.
    */
-  const send = async (directText?: string) => {
+  const send = async (directText?: string, opts?: { silent?: boolean }) => {
     if (sending || uploading || !canPost) return;
+
+    // Отложенная отправка: если выбрано время — не шлём сразу, ставим в очередь
+    if (directText === undefined && !editing && scheduleOpen && scheduleTime && text.trim()) {
+      const [hh, mm] = scheduleTime.split(":").map(Number);
+      const at = new Date();
+      at.setHours(hh, mm, 0, 0);
+      if (at.getTime() <= Date.now()) at.setDate(at.getDate() + 1);
+      setScheduled((cur) => [...cur, { id: `sch-${Date.now()}`, text: text.trim(), at: at.getTime() }]);
+      setText("");
+      setScheduleOpen(false);
+      setScheduleTime("");
+      notify(`Сообщение будет отправлено в ${scheduleTime}`);
+      return;
+    }
 
     // Стикер/текст напрямую — без редактирования и черновиков
     if (directText !== undefined) {
@@ -478,6 +559,7 @@ export default function ChatView({
             type: "text",
             content,
             replyToId: reply?.id ?? null,
+            silent: opts?.silent ?? false,
           }),
         });
         await load();
@@ -561,13 +643,14 @@ export default function ChatView({
               size: d.file.size,
             };
             if (cap) att.caption = cap;
+            if (d.spoiler && isImage) att.spoiler = true;
             await api("/api/messages", {
               method: "POST",
               body: JSON.stringify({
                 conversationId,
                 type: isImage ? "image" : "file",
                 content: isImage && !cap ? url : JSON.stringify(att),
-                replyToId: replyTo?.id ?? null,
+                replyToId: commentFilter?.postId ?? replyTo?.id ?? null,
               }),
             });
             if (d.preview) URL.revokeObjectURL(d.preview);
@@ -598,7 +681,8 @@ export default function ChatView({
           conversationId,
           type: "text",
           content,
-          replyToId: reply?.id ?? null,
+          replyToId: commentFilter?.postId ?? reply?.id ?? null,
+          silent: opts?.silent ?? false,
         }),
       });
       await load();
@@ -965,6 +1049,12 @@ export default function ChatView({
   /* ─────────────────────────── эмодзи-пикер ─────────────────────────── */
 
   const insertEmoji = (emoji: string) => {
+    // Недавние эмодзи: пишем в localStorage (до 24 штук, без повторов)
+    try {
+      const cur = JSON.parse(localStorage.getItem("pulse_recent_emoji_v1") ?? "[]") as string[];
+      const next = [emoji, ...cur.filter((x) => x !== emoji)].slice(0, 24);
+      localStorage.setItem("pulse_recent_emoji_v1", JSON.stringify(next));
+    } catch { /* ignore */ }
     const el = inputRef.current;
     if (!el) {
       setText((t) => t + emoji);
@@ -1059,9 +1149,14 @@ export default function ChatView({
     URL.revokeObjectURL(a.href);
   };
 
-  // Esc закрывает поиск/ответ/редактирование — как в больших мессенджерах
+  // Esc закрывает поиск/ответ/редактирование; Ctrl+F открывает поиск по чату
   useEffect(() => {
     const h = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "f") {
+        e.preventDefault();
+        setSearchOpen(true);
+        return;
+      }
       if (e.key !== "Escape") return;
       if (searchOpen) setSearchOpen(false);
       else if (replyTo) setReplyTo(null);
@@ -1155,6 +1250,66 @@ export default function ChatView({
     return Math.min(...others.map((m) => new Date(m.lastReadAt as string).getTime()));
   }, [kind, peerState, members, me.id]);
 
+  /** Ссылка-приглашение чата (#group=токен) — для групп и каналов. */
+  const copyChatLink = async () => {
+    try {
+      const d = await api<{ token: string }>(`/api/conversations/${conversationId}/invites`, {
+        method: "POST",
+      });
+      const url = `${window.location.origin}${window.location.pathname}#group=${d.token}`;
+      const ok = await copyToClipboard(url);
+      notify(ok ? "Ссылка на чат скопирована" : "Не удалось скопировать — небезопасный контекст");
+    } catch (e) {
+      notify(e instanceof Error ? e.message : "Не удалось получить ссылку");
+    }
+  };
+
+  /** Быстрое сохранение сообщения в «Избранное» (чат с самим собой). */
+  const saveToSaved = async (m: ChatMessage) => {
+    try {
+      const d = await api<{ conversation: { id: string } }>("/api/conversations", {
+        method: "POST",
+        body: JSON.stringify({ userId: me.id }),
+      });
+      const att = parseAttachment(m.type, m.content);
+      const body = {
+        conversationId: d.conversation.id,
+        type: m.type === "call" ? "text" : m.type,
+        content: m.type === "text" || m.type === "call" ? m.content : m.content,
+        replyToId: null,
+      };
+      void att;
+      await api("/api/messages", { method: "POST", body: JSON.stringify(body) });
+      notify("Сохранено в «Избранное»");
+    } catch (e) {
+      notify(e instanceof Error ? e.message : "Не удалось сохранить");
+    }
+  };
+
+  /** Экспорт истории чата в текстовый файл. */
+  const exportChat = async () => {
+    try {
+      const d = await api<MessageLoad>(`/api/messages?conversationId=${conversationId}`);
+      const lines = d.messages.map((m) => {
+        const who = m.senderId === me.id ? me.displayName : (m.sender?.displayName ?? "Участник");
+        const when = new Date(m.createdAt).toLocaleString("ru-RU");
+        const body = m.type === "text" ? m.content : `[${m.type}]`;
+        return `[${when}] ${who}: ${body}`;
+      });
+      const blob = new Blob([`${title} — история Pulse\n\n${lines.join("\n")}`], {
+        type: "text/plain;charset=utf-8",
+      });
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = `pulse-${title.replace(/[^\wа-яА-Я-]+/g, "_")}.txt`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+      notify("История выгружена в файл");
+    } catch (e) {
+      notify(e instanceof Error ? e.message : "Не удалось выгрузить историю");
+    }
+  };
+
   const headerSubtitle = () => {
     if (typingMembers.length > 0) {
       const names = typingMembers.map((m) => m.user.displayName.split(" ")[0]);
@@ -1208,6 +1363,7 @@ export default function ChatView({
 
         <button
           onClick={kind === "direct" ? onViewPeer : onOpenInfo}
+          title={meta?.about ? `Описание: ${meta.about}` : undefined}
           className="flex min-w-0 items-center gap-3 text-left"
         >
           <Avatar
@@ -1347,6 +1503,25 @@ export default function ChatView({
                       onClick={() => {
                         setMenuOpen(false);
                         exportHistory();
+                      }}
+                    />
+                    <div className="my-1 h-px bg-white/8" />
+                    {isSpace && (
+                      <MenuItem
+                        icon={<Copy className="h-4 w-4 text-slate-400" />}
+                        label="Ссылка-приглашение"
+                        onClick={() => {
+                          setMenuOpen(false);
+                          void copyChatLink();
+                        }}
+                      />
+                    )}
+                    <MenuItem
+                      icon={<Download className="h-4 w-4 text-slate-400" />}
+                      label="Экспорт истории (.txt)"
+                      onClick={() => {
+                        setMenuOpen(false);
+                        void exportChat();
                       }}
                     />
                     <div className="my-1 h-px bg-white/8" />
@@ -1577,9 +1752,16 @@ export default function ChatView({
                 new Date(m.createdAt).getTime() - new Date(prev.createdAt).getTime() < 5 * 60_000;
               const own = m.senderId === me.id;
               const canDelete = own || (isSpace && (meta?.myRole === "owner" || meta?.myRole === "admin"));
+              // Упоминание меня: строка подсвечивается, как в больших мессенджерах
+              const mentionMe =
+                !own && m.type === "text" && m.content.toLowerCase().includes(`@${me.username.toLowerCase()}`);
 
               return (
-                <div key={m.id} data-mid={m.id}>
+                <div
+                  key={m.id}
+                  data-mid={m.id}
+                  className={mentionMe ? "rounded-xl bg-[#5865f2]/10 ring-1 ring-[#5865f2]/25" : undefined}
+                >
                   {unreadBefore === m.id && (
                     <div className="flex items-center gap-3 py-2">
                       <span className="h-px flex-1 bg-rose-400/30" />
@@ -1713,6 +1895,23 @@ export default function ChatView({
                           <span className="block truncate text-xs font-medium text-white/85">{d.file.name}</span>
                           <span className="block text-[11px] text-white/35">{formatBytes(d.file.size)}</span>
                         </span>
+                        {d.preview && (
+                          <button
+                            onClick={() =>
+                              setDraftFiles((cur) =>
+                                cur.map((x) => (x.id === d.id ? { ...x, spoiler: !x.spoiler } : x)),
+                              )
+                            }
+                            className={`rounded-full p-1 transition-colors ${
+                              d.spoiler
+                                ? "bg-[#5865f2]/60 text-white"
+                                : "bg-black/60 text-white/70 hover:text-white"
+                            }`}
+                            title={d.spoiler ? "Спойлер включён" : "Отправить как спойлер (размыто)"}
+                          >
+                            <EyeOff className="h-3.5 w-3.5" />
+                          </button>
+                        )}
                         <button
                           onClick={() => removeDraftFile(d.id)}
                           className="rounded-full bg-black/60 p-1 text-white/70 transition-colors hover:text-rose-300"
@@ -1729,7 +1928,33 @@ export default function ChatView({
           </AnimatePresence>
 
           <AnimatePresence>
-            {(replyTo || editing) && (
+            {/* (ниже очередь отложенных) */}
+          {/* Отложенные сообщения — очередь с возможностью отмены */}
+          {scheduled.length > 0 && (
+            <div className="glass mb-1.5 rounded-2xl px-3.5 py-2">
+              <p className="pb-1 text-[11px] font-semibold tracking-wide text-white/40 uppercase">
+                Отложенные · {scheduled.length}
+              </p>
+              {scheduled.map((x) => (
+                <div key={x.id} className="flex items-center gap-2 py-0.5 text-[12px]">
+                  <Clock className="h-3 w-3 shrink-0 text-white/35" />
+                  <span className="text-white/50 tabular-nums">
+                    {new Date(x.at).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" })}
+                  </span>
+                  <span className="min-w-0 flex-1 truncate text-white/65">{x.text}</span>
+                  <button
+                    onClick={() => setScheduled((cur) => cur.filter((y) => y.id !== x.id))}
+                    className="text-white/30 hover:text-rose-300"
+                    title="Отменить"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {(replyTo || editing) && (
               <motion.div
                 key={editing ? "editing" : "reply"}
                 initial={{ opacity: 0, height: 0 }}
@@ -1849,6 +2074,9 @@ export default function ChatView({
                 onChange={(e) => {
                   setText(e.target.value);
                   sendTyping();
+                  // @-автодополнение: набираем @ник участника
+                  const m = e.target.value.match(/(?:^|\s)@([a-zA-Z0-9_]*)$/);
+                  setMentionQ(m ? m[1].toLowerCase() : null);
                 }}
                 onPaste={(e) => {
                   const files = Array.from(e.clipboardData?.files ?? []);
@@ -1887,14 +2115,197 @@ export default function ChatView({
               >
                 <Smile className="h-4.5 w-4.5" />
               </button>
-              <button
-                onClick={() => void send()}
-                disabled={(!canSendSomething && !editing) || sending || uploading}
-                title="Отправить"
-                className="btn-gradient flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl text-white"
-              >
-                {sending ? <Loader2 className="h-4.5 w-4.5 animate-spin" /> : <Send className="h-4.5 w-4.5" />}
-              </button>
+              {text.length > 3400 && (
+                <span className="absolute -top-5 right-14 text-[10px] text-white/35 tabular-nums">
+                  {text.length}/4000
+                </span>
+              )}
+              {/* Отправка + меню способов: тихо, отложить, быстрые ответы */}
+              <div className="relative flex shrink-0 items-center">
+                <button
+                  onClick={() => void send()}
+                  disabled={(!canSendSomething && !editing) || sending || uploading}
+                  title="Отправить"
+                  className="btn-gradient flex h-11 w-11 items-center justify-center rounded-l-2xl text-white"
+                >
+                  {sending ? <Loader2 className="h-4.5 w-4.5 animate-spin" /> : <Send className="h-4.5 w-4.5" />}
+                </button>
+                <button
+                  onClick={() => setSendMenu((v) => !v)}
+                  title="Способы отправки"
+                  className="btn-gradient flex h-11 w-5 items-center justify-center rounded-r-2xl border-l border-white/20 text-white/85"
+                >
+                  <ChevronUp className="h-3.5 w-3.5" />
+                </button>
+                {sendMenu && (
+                  <>
+                    <div className="fixed inset-0 z-30" onClick={() => setSendMenu(false)} />
+                    <div className="glass-strong absolute right-0 bottom-[calc(100%+8px)] z-40 w-56 rounded-2xl p-1.5 shadow-2xl">
+                      <button
+                        onClick={() => {
+                          setSendMenu(false);
+                          void send(undefined, { silent: true });
+                        }}
+                        className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-left text-[13px] text-white/75 hover:bg-white/10"
+                      >
+                        <VolumeX className="h-4 w-4 text-white/45" /> Отправить без звука
+                      </button>
+                      <button
+                        onClick={() => {
+                          setSendMenu(false);
+                          setScheduleOpen((v) => !v);
+                        }}
+                        className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-left text-[13px] text-white/75 hover:bg-white/10"
+                      >
+                        <Clock className="h-4 w-4 text-white/45" /> Отложить отправку…
+                      </button>
+                      <button
+                        onClick={() => {
+                          setSendMenu(false);
+                          setSnippetsOpen((v) => !v);
+                        }}
+                        className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-left text-[13px] text-white/75 hover:bg-white/10"
+                      >
+                        <MessageSquareText className="h-4 w-4 text-white/45" /> Быстрые ответы
+                      </button>
+                    </div>
+                  </>
+                )}
+                {scheduleOpen && (
+                  <>
+                    <div className="fixed inset-0 z-30" onClick={() => setScheduleOpen(false)} />
+                    <div className="glass-strong absolute right-0 bottom-[calc(100%+8px)] z-40 w-64 rounded-2xl p-3 shadow-2xl">
+                      <p className="pb-2 text-[12px] font-semibold text-white/60">Отправить в:</p>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="time"
+                          value={scheduleTime}
+                          onChange={(e) => setScheduleTime(e.target.value)}
+                          className="ring-focus flex-1 rounded-xl border border-white/10 bg-white/[0.05] px-3 py-2 text-sm"
+                        />
+                        <button
+                          onClick={() => {
+                            setScheduleOpen(false);
+                            void send();
+                          }}
+                          disabled={!scheduleTime || !text.trim()}
+                          className="btn-gradient rounded-xl px-3 py-2 text-[13px] font-semibold text-white disabled:opacity-40"
+                        >
+                          OK
+                        </button>
+                      </div>
+                      <p className="pt-2 text-[11px] leading-snug text-white/35">
+                        Отправится, пока приложение открыто.
+                      </p>
+                    </div>
+                  </>
+                )}
+                {snippetsOpen && (
+                  <>
+                    <div className="fixed inset-0 z-30" onClick={() => setSnippetsOpen(false)} />
+                    <div className="glass-strong nice-scroll absolute right-0 bottom-[calc(100%+8px)] z-40 max-h-64 w-72 overflow-y-auto rounded-2xl p-1.5 shadow-2xl">
+                      <p className="px-3 pt-1.5 pb-1 text-[11px] font-semibold tracking-wide text-white/35 uppercase">
+                        Быстрые ответы
+                      </p>
+                      {snippets.length === 0 && (
+                        <p className="px-3 py-2 text-[12px] text-white/35">Пока пусто — сохраните текущий текст ниже.</p>
+                      )}
+                      {snippets.map((sn) => (
+                        <div key={sn.id} className="group flex items-center gap-1">
+                          <button
+                            onClick={() => {
+                              setText(sn.text);
+                              setSnippetsOpen(false);
+                              inputRef.current?.focus();
+                            }}
+                            className="min-w-0 flex-1 truncate rounded-xl px-3 py-2 text-left text-[13px] text-white/75 hover:bg-white/10"
+                          >
+                            {sn.text}
+                          </button>
+                          <button
+                            onClick={() => {
+                              const next = snippets.filter((x) => x.id !== sn.id);
+                              setSnippets(next);
+                              try { localStorage.setItem("pulse_snippets_v1", JSON.stringify(next)); } catch { /* ignore */ }
+                            }}
+                            className="rounded-lg p-1.5 text-white/25 opacity-0 transition-opacity group-hover:opacity-100 hover:text-rose-300"
+                            title="Удалить шаблон"
+                          >
+                            <X className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      ))}
+                      {text.trim() && (
+                        <button
+                          onClick={() => {
+                            const next = [...snippets, { id: `sn-${Date.now()}`, text: text.trim() }].slice(-20);
+                            setSnippets(next);
+                            try { localStorage.setItem("pulse_snippets_v1", JSON.stringify(next)); } catch { /* ignore */ }
+                            setSnippetsOpen(false);
+                          }}
+                          className="mt-1 flex w-full items-center gap-2 rounded-xl border-t border-white/8 px-3 py-2 text-left text-[13px] text-emerald-300/90 hover:bg-white/10"
+                        >
+                          <Plus className="h-4 w-4" /> Сохранить текущий текст как шаблон
+                        </button>
+                      )}
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Слеши: /имя — вставить быстрый ответ */}
+          {text.startsWith("/") && snippets.length > 0 && (() => {
+            const q = text.slice(1).toLowerCase();
+            const matches = snippets.filter((sn) => sn.text.toLowerCase().includes(q)).slice(0, 5);
+            if (matches.length === 0) return null;
+            return (
+              <div className="glass-strong absolute bottom-[calc(100%+8px)] left-0 z-40 w-72 rounded-2xl p-1.5 shadow-2xl">
+                <p className="px-3 pt-1 pb-1 text-[10px] font-semibold tracking-wide text-white/30 uppercase">
+                  Быстрые ответы
+                </p>
+                {matches.map((sn) => (
+                  <button
+                    key={sn.id}
+                    onClick={() => {
+                      setText(sn.text);
+                      inputRef.current?.focus();
+                    }}
+                    className="block w-full truncate rounded-xl px-3 py-2 text-left text-[13px] text-white/75 hover:bg-white/10"
+                  >
+                    {sn.text}
+                  </button>
+                ))}
+              </div>
+            );
+          })()}
+
+          {/* @-автодополнение: участники чата */}
+          {mentionQ !== null && chatMembers.filter((m) =>
+            m.username.toLowerCase().startsWith(mentionQ) || m.displayName.toLowerCase().includes(mentionQ),
+          ).length > 0 && (
+            <div className="glass-strong absolute bottom-[calc(100%+8px)] left-0 z-40 w-64 rounded-2xl p-1.5 shadow-2xl">
+              {chatMembers
+                .filter((m) => m.username.toLowerCase().startsWith(mentionQ) || m.displayName.toLowerCase().includes(mentionQ))
+                .slice(0, 6)
+                .map((m) => (
+                  <button
+                    key={m.id}
+                    onClick={() => {
+                      setText((t) => t.replace(/@([a-zA-Z0-9_]*)$/, `@${m.username} `));
+                      setMentionQ(null);
+                      inputRef.current?.focus();
+                    }}
+                    className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-left hover:bg-white/10"
+                  >
+                    <Avatar name={m.displayName} src={m.avatarUrl} size={26} />
+                    <span className="min-w-0">
+                      <span className="block truncate text-[13px] font-medium">{m.displayName}</span>
+                      <span className="block truncate text-[11px] text-white/35">@{m.username}</span>
+                    </span>
+                  </button>
+                ))}
             </div>
           )}
 
@@ -1987,7 +2398,50 @@ export default function ChatView({
             className="fixed inset-0 z-[75] flex items-center justify-center bg-black/90 p-6 backdrop-blur-sm"
           >
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={lightbox} alt="Фото" className="max-h-full max-w-full rounded-2xl object-contain shadow-2xl" />
+            <img
+              src={lightbox}
+              alt="Фото"
+              style={{ transform: `scale(${lbZoom})`, transition: "transform 0.12s ease" }}
+              onWheel={(e) => {
+                e.stopPropagation();
+                setLbZoom((z) => Math.max(0.4, Math.min(5, z + (e.deltaY < 0 ? 0.25 : -0.25))));
+              }}
+              className="max-h-full max-w-full rounded-2xl object-contain shadow-2xl"
+            />
+            {/* Навигация между фото чата */}
+            {(() => {
+              const imgs = messages
+                .map((m) => parseAttachment(m.type, m.content))
+                .filter((a): a is import("@/lib/types").AttachmentInfo => !!a && m2img(a) !== null)
+                .map((a) => m2img(a) as string);
+              const idx = lightbox ? imgs.indexOf(lightbox) : -1;
+              if (idx < 0 || imgs.length < 2) return null;
+              const go = (d: number) => setLightbox(imgs[(idx + d + imgs.length) % imgs.length]);
+              return (
+                <>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      go(-1);
+                    }}
+                    title="Предыдущее фото"
+                    className="glass absolute left-5 top-1/2 -translate-y-1/2 rounded-full p-3 text-white/80 hover:text-white"
+                  >
+                    <ArrowLeft className="h-5 w-5" />
+                  </button>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      go(1);
+                    }}
+                    title="Следующее фото"
+                    className="glass absolute right-5 top-1/2 -translate-y-1/2 rounded-full p-3 text-white/80 hover:text-white"
+                  >
+                    <ArrowRight className="h-5 w-5" />
+                  </button>
+                </>
+              );
+            })()}
             <a
               href={lightbox}
               download
@@ -2072,6 +2526,10 @@ export default function ChatView({
               setForwarding(ctxMenu.message);
               setCtxMenu(null);
             }}
+            onSave={() => {
+              void saveToSaved(ctxMenu.message);
+              setCtxMenu(null);
+            }}
             onDelete={() => {
               requestDelete(ctxMenu.message);
               setCtxMenu(null);
@@ -2146,6 +2604,7 @@ function MessageContextMenu({
   onPin,
   onCopy,
   onForward,
+  onSave,
   onDelete,
 }: {
   state: ContextMenuState;
@@ -2159,10 +2618,14 @@ function MessageContextMenu({
   onPin: () => void;
   onCopy: () => void;
   onForward: () => void;
+  /** Быстрое сохранение в «Избранное». */
+  onSave: () => void;
   onDelete: () => void;
 }) {
   const m = state.message;
   const own = m.senderId === meId;
+  /** Развёрнутый набор реакций («+»). */
+  const [moreEmoji, setMoreEmoji] = useState(false);
   const att = parseAttachment(m.type, m.content);
   // Правка по ПКМ — только для текстовых сообщений. Гифку/картинку/файл
   // редактировать «как текст» нельзя (это ломало вложение).
@@ -2202,7 +2665,31 @@ function MessageContextMenu({
             {e}
           </button>
         ))}
+        {/* «+»: ещё реакции */}
+        <button
+          onClick={() => setMoreEmoji((v) => !v)}
+          className={`rounded-lg py-1.5 text-base transition-colors ${
+            moreEmoji ? "bg-white/15 text-white" : "text-white/40 hover:bg-white/8 hover:text-white/80"
+          }`}
+          title="Ещё реакции"
+        >
+          +
+        </button>
       </div>
+      {moreEmoji && (
+        <div className="nice-scroll grid max-h-36 grid-cols-8 gap-0.5 overflow-y-auto border-b border-white/8 p-1">
+          {EXTRA_REACTIONS.map((e) => (
+            <button
+              key={e}
+              onClick={onReact.bind(null, e)}
+              className="rounded-lg py-1 text-base transition-transform hover:scale-125 active:scale-95"
+              title={`Реакция ${e}`}
+            >
+              {e}
+            </button>
+          ))}
+        </div>
+      )}
       <ContextItem icon={<Reply className="h-4 w-4 text-slate-400" />} label="Ответить" onClick={onReply} />
       {canPin && (
         <ContextItem
@@ -2227,6 +2714,11 @@ function MessageContextMenu({
         icon={<ChevronRight className="h-4 w-4 text-emerald-300" />}
         label="Переслать"
         onClick={onForward}
+      />
+      <ContextItem
+        icon={<Bookmark className="h-4 w-4 text-amber-300" />}
+        label="В Избранное"
+        onClick={onSave}
       />
       {canDelete && (
         <ContextItem icon={<Trash2 className="h-4 w-4 text-rose-300" />} label="Удалить" onClick={onDelete} danger />
@@ -2625,7 +3117,100 @@ function VideoNoteRecorder({
   );
 }
 
+/** URL фото из вложения (для навигации по лайтбоксу). */
+function m2img(a: { url?: string; mimeType?: string; sticker?: boolean }): string | null {
+  if (!a.url || a.sticker) return null;
+  const mime = (a.mimeType ?? "").toLowerCase();
+  if (mime.startsWith("image/") || /\.(png|jpe?g|gif|webp|avif|bmp|svg)$/i.test(a.url)) return a.url;
+  return null;
+}
+
 /* ─────────────────────────── пузырь сообщения ─────────────────────────── */
+
+/** Фото-спойлер: размыто, пока не кликнешь (или если прислались без спойлера). */
+function SpoilerImage({
+  url,
+  caption,
+  onOpen,
+  spoiler,
+}: {
+  url: string;
+  caption?: string;
+  onOpen: (url: string) => void;
+  spoiler: boolean;
+}) {
+  const [revealed, setRevealed] = useState(!spoiler);
+  return (
+    <div className="relative">
+      <button
+        onClick={() => (revealed ? onOpen(url) : setRevealed(true))}
+        title={revealed ? "Открыть фото" : "Спойлер — нажмите, чтобы показать"}
+        className="block overflow-hidden rounded-3xl ring-1 ring-white/10 transition-transform hover:scale-[1.01]"
+      >
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={url}
+          alt={caption || "Фото"}
+          className={`max-h-80 w-full max-w-xs object-cover transition-all duration-300 ${
+            revealed ? "" : "scale-110 blur-xl"
+          }`}
+          draggable={false}
+        />
+      </button>
+      {!revealed && (
+        <span className="pointer-events-none absolute inset-0 grid place-items-center">
+          <span className="glass rounded-xl px-3 py-1.5 text-[12px] font-medium text-white/80">
+            Спойлер · показать
+          </span>
+        </span>
+      )}
+    </div>
+  );
+}
+
+/** Длинные сообщения сворачиваются — разворачиваются по кнопке. */
+function LongText({
+  content,
+  meUsername,
+  onOpenUsername,
+}: {
+  content: string;
+  meUsername?: string;
+  onOpenUsername?: (name: string) => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const LIMIT = 650;
+  if (content.length <= LIMIT || expanded) {
+    return (
+      <>
+        <p className="msg-text text-[15px] leading-relaxed break-words whitespace-pre-wrap">
+          {renderRichText(content, meUsername, onOpenUsername)}
+        </p>
+        {content.length > LIMIT && (
+          <button
+            onClick={() => setExpanded(false)}
+            className="mt-0.5 text-[12px] font-medium text-slate-400 hover:text-white"
+          >
+            Свернуть
+          </button>
+        )}
+      </>
+    );
+  }
+  return (
+    <>
+      <p className="msg-text text-[15px] leading-relaxed break-words whitespace-pre-wrap">
+        {renderRichText(content.slice(0, LIMIT) + "…", meUsername, onOpenUsername)}
+      </p>
+      <button
+        onClick={() => setExpanded(true)}
+        className="mt-0.5 text-[12px] font-medium text-slate-400 hover:text-white"
+      >
+        Показать полностью ({Math.ceil(content.length / 100) / 10} тыс. симв.)
+      </button>
+    </>
+  );
+}
 
 function MessageBubble({
   message,
@@ -2838,18 +3423,7 @@ function MessageBubble({
             />
           ) : isImage && att ? (
             <div>
-              <button
-                onClick={() => onOpenImage(att.url)}
-                className="block overflow-hidden rounded-3xl ring-1 ring-white/10 transition-transform hover:scale-[1.01]"
-              >
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={att.url}
-                  alt={att.caption || "Фото"}
-                  className="max-h-80 w-full max-w-xs object-cover"
-                  draggable={false}
-                />
-              </button>
+              <SpoilerImage url={att.url} caption={att.caption} onOpen={onOpenImage} spoiler={!!att.spoiler} />
               {att.caption && (
                 <p className="msg-text px-1 pt-2 pb-1 text-[15px] leading-relaxed break-words whitespace-pre-wrap">
                   {renderRichText(att.caption, meUsername, onOpenUsername)}
@@ -2862,9 +3436,7 @@ function MessageBubble({
             /* «Стикер»: только эмодзи — крупно, без пузыря (как в мессенджерах) */
             <p className="py-0.5 text-[52px] leading-none select-none">{message.content.trim()}</p>
           ) : (
-            <p className="msg-text text-[15px] leading-relaxed break-words whitespace-pre-wrap">
-              {renderRichText(message.content, meUsername, onOpenUsername)}
-            </p>
+            <LongText content={message.content} meUsername={meUsername} onOpenUsername={onOpenUsername} />
           )}
         </div>
 
@@ -2900,6 +3472,11 @@ function MessageBubble({
         )}
 
         <div className={`mt-1 flex items-center gap-1 text-[10px] text-white/30 ${alignRight ? "justify-end" : ""}`}>
+          {message.silent && (
+            <span title="Отправлено без звука">
+              <VolumeX className="h-3 w-3 text-white/35" />
+            </span>
+          )}
           <span>{timeHHmm(message.createdAt)}</span>
           {message.pinned && (
             <span title="Закреплено" className="flex items-center">
@@ -3486,6 +4063,14 @@ function EmojiPicker({
 }) {
   /** catIdx === -1 — вкладка стикеров, остальное — категории эмодзи. */
   const [catIdx, setCatIdx] = useState(0);
+  /** Недавно использованные эмодзи — запоминаются между сессиями. */
+  const [recentEmojis] = useState<string[]>(() => {
+    try {
+      return JSON.parse(localStorage.getItem("pulse_recent_emoji_v1") ?? "[]") as string[];
+    } catch {
+      return [];
+    }
+  });
   const cats = EMOJI_CATEGORIES;
   const cat = cats[Math.min(Math.max(catIdx, 0), cats.length - 1)];
   const gridRef = useRef<HTMLDivElement | null>(null);
@@ -3592,7 +4177,25 @@ function EmojiPicker({
         </>
       ) : (
         <>
-          {/* сетка эмодзи */}
+          {/* недавние эмодзи */}
+      {catIdx >= 0 && recentEmojis.length > 0 && (
+        <div className="border-b border-white/8 px-2.5 py-1.5">
+          <p className="pb-1 text-[10px] font-semibold tracking-wide text-white/30 uppercase">Недавние</p>
+          <div className="flex flex-wrap gap-0.5">
+            {recentEmojis.slice(0, 16).map((e) => (
+              <button
+                key={e}
+                onClick={() => onPick(e)}
+                className="rounded-lg p-1 text-lg transition-transform hover:scale-125"
+              >
+                {e}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* сетка эмодзи */}
           <div
             ref={gridRef}
             className="nice-scroll grid max-h-64 grid-cols-8 gap-0.5 overflow-y-auto p-2 max-sm:grid-cols-7"

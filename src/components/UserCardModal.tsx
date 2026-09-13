@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import {
   Ban,
   CalendarDays,
+  Copy,
   Loader2,
   MessageSquareLock,
   MessageSquareText,
@@ -30,6 +31,7 @@ export default function UserCardModal({ user, onClose, onMessage }: Props) {
   // попытку с новым параметром — «баннеры хуёво грузят» чаще всего именно
   // временный сбой/кэш.
   // Отношения с этим пользователем: друзья/заявки + блокировка
+  const [copiedName, setCopiedName] = useState(false);
   const [rel, setRel] = useState<"none" | "friend" | "incoming" | "outgoing" | null>(null);
   const [blocked, setBlocked] = useState(false);
   const [relBusy, setRelBusy] = useState(false);
@@ -143,7 +145,23 @@ export default function UserCardModal({ user, onClose, onMessage }: Props) {
           {/* Кастомный статус-эмодзи: эмодзи или анимированная гифка */}
           <StatusEmoji value={user.statusEmoji} size={36} />
         </h3>
-        <p className="mt-0.5 text-sm text-white/40">@{user.username}</p>
+        <button
+          onClick={() => {
+            const ok = navigator.clipboard?.writeText(`@${user.username}`);
+            void ok;
+            setCopiedName(true);
+            setTimeout(() => setCopiedName(false), 1500);
+          }}
+          title="Скопировать юзернейм"
+          className="mt-0.5 inline-flex items-center gap-1 text-sm text-white/40 transition-colors hover:text-white/75"
+        >
+          @{user.username}
+          {copiedName ? (
+            <span className="text-[10px] text-emerald-300">скопировано</span>
+          ) : (
+            <Copy className="h-3 w-3 opacity-50" />
+          )}
+        </button>
         <p className={`mt-1.5 text-xs font-medium ${user.online ? "text-emerald-400" : "text-white/35"}`}>
           {lastSeenLabel(user.lastSeenAt, user.online)}
         </p>

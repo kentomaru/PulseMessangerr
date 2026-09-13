@@ -2,13 +2,14 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { CheckCircle2 } from "lucide-react";
+import { CheckCircle2, PanelLeftOpen, Keyboard, MessageSquareText } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
 import { messagePreview } from "@/lib/format";
 import { playNotifySound } from "@/lib/notify";
 import type { ConversationListItem, PublicUser, StoryGroup } from "@/lib/types";
 import { useCallController } from "@/lib/useCallController";
 import Sidebar from "./Sidebar";
+import Avatar from "./Avatar";
 import ChatView from "./ChatView";
 import ProfileModal from "./ProfileModal";
 import UserCardModal from "./UserCardModal";
@@ -34,6 +35,12 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
   const [conversations, setConversations] = useState<ConversationListItem[]>([]);
   const [storyGroups, setStoryGroups] = useState<StoryGroup[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
+  /** Быстрый переключатель чатов (бывший Ctrl+K-фокус — теперь палитра). */
+  const [quickOpen, setQuickOpen] = useState(false);
+  /** Справка по горячим клавишам. */
+  const [helpOpen, setHelpOpen] = useState(false);
+  /** Свёрнутый сайдбар — чат на всю ширину. */
+  const [sidebarOpen, setSidebarOpen] = useState(true);
   // Тема оформления: серый (по умолчанию), синий как в TG, светлая
   const [theme, setTheme] = useState<"gray" | "tg" | "light">(() => {
     try {
@@ -211,22 +218,26 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
     });
   }, [notify]);
 
-  /** Браузерное уведомление (всплывает поверх других окон). */
-  const pushBrowserNotification = useCallback((title: string, body: string) => {
-    try {
-      if (typeof Notification === "undefined") return;
-      if (localStorage.getItem("pulse_notify") !== "on") return;
-      if (Notification.permission !== "granted") return;
-      const n = new Notification(title, { body, icon: "/icons/icon-192.png", tag: `pulse-${Date.now()}` });
-      n.onclick = () => {
-        window.focus();
-        n.close();
-      };
-      setTimeout(() => n.close(), 7_000);
-    } catch {
-      /* уведомления недоступны — тихо пропускаем */
-    }
-  }, []);
+  /** Браузерное уведомление (всплывает поверх других окон); клик открывает чат. */
+  const pushBrowserNotification = useCallback(
+    (title: string, body: string, conversationId?: string) => {
+      try {
+        if (typeof Notification === "undefined") return;
+        if (localStorage.getItem("pulse_notify") !== "on") return;
+        if (Notification.permission !== "granted") return;
+        const n = new Notification(title, { body, icon: "/icons/icon-192.png", tag: `pulse-${Date.now()}` });
+        n.onclick = () => {
+          window.focus();
+          if (conversationId) setActiveId(conversationId);
+          n.close();
+        };
+        setTimeout(() => n.close(), 7_000);
+      } catch {
+        /* уведомления недоступны — тихо пропускаем */
+      }
+    },
+    [],
+  );
 
   // Счётчик непрочитанных в заголовке вкладки
   useEffect(() => {
@@ -287,7 +298,23 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
     const keys = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
         e.preventDefault();
-        document.getElementById("pulse-chat-search")?.focus();
+        setQuickOpen((v) => !v);
+      }
+      // Ctrl+/ — справка по горячим клавишам
+      if ((e.ctrlKey || e.metaKey) && e.key === "/") {
+        e.preventDefault();
+        setHelpOpen((v) => !v);
+      }
+      // Ctrl+B — свернуть/развернуть список чатов
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "b") {
+        e.preventDefault();
+        setSidebarOpen((v) => !v);
+      }
+      // Ctrl+Shift+M — заглушить/включить звук текущего чата
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === "m") {
+        e.preventDefault();
+        const id = activeIdRef.current;
+        if (id) toggleMuted(id);
       }
       // Ctrl+Shift+D — переключение темы оформления
       if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === "d") {
@@ -328,9 +355,47 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
     }
   };
   const [pinnedIds, setPinnedIds] = useState<Set<string>>(() => readIdSet(PINNED_KEY));
-  const [mutedIds, setMutedIds] = useState<Set<string>>(() => readIdSet(MUTED_KEY));
-  const mutedRef = useRef(mutedIds);
-  mutedRef.current = mutedIds;
+  /** Мьют с длительностью: id → момент, до которого чат заглушён (0 = навсегда). */
+  const MUTED_UNTIL_KEY = "pulse_muted_until_v1";
+  const [mutedUntil, setMutedUntil] = useState<Map<string, number>>(() => {
+    try {
+      const raw = localStorage.getItem(MUTED_UNTIL_KEY);
+      const obj = raw ? (JSON.parse(raw) as Record<string, number>) : {};
+      return new Map(Object.entries(obj));
+    } catch {
+      return new Map();
+    }
+  });
+  // Совместимость со старым форматом (просто список)
+  useEffect(() => {
+    const legacy = readIdSet(MUTED_KEY);
+    if (legacy.size > 0) {
+      setMutedUntil((cur) => {
+        const next = new Map(cur);
+        legacy.forEach((id) => next.set(id, 0));
+        return next;
+      });
+      try {
+        localStorage.removeItem(MUTED_KEY);
+      } catch { /* ignore */ }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const persistMuted = (m: Map<string, number>) => {
+    try {
+      localStorage.setItem(MUTED_UNTIL_KEY, JSON.stringify(Object.fromEntries(m)));
+    } catch { /* ignore */ }
+  };
+  const mutedRef = useRef(mutedUntil);
+  mutedRef.current = mutedUntil;
+  const mutedIds = useMemo(() => {
+    const now = Date.now();
+    const set = new Set<string>();
+    mutedUntil.forEach((until, id) => {
+      if (until === 0 || until > now) set.add(id);
+    });
+    return set;
+  }, [mutedUntil]);
   const togglePinned = useCallback((id: string) => {
     setPinnedIds((cur) => {
       const next = new Set(cur);
@@ -344,16 +409,24 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
       return next;
     });
   }, []);
+  /** Переключить мьют: заглушённый — включить, активный — заглушить навсегда. */
   const toggleMuted = useCallback((id: string) => {
-    setMutedIds((cur) => {
-      const next = new Set(cur);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      try {
-        localStorage.setItem(MUTED_KEY, JSON.stringify(Array.from(next)));
-      } catch {
-        /* ignore */
-      }
+    setMutedUntil((cur) => {
+      const next = new Map(cur);
+      const until = next.get(id);
+      if (until !== undefined && (until === 0 || until > Date.now())) next.delete(id);
+      else next.set(id, 0);
+      persistMuted(next);
+      return next;
+    });
+  }, []);
+  /** Заглушить чат на конкретный срок (мс); 0 = навсегда. */
+  const muteFor = useCallback((id: string, ms: number) => {
+    setMutedUntil((cur) => {
+      const next = new Map(cur);
+      if (ms <= 0) next.set(id, 0);
+      else next.set(id, Date.now() + ms);
+      persistMuted(next);
       return next;
     });
   }, []);
@@ -365,23 +438,31 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
   useEffect(() => {
     const prev = lastMsgIdsRef.current;
     let beep = false;
-    let notif: { title: string; body: string } | null = null;
+    let notif: { title: string; body: string; conversationId: string } | null = null;
     for (const c of conversations) {
       const lm = c.lastMessage;
       const old = prev.get(c.id);
       // Диалог мог появиться в списке впервые сразу с чужим сообщением
       // (написал новый человек) — это тоже «новое сообщение», бип нужен.
       // От первоначальной загрузки список защищает firstConvLoadRef ниже.
-      const isNew = !!lm && lm.id !== old && lm.senderId !== me.id;
+      const isNew = !!lm && lm.id !== old && lm.senderId !== me.id && !lm.silent;
       // Заглушённый чат: ни звука, ни всплывающего уведомления
-      if (isNew && mutedRef.current.has(c.id)) continue;
+      const until = mutedRef.current.get(c.id);
+      if (isNew && until !== undefined && (until === 0 || until > Date.now())) continue;
       if (isNew && (c.id !== activeIdRef.current || document.hidden)) {
         beep = true;
         // Для браузерного уведомления берём последнее новое сообщение
         const sender = lm.senderId === me.id ? "Вы" : (lm.senderName ?? "Новое сообщение");
+        const mentionsMe =
+          !!me.username && lm.type === "text" && lm.content.toLowerCase().includes(`@${me.username.toLowerCase()}`);
         notif = {
-          title: c.kind === "direct" ? sender : `${sender} · ${c.title}`,
+          title: mentionsMe
+            ? `Упоминание · ${sender}`
+            : c.kind === "direct"
+            ? sender
+            : `${sender} · ${c.title}`,
           body: messagePreview(lm.type, lm.content),
+          conversationId: c.id,
         };
       }
       if (lm) prev.set(c.id, lm.id);
@@ -394,7 +475,7 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
     }
     if (beep) {
       if (soundOnRef.current && Date.now() >= (dndUntilRef.current ?? 0)) playNotifySound();
-      if (notif) pushBrowserNotification(notif.title, notif.body);
+      if (notif) pushBrowserNotification(notif.title, notif.body, notif.conversationId);
     }
   }, [conversations, me.id, pushBrowserNotification]);
 
@@ -629,6 +710,7 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
           Нет соединения с сетью — сообщения и звонки не работают
         </div>
       )}
+      {sidebarOpen ? (
       <div
         className={`${activeId ? "hidden md:flex" : "flex"} w-full shrink-0 md:w-[var(--sbw,380px)]`}
         style={{ "--sbw": `${sidebarW}px` } as React.CSSProperties}
@@ -643,6 +725,7 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
           mutedIds={mutedIds}
           onTogglePin={togglePinned}
           onToggleMute={toggleMuted}
+          onMuteFor={muteFor}
           uiScale={uiScale}
           onSetUiScale={setUiScale}
           theme={theme}
@@ -669,6 +752,28 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
           onJoinByToken={(token) => void joinByToken(token)}
         />
       </div>
+      ) : (
+        /* Свёрнутый сайдбар: узкая полоска возврата к списку чатов */
+        <div className="hidden shrink-0 flex-col items-center gap-3 border-r border-white/5 bg-black/20 px-1.5 py-3 md:flex">
+          <button
+            onClick={() => setSidebarOpen(true)}
+            title="Развернуть список чатов (Ctrl+B)"
+            className="glass flex h-9 w-9 items-center justify-center rounded-xl text-white/60 transition-colors hover:text-white"
+          >
+            <PanelLeftOpen className="h-4 w-4" />
+          </button>
+          <button
+            onClick={() => {
+              setSidebarOpen(true);
+              setShowProfile(true);
+            }}
+            title="Профиль"
+            className="mt-1"
+          >
+            <Avatar name={me.displayName} src={me.avatarUrl} size={34} online />
+          </button>
+        </div>
+      )}
 
       {/* Разделитель: перетащите, чтобы изменить ширину панели чатов (десктоп) */}
       <div
@@ -728,6 +833,22 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
       {/* Каждый условный ребёнок — со своим key: без них framer-motion
           ставит пустой ключ, а при двух открытых модалках это
           «two children with the same key» и сбитые exit-анимации. */}
+      {/* Быстрый переключатель чатов (Ctrl+K) */}
+      {quickOpen && (
+        <QuickSwitcher
+          conversations={conversations}
+          onPick={(id) => {
+            setCommentFilter(null);
+            setActiveId(id);
+            setQuickOpen(false);
+          }}
+          onClose={() => setQuickOpen(false)}
+        />
+      )}
+
+      {/* Справка по горячим клавишам (Ctrl+/) */}
+      {helpOpen && <HotkeysHelp onClose={() => setHelpOpen(false)} />}
+
       <AnimatePresence>
         {showProfile && (
           <ProfileModal
@@ -937,6 +1058,136 @@ function EmptyState({
       >
         Создать группу
       </button>
+    </div>
+  );
+}
+
+
+/** Быстрый переключатель чатов: палитра как в редакторах (открывается по Ctrl+K). */
+function QuickSwitcher({
+  conversations,
+  onPick,
+  onClose,
+}: {
+  conversations: ConversationListItem[];
+  onPick: (id: string) => void;
+  onClose: () => void;
+}) {
+  const [q, setQ] = useState("");
+  const [idx, setIdx] = useState(0);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  useEffect(() => {
+    inputRef.current?.focus();
+  }, []);
+  const list = useMemo(() => {
+    const t = q.trim().toLowerCase();
+    const base = t
+      ? conversations.filter((c) => c.title.toLowerCase().includes(t))
+      : conversations;
+    return base.slice(0, 12);
+  }, [conversations, q]);
+  useEffect(() => setIdx(0), [q]);
+  return (
+    <div
+      className="fixed inset-0 z-[90] flex items-start justify-center bg-black/50 pt-[12vh] backdrop-blur-sm"
+      onMouseDown={onClose}
+    >
+      <div
+        className="glass-strong w-full max-w-md rounded-2xl p-2 shadow-2xl"
+        onMouseDown={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center gap-2 border-b border-white/8 px-3 py-2">
+          <MessageSquareText className="h-4 w-4 text-white/40" />
+          <input
+            ref={inputRef}
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "ArrowDown") {
+                e.preventDefault();
+                setIdx((i) => Math.min(i + 1, list.length - 1));
+              } else if (e.key === "ArrowUp") {
+                e.preventDefault();
+                setIdx((i) => Math.max(i - 1, 0));
+              } else if (e.key === "Enter" && list[idx]) {
+                onPick(list[idx].id);
+              } else if (e.key === "Escape") {
+                onClose();
+              }
+            }}
+            placeholder="Начните вводить название чата…"
+            className="w-full bg-transparent text-sm outline-none placeholder:text-white/30"
+          />
+        </div>
+        <div className="nice-scroll max-h-72 overflow-y-auto p-1">
+          {list.length === 0 && (
+            <p className="px-3 py-4 text-center text-sm text-white/35">Ничего не нашли</p>
+          )}
+          {list.map((c, i) => (
+            <button
+              key={c.id}
+              onClick={() => onPick(c.id)}
+              onMouseEnter={() => setIdx(i)}
+              className={`flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-left ${
+                i === idx ? "bg-white/10" : ""
+              }`}
+            >
+              <Avatar name={c.title} src={c.avatarUrl} size={28} />
+              <span className="min-w-0 flex-1 truncate text-sm font-medium">{c.title}</span>
+              {c.unreadCount > 0 && (
+                <span className="rounded-full bg-[#5865f2] px-1.5 py-0.5 text-[10px] font-bold text-white">
+                  {c.unreadCount}
+                </span>
+              )}
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Справка по горячим клавишам (открывается по Ctrl+/). */
+function HotkeysHelp({ onClose }: { onClose: () => void }) {
+  const rows: [string, string][] = [
+    ["Ctrl+K", "Быстрый переход к чату"],
+    ["Ctrl+B", "Свернуть / развернуть список чатов"],
+    ["Ctrl+/", "Эта справка"],
+    ["Ctrl+Shift+D", "Переключить тему оформления"],
+    ["Ctrl+Shift+M", "Заглушить / включить текущий чат"],
+    ["Alt+↓ / Alt+↑", "Следующий / предыдущий чат"],
+    ["Ctrl+F", "Поиск по сообщениям в чате"],
+    ["Enter", "Отправить сообщение (настраивается)"],
+    ["Shift+Enter", "Новая строка"],
+    ["Esc", "Закрыть окно / отменить ответ"],
+  ];
+  return (
+    <div
+      className="fixed inset-0 z-[95] flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
+      onMouseDown={onClose}
+    >
+      <div
+        className="glass-strong w-full max-w-sm rounded-2xl p-5 shadow-2xl"
+        onMouseDown={(e) => e.stopPropagation()}
+      >
+        <p className="mb-3 flex items-center gap-2 font-display text-base font-bold">
+          <Keyboard className="h-4 w-4 text-white/50" /> Горячие клавиши
+        </p>
+        <div className="space-y-2">
+          {rows.map(([k, d]) => (
+            <div key={k} className="flex items-center justify-between gap-3 text-sm">
+              <span className="rounded-lg bg-white/10 px-2 py-0.5 font-mono text-[12px] text-white/80">{k}</span>
+              <span className="text-right text-white/55">{d}</span>
+            </div>
+          ))}
+        </div>
+        <button
+          onClick={onClose}
+          className="btn-gradient mt-4 w-full rounded-xl py-2.5 text-sm font-semibold text-white"
+        >
+          Понятно
+        </button>
+      </div>
     </div>
   );
 }
