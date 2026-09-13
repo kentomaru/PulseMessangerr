@@ -7,8 +7,12 @@ import {
   BellOff,
   BellRing,
   Bookmark,
+  Archive,
+  CircleDot,
   Check,
   CheckCheck,
+  ChevronDown,
+  ChevronUp,
   Compass,
   Hash,
   Loader2,
@@ -50,6 +54,15 @@ type Props = {
   pinnedIds: Set<string>;
   /** Заглушённые чаты (без звука и уведомлений). */
   mutedIds: Set<string>;
+  /** Архивные чаты (скрыты из общего списка). */
+  archivedIds: Set<string>;
+  onToggleArchive: (id: string) => void;
+  /** Пометить чат непрочитанным. */
+  onMarkUnread?: (id: string) => void;
+  /** Прочитать все чаты. */
+  onReadAll?: () => void;
+  /** Открыть чат и перейти к сообщению (глобальный поиск). */
+  onOpenMessage?: (conversationId: string, messageId: string) => void;
   onTogglePin: (id: string) => void;
   onToggleMute: (id: string) => void;
   /** Заглушить чат на срок (мс; 0 = навсегда). */
@@ -171,6 +184,11 @@ export default function Sidebar({
   soundOn,
   pinnedIds,
   mutedIds,
+  archivedIds,
+  onToggleArchive,
+  onMarkUnread,
+  onReadAll,
+  onOpenMessage,
   onTogglePin,
   onToggleMute,
   onMuteFor,
@@ -304,12 +322,13 @@ export default function Sidebar({
   // Папки: фильтруем список по выбранной вкладке
   const inFolder = useCallback(
     (c: ConversationListItem) => {
+      if (archivedIds.has(c.id)) return false; // архив — отдельно
       if (folder === "all") return true;
       if (folder === "unread") return c.unreadCount > 0;
       if (folder === "direct") return c.kind === "direct";
       return c.kind === folder; // group | channel
     },
-    [folder],
+    [folder, archivedIds],
   );
   const spaces = useMemo(
     () => conversations.filter((c) => c.kind !== "direct" && inFolder(c)),
@@ -324,6 +343,18 @@ export default function Sidebar({
     () => conversations.filter((c) => pinnedIds.has(c.id) && inFolder(c)),
     [conversations, pinnedIds, inFolder],
   );
+  /** Архивные чаты — отдельная сворачиваемая секция. */
+  const archived = useMemo(
+    () => conversations.filter((c) => archivedIds.has(c.id)),
+    [conversations, archivedIds],
+  );
+  /** Сумма непрочитанных вне архива — для кнопки «Прочитать все». */
+  const totalUnread = useMemo(
+    () =>
+      conversations.reduce((sum, c) => (archivedIds.has(c.id) ? sum : sum + c.unreadCount), 0),
+    [conversations, archivedIds],
+  );
+  const [archiveOpen, setArchiveOpen] = useState(false);
   const unpinnedSpaces = useMemo(
     () => spaces.filter((c) => !pinnedIds.has(c.id)),
     [spaces, pinnedIds],
@@ -535,7 +566,8 @@ export default function Sidebar({
                 <button
                   key={m.id}
                   onClick={() => {
-                    onSelect(m.conversationId);
+                    if (onOpenMessage) onOpenMessage(m.conversationId, m.id);
+                    else onSelect(m.conversationId);
                     setQuery("");
                   }}
                   className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left transition-colors hover:bg-white/8"
@@ -625,6 +657,8 @@ export default function Sidebar({
                   onTogglePin={onTogglePin}
                   onToggleMute={onToggleMute}
                   onMuteFor={onMuteFor}
+                  onToggleArchive={onToggleArchive}
+                  onMarkUnread={onMarkUnread}
                 />
               ))}
             </div>
@@ -647,6 +681,9 @@ export default function Sidebar({
               muted={mutedIds.has(conv.id)}
               onTogglePin={onTogglePin}
               onToggleMute={onToggleMute}
+              onMuteFor={onMuteFor}
+              onToggleArchive={onToggleArchive}
+              onMarkUnread={onMarkUnread}
             />
           ))}
         </div>
@@ -673,8 +710,57 @@ export default function Sidebar({
                 muted={mutedIds.has(conv.id)}
                 onTogglePin={onTogglePin}
                 onToggleMute={onToggleMute}
+                onMuteFor={onMuteFor}
+                onToggleArchive={onToggleArchive}
+                onMarkUnread={onMarkUnread}
               />
             ))}
+          </div>
+        )}
+
+        {/* Прочитать все непрочитанные чаты */}
+        {totalUnread > 0 && onReadAll && (
+          <button
+            onClick={onReadAll}
+            className="mt-2 flex w-full items-center justify-center gap-2 rounded-xl border border-white/8 bg-white/4 px-2 py-2 text-[12px] font-semibold text-white/45 transition-colors hover:bg-white/8 hover:text-white/80"
+          >
+            <CheckCheck className="h-3.5 w-3.5" />
+            Прочитать все · {totalUnread}
+          </button>
+        )}
+
+        {/* Архив — сворачиваемая секция внизу списка */}
+        {archived.length > 0 && (
+          <div className="mt-2">
+            <button
+              onClick={() => setArchiveOpen((v) => !v)}
+              className="flex w-full items-center gap-2 rounded-xl px-2 py-2 text-[12px] font-semibold text-white/40 transition-colors hover:bg-white/5 hover:text-white/70"
+            >
+              <Archive className="h-3.5 w-3.5" />
+              Архив · {archived.length}
+              <span className="ml-auto">
+                {archiveOpen ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+              </span>
+            </button>
+            {archiveOpen &&
+              archived.map((conv) => (
+                <ConvRow
+                  key={conv.id}
+                  conv={conv}
+                  active={conv.id === activeId}
+                  meId={me.id}
+                  onSelect={onSelect}
+                  draft={drafts[conv.id] ?? ""}
+                  compact={custom.compact}
+                  muted={mutedIds.has(conv.id)}
+                  archived
+                  onTogglePin={onTogglePin}
+                  onToggleMute={onToggleMute}
+                  onMuteFor={onMuteFor}
+                  onToggleArchive={onToggleArchive}
+                  onMarkUnread={onMarkUnread}
+                />
+              ))}
           </div>
         )}
 
@@ -705,11 +791,14 @@ function ConvRow({
   onSelect,
   pinned = false,
   muted = false,
+  archived = false,
   draft = "",
   compact = false,
   onTogglePin,
   onToggleMute,
   onMuteFor,
+  onToggleArchive,
+  onMarkUnread,
 }: {
   conv: ConversationListItem;
   active: boolean;
@@ -717,11 +806,16 @@ function ConvRow({
   onSelect: (id: string) => void;
   pinned?: boolean;
   muted?: boolean;
+  /** Чат в архиве — кнопка меняет на «Вернуть». */
+  archived?: boolean;
+  onToggleArchive?: (id: string) => void;
   draft?: string;
   compact?: boolean;
   onTogglePin?: (id: string) => void;
   onToggleMute?: (id: string) => void;
   onMuteFor?: (id: string, ms: number) => void;
+  /** Пометить чат непрочитанным (пока сам не зайду). */
+  onMarkUnread?: (id: string) => void;
 }) {
   /** Открытое меню выбора длительности мьюта. */
   const [muteMenu, setMuteMenu] = useState(false);
@@ -822,6 +916,32 @@ function ConvRow({
                     </span>
                   </>
                 )}
+              </span>
+            )}
+            {onToggleArchive && (
+              <span
+                role="button"
+                title={archived ? "Вернуть из архива" : "В архив"}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onToggleArchive(conv.id);
+                }}
+                className="grid h-6 w-6 place-items-center rounded-lg text-white/35 hover:bg-white/10 hover:text-amber-300"
+              >
+                <Archive className="h-3 w-3" />
+              </span>
+            )}
+            {onMarkUnread && conv.unreadCount === 0 && (
+              <span
+                role="button"
+                title="Пометить непрочитанным"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onMarkUnread(conv.id);
+                }}
+                className="grid h-6 w-6 place-items-center rounded-lg text-white/35 hover:bg-white/10 hover:text-sky-300"
+              >
+                <CircleDot className="h-3 w-3" />
               </span>
             )}
             {onTogglePin && (

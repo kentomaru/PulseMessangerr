@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { db } from "@/db";
-import { conversationMembers, users } from "@/db/schema";
+import { conversationBans, conversationMembers, users } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { isUuid, withApi } from "@/lib/api-helpers";
 import { publicUser } from "@/lib/auth";
@@ -63,8 +63,15 @@ export const POST = withApi<{ id: string }>("conversations:members:add", async (
 
   const added: typeof users.$inferSelect[] = [];
   const blocked: string[] = [];
+  // Забаненных добавлять нельзя — админ должен сначала снять бан.
+  const banRows = await db
+    .select({ userId: conversationBans.userId })
+    .from(conversationBans)
+    .where(eq(conversationBans.conversationId, id));
+  const bannedIds = new Set(banRows.map((r) => r.userId));
+
   for (const u of targets) {
-    if (existingIds.has(u.id)) continue;
+    if (existingIds.has(u.id) || bannedIds.has(u.id)) continue;
     // Приватность: кто запретил добавление в группы — пропускаем с пояснением.
     if (!u.allowGroupInvites) {
       blocked.push(`@${u.username}`);

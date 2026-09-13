@@ -12,6 +12,7 @@ import {
   Check,
   Copy,
   Crown,
+  Eraser,
   Hash,
   Loader2,
   Lock,
@@ -66,6 +67,10 @@ export default function GroupInfoModal({
 }: Props) {
   const [info, setInfo] = useState<ConversationInfo | null>(null);
   const [members, setMembers] = useState<ConversationMemberItem[]>([]);
+  /** Забаненные участники (видны только админам). */
+  const [bans, setBans] = useState<{ user: PublicUser; bannedAt: string }[]>([]);
+  /** Фильтр списка участников. */
+  const [memberQ, setMemberQ] = useState("");
   const [loading, setLoading] = useState(true);
   const [edit, setEdit] = useState(false);
   const [name, setName] = useState("");
@@ -95,6 +100,16 @@ export default function GroupInfoModal({
       setAvatarUrl(d.conversation.avatarUrl);
       const tk = (d.conversation as { inviteToken?: string | null }).inviteToken ?? "";
       setUsername(/^[a-z0-9_]{4,20}$/.test(tk) ? tk : "");
+      // Список банов доступен только админам — ошибки просто игнорируем.
+      if (d.conversation.myRole === "owner" || d.conversation.myRole === "admin") {
+        void api<{ bans: { user: PublicUser; bannedAt: string }[] }>(
+          `/api/conversations/${conversationId}/bans`,
+        )
+          .then((b) => setBans(b.bans))
+          .catch(() => setBans([]));
+      } else {
+        setBans([]);
+      }
     } catch (e) {
       notify(e instanceof Error ? e.message : "Не удалось загрузить");
     } finally {
@@ -190,7 +205,12 @@ export default function GroupInfoModal({
   const removeMember = async (userId: string, who: string) => {
     if (!confirm(userId === me.id ? `Выйти из «${who}»?` : `Исключить ${who}?`)) return;
     try {
-      await api(`/api/conversations/${conversationId}/members/${userId}`, { method: "DELETE" });
+      // Выход из чата — отдельный роут; исключение участника — роут кика с баном.
+      if (userId === me.id) {
+        await api(`/api/conversations/${conversationId}`, { method: "DELETE" });
+      } else {
+        await api(`/api/conversations/${conversationId}/members/${userId}`, { method: "DELETE" });
+      }
       if (userId === me.id) {
         notify("Вы покинули диалог");
         onLeft();
@@ -493,7 +513,24 @@ export default function GroupInfoModal({
         <p className="px-2 py-2 text-[11px] font-semibold tracking-widest text-white/25 uppercase">
           Участники · {members.length}
         </p>
-        {members.map((m) => {
+        {members.length > 5 && (
+          <input
+            value={memberQ}
+            onChange={(e) => setMemberQ(e.target.value)}
+            placeholder="Поиск по участникам…"
+            className="ring-focus mb-1.5 w-full rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-sm placeholder:text-white/30"
+          />
+        )}
+        {members
+          .filter((m) => {
+            const q = memberQ.trim().toLowerCase();
+            if (!q) return true;
+            return (
+              m.user.displayName.toLowerCase().includes(q) ||
+              m.user.username.toLowerCase().includes(q)
+            );
+          })
+          .map((m) => {
           const isMe = m.user.id === me.id;
           const canManageThem =
             (owner && m.role !== "owner") ||
@@ -526,7 +563,7 @@ export default function GroupInfoModal({
                   </>
                 )}
                 {canManageThem && (
-                  <IconAction title="Исключить" onClick={() => void removeMember(m.user.id, m.user.displayName)}>
+                  <IconAction title="Исключить (с запретом на возврат)" onClick={() => void removeMember(m.user.id, m.user.displayName)}>
                     <Trash2 className="h-3.5 w-3.5 text-rose-300" />
                   </IconAction>
                 )}
@@ -535,7 +572,55 @@ export default function GroupInfoModal({
           );
         })}
 
+        {bans.length > 0 && manager && (
+          <div className="mt-3 border-t border-white/8 pt-3">
+            <p className="mb-1 px-2 text-[11px] font-semibold text-white/35">
+              Забаненные · {bans.length}
+            </p>
+            {bans.map((b) => (
+              <div key={b.user.id} className="flex items-center gap-3 rounded-2xl px-2 py-1.5 hover:bg-white/5">
+                <Avatar name={b.user.displayName} src={b.user.avatarUrl} size={30} />
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-[13px] font-medium">{b.user.displayName}</p>
+                  <p className="truncate text-[11px] text-white/35">@{b.user.username}</p>
+                </div>
+                <button
+                  onClick={() =>
+                    void api(`/api/conversations/${conversationId}/bans/${b.user.id}`, { method: "DELETE" })
+                      .then(() => {
+                        setBans((cur) => cur.filter((x) => x.user.id !== b.user.id));
+                        notify(`@${b.user.username} разбанен`);
+                      })
+                      .catch((e) => notify(e instanceof Error ? e.message : "Не удалось снять бан"))
+                  }
+                  className="glass rounded-xl px-3 py-1.5 text-[12px] text-white/70 transition-colors hover:bg-white/10 hover:text-white"
+                >
+                  Разбанить
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
         <div className="mt-3 flex gap-2 px-2">
+          {manager && (
+            <button
+              onClick={() => {
+                if (!confirm(`Очистить всю историю «${info.title}»? Сообщения нельзя восстановить.`)) return;
+                void api(`/api/conversations/${conversationId}/messages`, { method: "DELETE" })
+                  .then(() => {
+                    notify("История очищена");
+                    onChanged();
+                    onClose();
+                  })
+                  .catch((e) => notify(e instanceof Error ? e.message : "Не удалось очистить историю"));
+              }}
+              className="glass flex flex-1 items-center justify-center gap-2 rounded-2xl py-3 text-sm text-amber-300/90 transition-colors hover:text-amber-200"
+            >
+              <Eraser className="h-4 w-4" />
+              Очистить историю
+            </button>
+          )}
           <button
             onClick={() => void removeMember(me.id, info.title)}
             className="glass flex flex-1 items-center justify-center gap-2 rounded-2xl py-3 text-sm text-white/70 transition-colors hover:text-white"

@@ -164,6 +164,28 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
     };
   }, [loadConversations, loadStories]);
 
+  /** Переход по ссылке на сообщение: #msg=<id>. */
+  const [jumpMsgId, setJumpMsgId] = useState<string | null>(null);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const m = window.location.hash.match(/^#msg=([a-zA-Z0-9-]+)/);
+    if (!m) return;
+    const msgId = m[1];
+    // убрать хэш, чтобы повторная загрузка не прыгала снова
+    window.history.replaceState(null, "", window.location.pathname + window.location.search);
+    void fetch(`/api/messages/${msgId}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data: { message?: { conversationId?: string } } | null) => {
+        const convId = data?.message?.conversationId;
+        if (convId) {
+          setCommentFilter(null);
+          setActiveId(convId);
+          setJumpMsgId(msgId);
+        }
+      })
+      .catch(() => undefined);
+  }, []);
+
   /** Звук входящего звонка (рингтон). */
   const [callSoundOn, setCallSoundOn] = useState(true);
   /** Браузерные уведомления о новых сообщениях. */
@@ -240,10 +262,7 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
   );
 
   // Счётчик непрочитанных в заголовке вкладки
-  useEffect(() => {
-    const n = conversations.reduce((s, c) => s + c.unreadCount, 0);
-    document.title = n > 0 ? `(${n}) Pulse` : "Pulse";
-  }, [conversations]);
+
 
   /* ── Масштаб интерфейса: «всё очень маленькое» → можно укрупнить ── */
   const UI_SCALE_KEY = "pulse_ui_scale_v1";
@@ -355,6 +374,44 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
     }
   };
   const [pinnedIds, setPinnedIds] = useState<Set<string>>(() => readIdSet(PINNED_KEY));
+  /** Пометить чат непрочитанным: точка прочтения откатывается за последнее сообщение. */
+  const markUnread = async (id: string) => {
+    try {
+      await fetch(`/api/conversations/${id}/read`, {
+        method: "POST",
+        body: JSON.stringify({ unread: true }),
+      });
+      void loadConversations();
+    } catch {
+      /* тихо */
+    }
+  };
+
+  /** Прочитать все чаты разом (кроме архива). */
+  const readAll = async () => {
+    const targets = conversations.filter((c) => c.unreadCount > 0 && !archivedIds.has(c.id));
+    await Promise.all(
+      targets.map((c) =>
+        fetch(`/api/conversations/${c.id}/read`, { method: "POST" }).catch(() => undefined),
+      ),
+    );
+    void loadConversations();
+  };
+
+  /** Архив: чаты скрыты из общего списка (хранится локально). */
+  const ARCHIVED_KEY = "pulse_archived_v1";
+  const [archivedIds, setArchivedIds] = useState<Set<string>>(() => readIdSet(ARCHIVED_KEY));
+  const toggleArchived = useCallback((id: string) => {
+    setArchivedIds((cur) => {
+      const next = new Set(cur);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      try {
+        localStorage.setItem(ARCHIVED_KEY, JSON.stringify(Array.from(next)));
+      } catch { /* ignore */ }
+      return next;
+    });
+  }, []);
   /** Мьют с длительностью: id → момент, до которого чат заглушён (0 = навсегда). */
   const MUTED_UNTIL_KEY = "pulse_muted_until_v1";
   const [mutedUntil, setMutedUntil] = useState<Map<string, number>>(() => {
@@ -431,6 +488,11 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
     });
   }, []);
 
+  useEffect(() => {
+    const n = conversations.reduce((s, c) => (archivedIds.has(c.id) ? s : s + c.unreadCount), 0);
+    document.title = n > 0 ? `(${n}) Pulse` : "Pulse";
+  }, [conversations, archivedIds]);
+
   // Звук нового сообщения: сработать должен только для чужих сообщений
   // в чатах, которые сейчас не открыты (или когда вкладка в фоне).
   const lastMsgIdsRef = useRef<Map<string, string>>(new Map());
@@ -454,7 +516,10 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
         // Для браузерного уведомления берём последнее новое сообщение
         const sender = lm.senderId === me.id ? "Вы" : (lm.senderName ?? "Новое сообщение");
         const mentionsMe =
-          !!me.username && lm.type === "text" && lm.content.toLowerCase().includes(`@${me.username.toLowerCase()}`);
+          !!me.username &&
+          lm.type === "text" &&
+          (lm.content.toLowerCase().includes(`@${me.username.toLowerCase()}`) ||
+            /(^|[^a-zа-яё0-9_])@all([^a-zа-яё0-9_]|$)/i.test(lm.content));
         notif = {
           title: mentionsMe
             ? `Упоминание · ${sender}`
@@ -723,6 +788,15 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
           soundOn={soundOn}
           pinnedIds={pinnedIds}
           mutedIds={mutedIds}
+          archivedIds={archivedIds}
+          onToggleArchive={toggleArchived}
+          onMarkUnread={markUnread}
+          onReadAll={readAll}
+          onOpenMessage={(convId, msgId) => {
+            setCommentFilter(null);
+            setActiveId(convId);
+            setJumpMsgId(msgId);
+          }}
           onTogglePin={togglePinned}
           onToggleMute={toggleMuted}
           onMuteFor={muteFor}
@@ -798,6 +872,11 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
             initialKind={activeConv.kind}
             initialAvatar={activeConv.avatarUrl}
             initialUnread={activeConv.unreadCount}
+            autoDeleteHours={activeConv.autoDeleteHours ?? 0}
+            initialJumpId={jumpMsgId}
+            onJumpConsumed={() => setJumpMsgId(null)}
+            muted={mutedIds.has(activeConv.id)}
+            onToggleMuteChat={() => toggleMuted(activeConv.id)}
             peer={activeConv.kind === "direct" ? activeConv.peer : null}
             onBack={() => setActiveId(null)}
             onCall={(media) => callCtl.startCall(activeConv.id, media)}
