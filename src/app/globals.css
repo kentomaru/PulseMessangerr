@@ -434,3 +434,30 @@ html[data-theme="light"] .border-white\/12 { border-color: #d1d5db; }
 html[data-theme="light"] .border-white\/15 { border-color: #d1d5db; }
 html[data-theme="light"] .bg-black\/20 { background-color: rgb(15 23 42 / 0.06); }
 html[data-theme="light"] .bg-black\/60 { background-color: rgb(15 23 42 / 0.5); }
+
+/* ───────────  Кастомизация (настройки «Внешний вид»)  ─────────── */
+/* Цвет своих пузырей */
+html[data-bubbles="blue"] .bubble-own { background: #2f4b7c; }
+html[data-bubbles="green"] .bubble-own { background: #2f6b4f; }
+html[data-bubbles="red"] .bubble-own { background: #7c3a3a; }
+html[data-bubbles="purple"] .bubble-own { background: #54407c; }
+html[data-bubbles="gray"] .bubble-own { background: #3a3f47; }
+/* Радиус пузырей */
+html[data-bradius="sm"] .bubble-own-radius { border-radius: 0.6rem 0.6rem 0.25rem 0.6rem; }
+html[data-bradius="sm"] .bubble-peer-radius { border-radius: 0.6rem 0.6rem 0.6rem 0.25rem; }
+html[data-bradius="lg"] .bubble-own-radius { border-radius: 1.8rem 1.8rem 0.7rem 1.8rem; }
+html[data-bradius="lg"] .bubble-peer-radius { border-radius: 1.8rem 1.8rem 1.8rem 0.7rem; }
+/* Размер текста в сообщениях */
+html[data-chatfs="s"] .msg-text { font-size: 13px; }
+html[data-chatfs="l"] .msg-text { font-size: 17px; }
+/* Шрифт интерфейса */
+html[data-font="round"] body {
+  font-family: ui-rounded, "SF Pro Rounded", "Nunito", "Manrope", system-ui, sans-serif;
+}
+/* Отключение анимаций */
+html[data-anims="0"] *,
+html[data-anims="0"] *::before,
+html[data-anims="0"] *::after {
+  animation-duration: 0.001s !important;
+  transition-duration: 0.001s !important;
+}

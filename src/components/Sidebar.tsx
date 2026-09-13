@@ -54,6 +54,9 @@ type Props = {
   /** Тема оформления: серый / синий / светлая. */
   theme: "gray" | "tg" | "light";
   onSetTheme: (t: "gray" | "tg" | "light") => void;
+  /** Кастомизация оформления (хранится локально у пользователя). */
+  custom: CustomSettings;
+  onSetCustom: (c: CustomSettings) => void;
   /** Звук входящего звонка (рингтон). */
   callSoundOn: boolean;
   /** Браузерные уведомления (всплывающие, когда вкладка не активна). */
@@ -115,6 +118,8 @@ export default function Sidebar({
   onSetUiScale,
   theme,
   onSetTheme,
+  custom,
+  onSetCustom,
   callSoundOn,
   notifyOn,
   onSelect,
@@ -131,6 +136,14 @@ export default function Sidebar({
   onToggleNotify,
   onJoinByToken,
 }: Props) {
+  const markAllRead = async () => {
+    const targets = conversations.filter((c) => c.unreadCount > 0);
+    await Promise.all(
+      targets.map((c) =>
+        api(`/api/conversations/${c.id}/read`, { method: "POST", body: "{}" }).catch(() => {}),
+      ),
+    );
+  };
   // Черновики: красный ярлык в списке чатов, как в больших мессенджерах
   const drafts = useMemo(() => {
     try {
@@ -379,6 +392,125 @@ export default function Sidebar({
                     </button>
                   ))}
                 </div>
+                <p className="px-1 pt-3 pb-2 text-[10px] font-semibold tracking-wide text-white/40 uppercase">
+                  Внешний вид
+                </p>
+                <div className="flex items-center gap-1.5 px-1">
+                  <span className="text-[11px] text-white/40">Пузыри:</span>
+                  {(
+                    [
+                      ["blue", "#2f4b7c"],
+                      ["green", "#2f6b4f"],
+                      ["red", "#7c3a3a"],
+                      ["purple", "#54407c"],
+                      ["gray", "#3a3f47"],
+                    ] as const
+                  ).map(([v, col]) => (
+                    <button
+                      key={v}
+                      title="Цвет своих пузырей"
+                      onClick={() => onSetCustom({ ...custom, bubbles: v })}
+                      className={`h-5 w-5 rounded-full border-2 transition-transform hover:scale-110 ${
+                        custom.bubbles === v ? "border-white" : "border-transparent"
+                      }`}
+                      style={{ background: col }}
+                    />
+                  ))}
+                </div>
+                <div className="mt-2 grid grid-cols-3 gap-1 rounded-xl bg-white/[0.05] p-1">
+                  {(
+                    [
+                      ["sm", "Углы S"],
+                      ["md", "Углы M"],
+                      ["lg", "Углы L"],
+                    ] as const
+                  ).map(([v, label]) => (
+                    <button
+                      key={v}
+                      onClick={() => onSetCustom({ ...custom, radius: v })}
+                      className={`rounded-lg px-1 py-1.5 text-[11px] font-medium transition-colors ${
+                        custom.radius === v
+                          ? "bg-white/10 text-white"
+                          : "text-white/50 hover:bg-white/8 hover:text-white/80"
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                <div className="mt-1 grid grid-cols-3 gap-1 rounded-xl bg-white/[0.05] p-1">
+                  {(
+                    [
+                      ["s", "Текст S"],
+                      ["m", "Текст M"],
+                      ["l", "Текст L"],
+                    ] as const
+                  ).map(([v, label]) => (
+                    <button
+                      key={v}
+                      onClick={() => onSetCustom({ ...custom, chatfs: v })}
+                      className={`rounded-lg px-1 py-1.5 text-[11px] font-medium transition-colors ${
+                        custom.chatfs === v
+                          ? "bg-white/10 text-white"
+                          : "text-white/50 hover:bg-white/8 hover:text-white/80"
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                <div className="mt-2 space-y-1">
+                  <SettingToggle
+                    label="Компактный список чатов"
+                    on={custom.compact}
+                    onClick={() => onSetCustom({ ...custom, compact: !custom.compact })}
+                  />
+                  <SettingToggle
+                    label="Анимации интерфейса"
+                    on={custom.anims}
+                    onClick={() => onSetCustom({ ...custom, anims: !custom.anims })}
+                  />
+                  <SettingToggle
+                    label="Отправка по Enter"
+                    on={(() => {
+                      try {
+                        return localStorage.getItem("pulse_enter_send") !== "0";
+                      } catch {
+                        return true;
+                      }
+                    })()}
+                    onClick={() => {
+                      try {
+                        const cur = localStorage.getItem("pulse_enter_send") !== "0";
+                        localStorage.setItem("pulse_enter_send", cur ? "0" : "1");
+                        onSetCustom({ ...custom });
+                      } catch {
+                        /* ignore */
+                      }
+                    }}
+                  />
+                  <SettingToggle
+                    label="Округлый шрифт"
+                    on={custom.font === "round"}
+                    onClick={() => onSetCustom({ ...custom, font: custom.font === "round" ? "sys" : "round" })}
+                  />
+                  <SettingToggle
+                    label="Не беспокоить 1 час"
+                    on={custom.dndUntil > Date.now()}
+                    onClick={() =>
+                      onSetCustom({
+                        ...custom,
+                        dndUntil: custom.dndUntil > Date.now() ? 0 : Date.now() + 3600_000,
+                      })
+                    }
+                  />
+                </div>
+                <button
+                  onClick={() => void markAllRead()}
+                  className="mt-2 w-full rounded-xl bg-white/10 px-3 py-2 text-[12px] font-medium text-white/70 hover:bg-white/15"
+                >
+                  Отметить всё прочитанным
+                </button>
               </motion.div>
             )}
           </AnimatePresence>
@@ -521,6 +653,7 @@ export default function Sidebar({
                   onSelect={onSelect}
                   pinned
                   draft={drafts[conv.id] ?? ""}
+                  compact={custom.compact}
                   muted={mutedIds.has(conv.id)}
                   onTogglePin={onTogglePin}
                   onToggleMute={onToggleMute}
@@ -541,6 +674,8 @@ export default function Sidebar({
               active={conv.id === activeId}
               meId={me.id}
               onSelect={onSelect}
+              draft={drafts[conv.id] ?? ""}
+              compact={custom.compact}
               muted={mutedIds.has(conv.id)}
               onTogglePin={onTogglePin}
               onToggleMute={onToggleMute}
@@ -603,6 +738,7 @@ function ConvRow({
   pinned = false,
   muted = false,
   draft = "",
+  compact = false,
   onTogglePin,
   onToggleMute,
 }: {
@@ -613,6 +749,7 @@ function ConvRow({
   pinned?: boolean;
   muted?: boolean;
   draft?: string;
+  compact?: boolean;
   onTogglePin?: (id: string) => void;
   onToggleMute?: (id: string) => void;
 }) {
@@ -631,7 +768,7 @@ function ConvRow({
           onSelect(conv.id);
         }
       }}
-      className={`group/row relative flex w-full cursor-pointer items-center gap-3 rounded-2xl px-3 py-3 text-left transition-colors ${
+      className={`group/row relative flex w-full cursor-pointer items-center gap-3 rounded-2xl px-3 text-left transition-colors ${compact ? "py-1.5" : "py-3"} ${
         active
           ? "bg-white/10"
           : "hover:bg-white/5"
@@ -797,6 +934,37 @@ function NotifyRow({
         <span
           className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition-all ${
             active ? "left-[18px]" : "left-0.5"
+          }`}
+        />
+      </span>
+    </button>
+  );
+}
+
+
+export type CustomSettings = {
+  bubbles: string;
+  radius: string;
+  chatfs: string;
+  compact: boolean;
+  font: string;
+  anims: boolean;
+  dndUntil: number;
+};
+
+function SettingToggle({ label, on, onClick }: { label: string; on: boolean; onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      className="flex w-full items-center justify-between rounded-xl px-2 py-1.5 text-left text-[12px] text-white/60 hover:bg-white/5"
+    >
+      <span>{label}</span>
+      <span
+        className={`relative h-4 w-7 rounded-full transition-colors ${on ? "bg-[#5865f2]" : "bg-white/15"}`}
+      >
+        <span
+          className={`absolute top-0.5 h-3 w-3 rounded-full bg-white transition-all ${
+            on ? "left-3.5" : "left-0.5"
           }`}
         />
       </span>

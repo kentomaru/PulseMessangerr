@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { and, eq } from "drizzle-orm";
 import { db } from "@/db";
-import { conversationMembers, conversations } from "@/db/schema";
+import { conversationMembers, conversations, messages } from "@/db/schema";
+import { count } from "drizzle-orm";
 import { withApi } from "@/lib/api-helpers";
 import { DISCUSSION_MARKER } from "@/lib/conversations";
 
@@ -45,6 +46,16 @@ export const GET = withApi<{ id: string }>("conversations/:id/discussion", async
     .where(eq(conversations.about, DISCUSSION_MARKER + id))
     .limit(1);
 
+  // Сколько комментариев в обсуждении — цифра под постами канала
+  let discCount = 0;
+  if (disc) {
+    const [c] = await db
+      .select({ n: count() })
+      .from(messages)
+      .where(eq(messages.conversationId, disc.id));
+    discCount = c?.n ?? 0;
+  }
+
   // Мои группы, которыми владею — из них выбираем чат для комментариев
   const myGroups = await db
     .select({
@@ -62,7 +73,7 @@ export const GET = withApi<{ id: string }>("conversations/:id/discussion", async
       ),
     );
 
-  return NextResponse.json({ discussion: disc ?? null, myGroups });
+  return NextResponse.json({ discussion: disc ?? null, myGroups, count: discCount });
 });
 
 export const POST = withApi<{ id: string }>("conversations/:id/discussion", async ({ req, params, me }) => {

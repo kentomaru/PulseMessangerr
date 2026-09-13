@@ -72,6 +72,7 @@ export default function GroupInfoModal({
   const [about, setAbout] = useState("");
   const [isPrivate, setIsPrivate] = useState(true);
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
+  const [username, setUsername] = useState("");
   const [saving, setSaving] = useState(false);
   const [picker, setPicker] = useState<"add" | null>(null);
   const [copied, setCopied] = useState(false);
@@ -92,6 +93,8 @@ export default function GroupInfoModal({
       setAbout(d.conversation.about ?? "");
       setIsPrivate(d.conversation.isPrivate);
       setAvatarUrl(d.conversation.avatarUrl);
+      const tk = (d.conversation as { inviteToken?: string | null }).inviteToken ?? "";
+      setUsername(/^[a-z0-9_]{4,20}$/.test(tk) ? tk : "");
     } catch (e) {
       notify(e instanceof Error ? e.message : "Не удалось загрузить");
     } finally {
@@ -207,7 +210,7 @@ export default function GroupInfoModal({
     try {
       await api(`/api/conversations/${conversationId}`, {
         method: "PATCH",
-        body: JSON.stringify({ name, about, isPrivate, avatarUrl }),
+        body: JSON.stringify({ name, about, isPrivate, avatarUrl, username }),
       });
       notify("Сохранено");
       setEdit(false);
@@ -306,6 +309,21 @@ export default function GroupInfoModal({
                 <Shield className="h-3 w-3" />
                 вы — {ROLE_LABEL[info.myRole]}
               </span>
+              {username && (
+                <button
+                  onClick={() => {
+                    const url = `${window.location.origin}${window.location.pathname}#group=${username}`;
+                    void copyToClipboard(url).then((ok) => {
+                      if (!ok) window.prompt("Скопируйте ссылку:", url);
+                      notify(`Ссылка @${username} скопирована`);
+                    });
+                  }}
+                  title="Скопировать ссылку на чат"
+                  className="flex items-center gap-1 rounded-md bg-white/10 px-1.5 py-0.5 text-slate-200 hover:bg-white/15"
+                >
+                  @{username} <Copy className="h-3 w-3" />
+                </button>
+              )}
             </p>
           </div>
           <button onClick={onClose} className="rounded-full bg-white/10 p-2 text-white/70">
@@ -315,6 +333,19 @@ export default function GroupInfoModal({
 
         {edit ? (
           <div className="space-y-2.5 px-6 pt-4">
+            {owner && (
+              <div className="flex items-center gap-1">
+                <span className="text-white/35">@</span>
+                <input
+                  value={username}
+                  onChange={(e) =>
+                    setUsername(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, "").slice(0, 20))
+                  }
+                  placeholder="юзернейм чата (4–20: a-z, 0-9, _)"
+                  className="ring-focus w-full rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-sm placeholder:text-white/25"
+                />
+              </div>
+            )}
             <textarea
               value={about}
               onChange={(e) => setAbout(e.target.value)}

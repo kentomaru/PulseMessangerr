@@ -14,6 +14,7 @@ import {
   Copy,
   ArrowDown,
   Download,
+  File as PendingFileIcon,
   File as FileIcon,
   FileText,
   Film,
@@ -56,7 +57,7 @@ import Avatar from "./Avatar";
 import PreviewLabel from "./PreviewLabel";
 import StatusEmoji from "./StatusEmoji";
 import WallpaperModal from "./WallpaperModal";
-import { api, ApiError, copyToClipboard, uploadFile } from "@/lib/api";
+import { api, ApiError, copyToClipboard, uploadFile, uploadFileWithProgress } from "@/lib/api";
 import { audioConstraints } from "@/lib/audioSettings";
 import { claimPlayback, releasePlayback } from "@/lib/playback";
 import { EMOJI_CATEGORIES, STICKERS } from "@/lib/emojis";
@@ -118,6 +119,7 @@ type Props = {
   onViewUser: (user: PublicUser) => void;
   onOpenInfo: () => void;
   onOpenDiscussion?: () => void;
+  onOpenUsername?: (name: string) => void;
   callBusy: boolean;
   refreshConversations: () => void;
   notify: (msg: string) => void;
@@ -233,6 +235,7 @@ export default function ChatView({
   onViewUser,
   onOpenInfo,
   onOpenDiscussion,
+  onOpenUsername,
   callBusy,
   refreshConversations,
   notify,
@@ -267,6 +270,25 @@ export default function ChatView({
   const [editing, setEditing] = useState<ChatMessage | null>(null);
   const [highlight, setHighlight] = useState<string | null>(null);
   const [draftFiles, setDraftFiles] = useState<DraftFile[]>(() => getStoredDraft(conversationId).files);
+  // «Летящие» файлы в стиле TG: сообщение видно сразу, с прогрессом загрузки
+  const [pendingUploads, setPendingUploads] = useState<
+    {
+      lid: string;
+      isImage: boolean;
+      att: AttachmentInfo;
+      caption?: string;
+      loaded: number;
+      total: number;
+    }[]
+  >([]);
+  const [discussionCount, setDiscussionCount] = useState<number | null>(null);
+  const [enterSend] = useState(() => {
+    try {
+      return localStorage.getItem("pulse_enter_send") !== "0";
+    } catch {
+      return true;
+    }
+  });
   const [dragOver, setDragOver] = useState(false);
   const [ctxMenu, setCtxMenu] = useState<ContextMenuState | null>(null);
   const [forwarding, setForwarding] = useState<ChatMessage | null>(null);
@@ -484,46 +506,67 @@ export default function ChatView({
       return;
     }
 
-    // Файлы из черновика (первый файл получает подпись из поля ввода)
+    // Файлы из черновика — как в Telegram: поле ввода НЕ блокируется,
+    // каждое «летящее» сообщение сразу видно с прогрессом 0.0 МБ из N МБ,
+    // а когда загрузка доходит до конца — сообщение публикуется.
     if (draftFiles.length > 0) {
       const files = draftFiles;
       const caption = emojify(text).trim();
       setDraftFiles([]);
       setText("");
-      setUploading(true);
-      try {
+      void (async () => {
         for (let i = 0; i < files.length; i++) {
           const d = files[i];
-          const url = await uploadFile(d.file);
+          const lid = `up-${Date.now()}_${i}`;
           const isImage = d.file.type.startsWith("image/");
-          const att: AttachmentInfo = {
-            url,
-            name: d.file.name,
-            mimeType: d.file.type || "application/octet-stream",
-            size: d.file.size,
-          };
-          if (i === 0 && caption) att.caption = caption;
-          await api("/api/messages", {
-            method: "POST",
-            body: JSON.stringify({
-              conversationId,
-              type: isImage ? "image" : "file",
-              content: isImage && !att.caption ? url : JSON.stringify(att),
-              replyToId: replyTo?.id ?? null,
-            }),
-          });
+          const cap = i === 0 && caption ? caption : undefined;
+          setPendingUploads((ps) => [
+            ...ps,
+            {
+              lid,
+              isImage,
+              att: {
+                url: "",
+                name: d.file.name,
+                mimeType: d.file.type || "application/octet-stream",
+                size: d.file.size,
+              },
+              caption: cap,
+              loaded: 0,
+              total: d.file.size,
+            },
+          ]);
+          try {
+            const url = await uploadFileWithProgress(d.file, (loaded, total) => {
+              setPendingUploads((ps) => ps.map((x) => (x.lid === lid ? { ...x, loaded, total } : x)));
+            });
+            const att: AttachmentInfo = {
+              url,
+              name: d.file.name,
+              mimeType: d.file.type || "application/octet-stream",
+              size: d.file.size,
+            };
+            if (cap) att.caption = cap;
+            await api("/api/messages", {
+              method: "POST",
+              body: JSON.stringify({
+                conversationId,
+                type: isImage ? "image" : "file",
+                content: isImage && !cap ? url : JSON.stringify(att),
+                replyToId: replyTo?.id ?? null,
+              }),
+            });
+            if (d.preview) URL.revokeObjectURL(d.preview);
+          } catch (e) {
+            notify(e instanceof Error ? e.message : "Не удалось отправить файлы");
+          } finally {
+            setPendingUploads((ps) => ps.filter((x) => x.lid !== lid));
+          }
         }
         setReplyTo(null);
         await load();
         refreshConversations();
-      } catch (e) {
-        notify(e instanceof Error ? e.message : "Не удалось отправить файлы");
-        setDraftFiles(files);
-        setText(caption);
-      } finally {
-        for (const d of files) if (d.preview) URL.revokeObjectURL(d.preview);
-        setUploading(false);
-      }
+      })();
       return;
     }
 
@@ -996,6 +1039,22 @@ export default function ChatView({
     window.addEventListener("keydown", h);
     return () => window.removeEventListener("keydown", h);
   }, [searchOpen, replyTo, editing]);
+
+  // Сколько комментариев в обсуждении канала — цифра под постами
+  useEffect(() => {
+    if (kind !== "channel") return;
+    api<{ discussion: { id: string } | null; count?: number }>(
+      `/api/conversations/${conversationId}/discussion`,
+    )
+      .then((d) => setDiscussionCount(d.count ?? 0))
+      .catch(() => {});
+  }, [kind, conversationId]);
+
+  // Автофокус поля ввода при открытии чата
+  useEffect(() => {
+    if (loaded) inputRef.current?.focus();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loaded]);
 
   // Счётчик сообщений, пришедших, пока ты не внизу ленты
   useEffect(() => {
@@ -1516,6 +1575,9 @@ export default function ChatView({
                       onDiscuss={
                         kind === "channel" && onOpenDiscussion ? onOpenDiscussion : undefined
                       }
+                      discussionCount={discussionCount}
+                      meUsername={me.username}
+                      onOpenUsername={onOpenUsername}
                       onEdit={() => startEdit(m)}
                       onPin={() => void togglePin(m)}
                       onReact={(emoji) => void toggleReaction(m.id, emoji)}
@@ -1527,6 +1589,34 @@ export default function ChatView({
                 </div>
               );
             })}
+          </div>
+        )}
+        {pendingUploads.length > 0 && (
+          <div className="mx-auto flex w-full max-w-2xl flex-col gap-0.5">
+            {pendingUploads.map((u) => (
+              <div key={u.lid} className="flex justify-end py-0.5">
+                <div className="bubble-own bubble-own-radius max-w-[75%] px-4 py-2.5">
+                  <div className="flex items-center gap-3">
+                    <span className="glass flex h-10 w-10 shrink-0 items-center justify-center rounded-xl">
+                      <PendingFileIcon className="h-4 w-4 text-slate-400" />
+                    </span>
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-medium">{u.att.name}</p>
+                      <p className="text-[11px] text-white/50 tabular-nums">
+                        {formatBytes(u.loaded)} из {formatBytes(u.total)}
+                      </p>
+                      <div className="mt-1 h-1 w-40 overflow-hidden rounded-full bg-white/20">
+                        <div
+                          className="h-full bg-white/70 transition-all"
+                          style={{ width: `${Math.min(100, (u.loaded / Math.max(1, u.total)) * 100)}%` }}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                  {u.caption && <p className="mt-1.5 text-[13px] text-white/70">{u.caption}</p>}
+                </div>
+              </div>
+            ))}
           </div>
         )}
         {showJump && (
@@ -1669,7 +1759,7 @@ export default function ChatView({
               </button>
               <button
                 onClick={() => stopVoiceRecording(true)}
-                disabled={uploading}
+                disabled={false}
                 title="Закончить и отправить"
                 className="btn-gradient flex h-11 items-center gap-2 rounded-2xl px-4 text-sm font-semibold text-white"
               >
@@ -1681,7 +1771,7 @@ export default function ChatView({
             <div className="flex items-end gap-2.5">
               <button
                 onClick={() => fileRef.current?.click()}
-                disabled={uploading || sending}
+                disabled={sending}
                 title="Прикрепить файл (до 500 МБ)"
                 className="glass flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl text-white/70 transition-colors hover:text-white disabled:opacity-50"
               >
@@ -1728,7 +1818,10 @@ export default function ChatView({
                   }
                 }}
                 onKeyDown={(e) => {
-                  if (e.key === "Enter" && !e.shiftKey) {
+                  if (
+                    (enterSend && e.key === "Enter" && !e.shiftKey) ||
+                    (!enterSend && e.key === "Enter" && (e.ctrlKey || e.metaKey))
+                  ) {
                     e.preventDefault();
                     void send();
                   }
@@ -2512,6 +2605,9 @@ function MessageBubble({
   onReact,
   onMenu,
   onDiscuss,
+  discussionCount,
+  meUsername,
+  onOpenUsername,
   onJump,
   onViewUser,
 }: {
@@ -2533,6 +2629,9 @@ function MessageBubble({
   onReact: (emoji: string) => void;
   onMenu: (x: number, y: number, message: ChatMessage) => void;
   onDiscuss?: () => void;
+  discussionCount?: number | null;
+  meUsername?: string;
+  onOpenUsername?: (name: string) => void;
   onJump: (id: string) => void;
   onViewUser: (u: PublicUser) => void;
 }) {
@@ -2598,11 +2697,11 @@ function MessageBubble({
   const isFile = message.type === "file" && !legacyKind;
 
   // голосовые и кружки не группируем вплотную — им нужен воздух
-  const media = isVoice || isNote || isImage || isFile;
+  const media = isVoice || isNote || isFile;
 
   return (
     <div
-      className={`group no-callout flex items-start gap-2 ${media ? "py-1.5" : "py-0.5"} ${
+      className={`group no-callout relative flex items-start gap-2 ${media ? "py-1.5" : "py-0.5"} ${
         alignRight ? "justify-end" : "justify-start"
       } ${highlighted ? "animate-pulse-dot" : ""}`}
       onContextMenu={(e) => {
@@ -2615,6 +2714,22 @@ function MessageBubble({
       onTouchEnd={onTouchEnd}
       onTouchCancel={cancelLongPress}
     >
+      {/* Быстрые реакции при наведении — как в больших мессенджерах */}
+      <div className="glass-strong absolute -top-3 right-2 z-10 hidden items-center gap-0.5 rounded-full px-1.5 py-0.5 group-hover:flex">
+        {["❤️", "😂", "👍", "🔥"].map((e) => (
+          <button
+            key={e}
+            onClick={(ev) => {
+              ev.stopPropagation();
+              onReact(e);
+            }}
+            className="text-[15px] transition-transform hover:scale-125"
+            title="Реакция"
+          >
+            {e}
+          </button>
+        ))}
+      </div>
       {space && !alignRight && (
         <button
           onClick={() => sender && onViewUser(sender)}
@@ -2696,8 +2811,8 @@ function MessageBubble({
                 />
               </button>
               {att.caption && (
-                <p className="px-1 pt-2 pb-1 text-[15px] leading-relaxed break-words whitespace-pre-wrap">
-                  {renderRichText(att.caption)}
+                <p className="msg-text px-1 pt-2 pb-1 text-[15px] leading-relaxed break-words whitespace-pre-wrap">
+                  {renderRichText(att.caption, meUsername, onOpenUsername)}
                 </p>
               )}
             </div>
@@ -2707,8 +2822,8 @@ function MessageBubble({
             /* «Стикер»: только эмодзи — крупно, без пузыря (как в мессенджерах) */
             <p className="py-0.5 text-[52px] leading-none select-none">{message.content.trim()}</p>
           ) : (
-            <p className="text-[15px] leading-relaxed break-words whitespace-pre-wrap">
-              {renderRichText(message.content)}
+            <p className="msg-text text-[15px] leading-relaxed break-words whitespace-pre-wrap">
+              {renderRichText(message.content, meUsername, onOpenUsername)}
             </p>
           )}
         </div>
@@ -2719,7 +2834,7 @@ function MessageBubble({
             onClick={onDiscuss}
             className="mt-1 flex items-center gap-1 text-[11px] text-slate-400 transition-colors hover:text-slate-200"
           >
-            <MessageSquare className="h-3 w-3" /> Комментарии
+            <MessageSquare className="h-3 w-3" /> Комментарии{discussionCount != null ? ` · ${discussionCount}` : ""}
           </button>
         )}
 
@@ -3009,7 +3124,41 @@ function VideoNoteBubble({ url, duration }: { url: string; duration: number }) {
 
 function FileCard({ att }: { att: AttachmentInfo }) {
   const mime = att.mimeType ?? "";
-  return (
+  // Скачивание с прогрессом «0.0 МБ из N МБ», как в Telegram
+  const [prog, setProg] = useState<{ l: number; t: number } | null>(null);
+  const [dlErr, setDlErr] = useState("");
+  const download = async () => {
+    try {
+      setDlErr("");
+      setProg({ l: 0, t: att.size ?? 0 });
+      const res = await fetch(att.url);
+      if (!res.ok) throw new Error("http");
+      const total = Number(res.headers.get("content-length")) || att.size || 0;
+      const reader = res.body?.getReader();
+      if (!reader) throw new Error("stream");
+      const chunks: BlobPart[] = [];
+      let l = 0;
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+        l += value.length;
+        setProg({ l, t: total });
+      }
+      const blob = new Blob(chunks, { type: mime || undefined });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = att.name ?? "file";
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
+      setProg(null);
+    } catch {
+      setDlErr("Не удалось скачать — попробуйте ещё раз");
+      setProg(null);
+    }
+  };
+  return(
     <div className="w-72 min-w-60">
       <div className="flex items-center gap-3">
         <span className="glass flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl">
@@ -3017,20 +3166,30 @@ function FileCard({ att }: { att: AttachmentInfo }) {
         </span>
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-medium text-white/90">{att.name ?? "Файл"}</p>
-          <p className="text-[11px] text-white/40">
-            {formatBytes(att.size)}
+          <p className="text-[11px] text-white/40 tabular-nums">
+            {prog ? `${formatBytes(prog.l)} из ${formatBytes(prog.t)}` : formatBytes(att.size)}
             {mime ? ` · ${mime.split("/")[1]?.split(";")[0] ?? mime}` : ""}
           </p>
+          {prog && (
+            <div className="mt-1 h-1 w-full overflow-hidden rounded-full bg-white/15">
+              <div
+                className="h-full bg-white/60 transition-all"
+                style={{ width: `${Math.min(100, (prog.l / Math.max(1, prog.t)) * 100)}%` }}
+              />
+            </div>
+          )}
+          {dlErr && <p className="mt-0.5 text-[11px] text-rose-300">{dlErr}</p>}
         </div>
-        <a
-          href={att.url}
-          download={att.name ?? undefined}
-          onClick={(e) => e.stopPropagation()}
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            void download();
+          }}
           title="Скачать"
           className="glass flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-white/75 transition-colors hover:text-white"
         >
           <Download className="h-4.5 w-4.5" />
-        </a>
+        </button>
       </div>
       {(mime.startsWith("audio/") || mime.startsWith("video/")) && (
         <div className="mt-2">

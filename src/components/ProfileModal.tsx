@@ -17,7 +17,7 @@ import {
 import Avatar, { paletteFor } from "./Avatar";
 import StatusEmoji from "./StatusEmoji";
 import { PrivacySettings } from "./PrivacyModal";
-import { api, uploadFile } from "@/lib/api";
+import { api, copyToClipboard, uploadFile } from "@/lib/api";
 import { compressImage } from "@/lib/images";
 import { BANNER_PRESETS, bannerStyle, isFileBanner } from "@/lib/wallpapers";
 import type { PublicUser } from "@/lib/types";
@@ -40,6 +40,7 @@ export default function ProfileModal({ me, onClose, onSaved, onDeletedAccount }:
   const [tab, setTab] = useState<"profile" | "privacy">("profile");
   const [displayName, setDisplayName] = useState(me.displayName);
   const [username, setUsername] = useState(me.username);
+  const [copiedName, setCopiedName] = useState(false);
   const [bio, setBio] = useState(me.bio);
   const [avatarUrl, setAvatarUrl] = useState<string | null>(me.avatarUrl);
   const [bannerUrl, setBannerUrl] = useState<string | null>(me.bannerUrl);
@@ -328,7 +329,23 @@ export default function ProfileModal({ me, onClose, onSaved, onDeletedAccount }:
             <span className="font-display text-lg font-bold">{displayName || me.username}</span>
             <StatusEmoji value={statusEmoji} size={32} />
           </p>
-          <p className="text-xs text-white/35">@{username}</p>
+          <button
+            onClick={() => {
+              const url = `${window.location.origin}${window.location.pathname}#user=${username}`;
+              void copyToClipboard(`@${username}`).then((ok) => {
+                if (ok) {
+                  setCopiedName(true);
+                  setTimeout(() => setCopiedName(false), 1500);
+                } else {
+                  window.prompt("Скопируйте юзернейм:", `@${username}`);
+                }
+              });
+            }}
+            title="Скопировать юзернейм"
+            className="text-xs text-white/35 underline-offset-2 hover:underline"
+          >
+            {copiedName ? "Скопировано ✓" : `@${username}`}
+          </button>
         </div>
 
         <label className="block">

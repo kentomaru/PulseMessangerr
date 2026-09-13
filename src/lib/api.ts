@@ -2,39 +2,10 @@ export async function api<T = unknown>(
   path: string,
   options: RequestInit = {},
 ): Promise<T> {
-  // Идемпотентность отправки сообщений: прокси/браузер могут повторить POST
-  // по таймауту — тогда в чате появлялся ДУБЛЬ последнего сообщения. Шлём
-  // случайный ключ, сервер по нему возвращает уже созданное сообщение.
-  let body = options.body;
-  if (
-    options.method === "POST" &&
-    path.split("?")[0] === "/api/messages" &&
-    typeof body === "string" &&
-    typeof crypto !== "undefined" &&
-    crypto.randomUUID
-  ) {
-    try {
-      const parsed = JSON.parse(body) as Record<string, unknown>;
-      if (!parsed.clientKey) {
-        parsed.clientKey = crypto.randomUUID();
-        body = JSON.stringify(parsed);
-      }
-    } catch {
-      /* тело не JSON — не трогаем */
-    }
-  }
   let res: Response;
-  // ЖЁСТКИЙ ТАЙМАУТ: раньше зависший запрос (прокси «задумался») вечно
-  // висел в await и навсегда блокировал синхронизацию звонка — соединения
-  // между участниками не создавались вообще («Участников: 2, Соединений: 0»).
-  const isUpload = path.split("?")[0] === "/api/upload";
-  const ctrl = isUpload ? null : new AbortController();
-  const timer = ctrl ? setTimeout(() => ctrl.abort(), 8_000) : null;
   try {
     res = await fetch(path, {
       ...options,
-      body,
-      signal: ctrl ? ctrl.signal : options.signal,
       headers:
         options.body instanceof FormData
           ? options.headers
@@ -43,10 +14,9 @@ export async function api<T = unknown>(
     });
   } catch {
     throw new ApiError("Нет соединения с сервером", 0);
-  } finally {
-    if (timer) clearTimeout(timer);
   }
   const data = await res.json().catch(() => ({}));
+
   if (!res.ok) {
     throw new ApiError(
       (data as { error?: string }).error ?? "Ошибка запроса",
@@ -56,6 +26,38 @@ export async function api<T = unknown>(
   }
   return data as T;
 }
+
+/** Как uploadFile, но с прогрессом («как в TG»): XHR даёт upload.onprogress. */
+export function uploadFileWithProgress(
+  file: File,
+  onProgress: (loaded: number, total: number) => void,
+): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const params = new URLSearchParams({
+      name: file.name || "file",
+      type: file.type || "application/octet-stream",
+      size: String(file.size),
+    });
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", `/api/upload?${params.toString()}`);
+    xhr.withCredentials = true;
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) onProgress(e.loaded, e.total);
+    };
+    xhr.onload = () => {
+      try {
+        const d = JSON.parse(xhr.responseText) as { url?: string; error?: string };
+        if (xhr.status >= 200 && xhr.status < 300 && d.url) resolve(d.url);
+        else reject(new ApiError(d.error ?? "Не удалось загрузить файл", xhr.status));
+      } catch {
+        reject(new ApiError("Не удалось загрузить файл", xhr.status));
+      }
+    };
+    xhr.onerror = () => reject(new ApiError("Не удалось загрузить файл — проверьте интернет", 0));
+    xhr.send(file);
+  });
+}
+
 
 export class ApiError extends Error {
   status: number;
@@ -78,23 +80,11 @@ export async function uploadFile(file: File): Promise<string> {
     type: file.type || "application/octet-stream",
     size: String(file.size),
   });
-  let res: Response;
-  try {
-    res = await fetch(`/api/upload?${params.toString()}`, {
-      method: "POST",
-      body: file,
-      credentials: "include",
-    });
-  } catch {
-    // Сеть оборвалась / прокси отрезал тело запроса. Раньше здесь вылетало
-    // безликое «Failed to fetch» — объясняем, что делать.
-    throw new ApiError(
-      file.size > 5 * 1024 * 1024
-        ? "Файл не дошёл до сервера. Такое бывает с большими файлами при слабой сети или ограничении прокси — попробуйте файл поменьше или другую сеть"
-        : "Не удалось загрузить файл — проверьте интернет-соединение и попробуйте ещё раз",
-      0,
-    );
-  }
+  const res = await fetch(`/api/upload?${params.toString()}`, {
+    method: "POST",
+    body: file,
+    credentials: "include",
+  });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new ApiError(data.error ?? "Не удалось загрузить файл", res.status);
   return data.url as string;

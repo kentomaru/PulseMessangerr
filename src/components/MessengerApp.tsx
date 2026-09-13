@@ -44,6 +44,24 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
     }
   });
   const [online, setOnline] = useState(true);
+  // Полная кастомизация: цвет/радиус пузырей, размер текста, компактность,
+  // шрифт, анимации, Enter, «не беспокоить». Хранится локально.
+  const [custom, setCustom] = useState(() => {
+    try {
+      const c = JSON.parse(localStorage.getItem("pulse_custom_v1") ?? "{}") as Record<string, unknown>;
+      return {
+        bubbles: (c.bubbles as string) ?? "blue",
+        radius: (c.radius as string) ?? "md",
+        chatfs: (c.chatfs as string) ?? "m",
+        compact: !!c.compact,
+        font: (c.font as string) ?? "sys",
+        anims: c.anims !== false,
+        dndUntil: (c.dndUntil as number) ?? 0,
+      };
+    } catch {
+      return { bubbles: "blue", radius: "md", chatfs: "m", compact: false, font: "sys", anims: true, dndUntil: 0 };
+    }
+  });
   const [showProfile, setShowProfile] = useState(false);
   const [viewUser, setViewUser] = useState<PublicUser | null>(null);
   const [storyComposer, setStoryComposer] = useState(false);
@@ -68,7 +86,9 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
   const unauthorizedRef = useRef(false);
   const activeIdRef = useRef<string | null>(null);
   activeIdRef.current = activeId;
+  const conversationsRef = useRef<ConversationListItem[]>([]);
   const soundOnRef = useRef(true);
+  const dndUntilRef = useRef(0);
 
   const notify = useCallback((msg: string) => {
     const id = ++toastId.current;
@@ -148,6 +168,7 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
   }, []);
   useEffect(() => {
     soundOnRef.current = soundOn;
+    dndUntilRef.current = custom.dndUntil;
   }, [soundOn]);
 
   const toggleSound = useCallback(() => {
@@ -228,6 +249,20 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
   const zoom = uiScale === "s" ? 0.88 : uiScale === "l" ? 1.14 : 1;
 
   useEffect(() => {
+    const h = document.documentElement;
+    h.dataset.bubbles = custom.bubbles;
+    h.dataset.bradius = custom.radius;
+    h.dataset.chatfs = custom.chatfs;
+    h.dataset.font = custom.font;
+    h.dataset.anims = custom.anims ? "1" : "0";
+    try {
+      localStorage.setItem("pulse_custom_v1", JSON.stringify(custom));
+    } catch {
+      /* ignore */
+    }
+  }, [custom]);
+
+  useEffect(() => {
     document.documentElement.dataset.theme = theme;
     try {
       localStorage.setItem("pulse_theme_v1", theme);
@@ -247,6 +282,23 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
         e.preventDefault();
         document.getElementById("pulse-chat-search")?.focus();
+      }
+      // Ctrl+Shift+D — переключение темы оформления
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === "d") {
+        e.preventDefault();
+        setTheme((t) => (t === "gray" ? "tg" : t === "tg" ? "light" : "gray"));
+      }
+      // Alt+↑/↓ — переключение между чатами
+      if (e.altKey && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
+        e.preventDefault();
+        const list = conversationsRef.current;
+        if (list.length === 0) return;
+        const idx = list.findIndex((c) => c.id === activeIdRef.current);
+        const next =
+          e.key === "ArrowDown"
+            ? list[Math.min(list.length - 1, idx + 1)]
+            : list[Math.max(0, idx <= 0 ? 0 : idx - 1)];
+        if (next) setActiveId(next.id);
       }
     };
     window.addEventListener("keydown", keys);
@@ -335,12 +387,40 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
       notif = null;
     }
     if (beep) {
-      if (soundOnRef.current) playNotifySound();
+      if (soundOnRef.current && Date.now() >= (dndUntilRef.current ?? 0)) playNotifySound();
       if (notif) pushBrowserNotification(notif.title, notif.body);
     }
   }, [conversations, me.id, pushBrowserNotification]);
 
+  conversationsRef.current = conversations;
   const activeConv = conversations.find((c) => c.id === activeId) ?? null;
+
+  /** Клик по @юзернейму в сообщении: чат/канал или личный чат с человеком. */
+  const openUsername = async (name: string) => {
+    try {
+      const d = await api<{ conversation: { id: string } | null }>(
+        `/api/conversations/resolve?username=${encodeURIComponent(name)}`,
+      );
+      if (d.conversation) {
+        await loadConversations();
+        setActiveId(d.conversation.id);
+        return;
+      }
+    } catch {
+      /* fallthrough к людям */
+    }
+    try {
+      const u = await api<{ users: PublicUser[] }>(`/api/users/search?q=${encodeURIComponent(name)}`);
+      const hit = u.users.find((x) => x.username.toLowerCase() === name);
+      if (hit) {
+        openConversationWith(hit);
+        return;
+      }
+    } catch {
+      /* ignore */
+    }
+    notify(`@${name} не найден`);
+  };
 
   /** «Комментарии» под постом канала: вступление в обсуждение и переход в него. */
   const openChannelDiscussion = async () => {
@@ -560,6 +640,8 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
           onSetUiScale={setUiScale}
           theme={theme}
           onSetTheme={setTheme}
+          custom={custom}
+          onSetCustom={setCustom}
           callSoundOn={callSoundOn}
           notifyOn={notifyOn}
           onToggleSound={toggleSound}
@@ -611,6 +693,7 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
             onOpenDiscussion={
               activeConv.kind === "channel" ? () => void openChannelDiscussion() : undefined
             }
+            onOpenUsername={(name) => void openUsername(name)}
             callBusy={!!callCtl.session || !!callCtl.incoming || callCtl.starting}
             refreshConversations={loadConversations}
             notify={notify}

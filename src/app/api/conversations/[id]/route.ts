@@ -76,6 +76,30 @@ export const PATCH = withApi<{ id: string }>("conversations:update", async ({ re
   if (typeof body.avatarUrl === "string" || body.avatarUrl === null)
     patch.avatarUrl = body.avatarUrl && String(body.avatarUrl).startsWith("/api/files/") ? body.avatarUrl : null;
   if (typeof body.isPrivate === "boolean") patch.isPrivate = body.isPrivate;
+  // Юзернейм чата/канала (@name): храним в invite_token — без новых колонок БД
+  if (typeof body.username === "string") {
+    if (access.membership.role !== "owner")
+      return NextResponse.json({ error: "Юзернейм задаёт владелец" }, { status: 403 });
+    const un = body.username.trim().toLowerCase().replace(/^@+/, "").slice(0, 20);
+    if (un === "") {
+      // очистить — вернём случайный токен ссылки
+      patch.inviteToken = null;
+    } else {
+      if (!/^[a-z0-9_]{4,20}$/.test(un))
+        return NextResponse.json(
+          { error: "Юзернейм: 4–20 символов, латиница, цифры и «_»" },
+          { status: 400 },
+        );
+      const [taken] = await db
+        .select({ id: conversations.id })
+        .from(conversations)
+        .where(eq(conversations.inviteToken, un))
+        .limit(1);
+      if (taken && taken.id !== id)
+        return NextResponse.json({ error: "Юзернейм уже занят" }, { status: 409 });
+      patch.inviteToken = un;
+    }
+  }
   if (body.kind === "group" || body.kind === "channel") {
     patch.kind = body.kind;
     patch.isGroup = body.kind === "group";
