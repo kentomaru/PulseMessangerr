@@ -577,6 +577,8 @@ export function useCallController(
   const healAudioNow = useCallback(async () => {
     const now = Date.now();
     if (now - lastHealRef.current < 15_000) return;
+    // Во время демонстрации звук — это микс «экран+микрофон»; не ломаем его.
+    if (screenStreamRef.current) return;
     lastHealRef.current = now;
     try {
       const fresh = await navigator.mediaDevices.getUserMedia({
@@ -1188,6 +1190,9 @@ export function useCallController(
       void (async () => {
         const local = localStreamRef.current;
         if (!local || linksRef.current.size === 0) return;
+        // Идёт демонстрация — звук уже подменён миксом «экран+микрофон»,
+        // не ломаем его заменой дорожки.
+        if (screenStreamRef.current) return;
         try {
           const fresh = await navigator.mediaDevices.getUserMedia({
             audio: audioConstraints(),
@@ -1339,6 +1344,67 @@ export function useCallController(
    * перезахватывается с новыми ограничениями (шумоподавление и т.д.), дорожка
    * прозрачно подменяется у всех участников (replaceTrack) — звонок не рвётся.
    */
+  /* ──────── МИКС ЗВУКА ДЕМОНСТРАЦИИ: экран/вкладка + микрофон ────────
+     Браузер проигрывает у собеседника только ОДИН входящий аудиотрек,
+     поэтому звук шаренного окна и микрофон сводятся в один трек через
+     Web Audio (MediaStreamDestination) и подменяются на сендере через
+     replaceTrack — без пересогласования. */
+  const screenAudioMixRef = useRef<{
+    ctx: AudioContext;
+    mixed: MediaStreamTrack;
+    destStream: MediaStream;
+    originalMic: MediaStreamTrack | null;
+  } | null>(null);
+
+  const teardownScreenAudioMix = useCallback(() => {
+    const mix = screenAudioMixRef.current;
+    if (!mix) return;
+    screenAudioMixRef.current = null;
+    // Возвращаем на все аудиосендеры чистый микрофон
+    for (const l of linksRef.current.values()) {
+      const snd = l.pc.getSenders().find((x) => x.track?.kind === "audio");
+      if (snd) void snd.replaceTrack(mix.originalMic).catch(() => {});
+    }
+    void mix.ctx.close().catch(() => {});
+  }, []);
+
+  /** Возвращает: удалось ли подмешать звук экрана (и нужен ли ренегот). */
+  const buildScreenAudioMix = useCallback(
+    (screenStream: MediaStream): boolean => {
+      const screenAudio = screenStream.getAudioTracks()[0];
+      if (!screenAudio) return false; // Safari/macOS: звука экрана нет
+      try {
+        const ctx = new AudioContext();
+        if (ctx.state !== "running") void ctx.resume().catch(() => {});
+        const dest = ctx.createMediaStreamDestination();
+        const mic = localStreamRef.current?.getAudioTracks()[0] ?? null;
+        if (mic) ctx.createMediaStreamSource(new MediaStream([mic])).connect(dest);
+        ctx.createMediaStreamSource(new MediaStream([screenAudio])).connect(dest);
+        const mixed = dest.stream.getAudioTracks()[0];
+        if (!mixed) {
+          void ctx.close().catch(() => {});
+          return false;
+        }
+        mixed.enabled = true;
+        screenAudioMixRef.current = {
+          ctx,
+          mixed,
+          destStream: dest.stream,
+          originalMic: mic,
+        };
+        for (const l of linksRef.current.values()) {
+          const snd = l.pc.getSenders().find((x) => x.track?.kind === "audio");
+          if (snd) void snd.replaceTrack(mixed).catch(() => {});
+        }
+        return true;
+      } catch {
+        /* Web Audio недоступен — демонстрация пойдёт без звука экрана */
+        return false;
+      }
+    },
+    [],
+  );
+
   const applyAudioSettings = useCallback(
     async (next: AudioSettings) => {
       saveAudioSettings(next);
@@ -1373,13 +1439,19 @@ export function useCallController(
           }
         }
         if (addedSomewhere) void renegotiateAll();
+        // Если идёт демонстрация — пересобираем микс с новым микрофоном,
+        // иначе звук экрана остался бы без голоса.
+        if (screenStreamRef.current && screenAudioMixRef.current) {
+          teardownScreenAudioMix();
+          buildScreenAudioMix(screenStreamRef.current);
+        }
         setStreamTick((v) => v + 1);
         restartVoiceGate();
       } catch {
         notifyRef.current("Не удалось применить настройки звука");
       }
     },
-    [renegotiateAll, restartVoiceGate],
+    [renegotiateAll, restartVoiceGate, teardownScreenAudioMix, buildScreenAudioMix],
   );
 
   const toggleCamera = useCallback(async () => {
@@ -1447,6 +1519,9 @@ export function useCallController(
     setScreenSharing(false);
     setStreamTick((v) => v + 1);
     stream?.getTracks().forEach((t) => t.stop());
+    // Возвращаем собеседникам чистый микрофон вместо микса и закрываем
+    // AudioContext, чтобы он не висел в памяти.
+    teardownScreenAudioMix();
     // Статус «демонстрация выключена» — сразу, без ожидания опроса сервера
     patchMyMediaState({ screenOn: false });
 
@@ -1478,7 +1553,7 @@ export function useCallController(
         method: "POST",
         body: JSON.stringify({ action: "state", screenOn: false }),
       }).catch(() => {});
-  }, [patchMyMediaState, renegotiateAll]);
+  }, [patchMyMediaState, renegotiateAll, teardownScreenAudioMix]);
 
   const stopScreenShareRef = useRef(stopScreenShare);
   stopScreenShareRef.current = stopScreenShare;
@@ -1500,8 +1575,21 @@ export function useCallController(
       notifyRef.current("Демонстрация экрана не поддерживается этим браузером");
       return;
     }
+    // Звук экрана/вкладки: просим браузер захватить и видео, и звук
+    // (галочка «поделиться звуком» в системном диалоге). Если платформа
+    // не умеет (например, часть браузеров на macOS) — падаем на видео.
+    let stream: MediaStream;
     try {
-      const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+      stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+    } catch {
+      try {
+        stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+      } catch {
+        notifyRef.current("Не удалось начать демонстрацию экрана");
+        return;
+      }
+    }
+    try {
       const [track] = stream.getVideoTracks();
       if (!track) {
         stream.getTracks().forEach((t) => t.stop());
@@ -1525,6 +1613,24 @@ export function useCallController(
         }
       }
 
+      // ЗВУК ДЕМОНСТРАЦИИ: микс «экран + микрофон» в один трек. Собеседник
+      // услышит и вас, и звук шаренного окна/вкладки. Если звука экрана нет
+      // (ОС не отдала) или микс не собрался — остаётся обычный микрофон.
+      if (buildScreenAudioMix(stream)) {
+        // Там, где аудиосендера не было вовсе (режим «только слушать»),
+        // микс добавляется как новая дорожка — нужно пересогласование.
+        const mix = screenAudioMixRef.current;
+        if (mix) {
+          for (const l of linksRef.current.values()) {
+            const snd = l.pc.getSenders().find((x) => x.track?.kind === "audio");
+            if (!snd) {
+              l.pc.addTrack(mix.mixed, mix.destStream);
+              needsRenegotiate = true;
+            }
+          }
+        }
+      }
+
       setScreenSharing(true);
       setStreamTick((v) => v + 1);
       // Статус «демонстрация включена» — сразу, без ожидания опроса сервера
@@ -1537,7 +1643,7 @@ export function useCallController(
     } catch {
       notifyRef.current("Не удалось начать демонстрацию экрана");
     }
-  }, [renegotiateAll, patchMyMediaState]);
+  }, [renegotiateAll, patchMyMediaState, buildScreenAudioMix]);
 
   /** Ссылка-приглашение в текущий звонок (её можно кинуть кому угодно). */
   const getShareLink = useCallback(async (): Promise<string | null> => {
