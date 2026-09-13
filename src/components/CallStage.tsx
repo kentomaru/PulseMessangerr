@@ -633,6 +633,7 @@ function CallBody({
         </div>
       </div>
       <MicSilenceWarning micLevelRef={micLevelRef} />
+      <MicStateBadge localStreamRef={localStreamRef} />
       {screenSharers.map((p) => (
         <div key={`screen-${p.userId}`} className="mb-2.5 last:mb-0">
           <ScreenTile
@@ -1102,6 +1103,32 @@ function MicSilenceWarning({ micLevelRef }: { micLevelRef: React.RefObject<numbe
       Микрофон не улавливает звук. Проверьте значок микрофона в адресной
       строке. Если приложение открыто внутри предпросмотра — откройте его в
       отдельной вкладке браузера (рамка может блокировать микрофон).
+    </div>
+  );
+}
+
+/** Статус собственного микрофона: если потока нет (режим прослушивания),
+    показываем заметный бейдж — иначе пользователь не понимает, почему
+    «слышно одного, а другого нет». */
+function MicStateBadge({
+  localStreamRef,
+}: {
+  localStreamRef: React.RefObject<MediaStream | null>;
+}) {
+  const [hasMic, setHasMic] = useState(true);
+  useEffect(() => {
+    const t = setInterval(() => {
+      const s = localStreamRef.current;
+      setHasMic(!!s && s.getAudioTracks().some((tr) => tr.readyState === "live"));
+    }, 1_000);
+    return () => clearInterval(t);
+  }, [localStreamRef]);
+  if (hasMic) return null;
+  return (
+    <div className="pointer-events-none absolute inset-x-0 top-14 z-20 mx-auto w-fit max-w-[94%] rounded-xl border border-rose-300/30 bg-rose-500/15 px-3 py-2 text-center text-[11px] text-rose-200 backdrop-blur">
+      Вас не слышно: нет доступа к микрофону. Нажмите на значок микрофона в
+      адресной строке браузера и разрешите доступ (или откройте сайт в обычной
+      вкладке).
     </div>
   );
 }
