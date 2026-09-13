@@ -613,8 +613,11 @@ function CallBody({
           участник. Позовите кого-нибудь кнопкой «Пригласить» внизу.
         </div>
       )}
-      <div className="pointer-events-none absolute inset-x-0 top-3 z-10 flex justify-center">
+      <div className="pointer-events-none absolute inset-x-0 top-3 z-10 flex justify-center gap-2">
         <UnlockAudioButton />
+        <div className="pointer-events-auto">
+          <SoundTestButton />
+        </div>
       </div>
       <MicSilenceWarning micLevelRef={micLevelRef} />
       {screenSharers.map((p) => (
@@ -971,6 +974,45 @@ function MicMeter({ micLevelRef }: { micLevelRef: React.RefObject<number> }) {
       </span>
       <span className="text-[8px] leading-none text-white/30">микрофон</span>
     </span>
+  );
+}
+
+/** Тест звука: короткий гудок через тот же аудиоконтур, что и звонок.
+    Если гудка НЕ слышно — значит, браузер/рамка блокирует воспроизведение
+    на этой странице, и дело не в коде звонка. */
+function SoundTestButton() {
+  const playBeep = () => {
+    try {
+      const ctx = getAudioContext();
+      if (!ctx) return;
+      if (ctx.state !== "running") void ctx.resume().catch(() => {});
+      const t0 = ctx.currentTime + 0.05;
+      [880, 660, 880].forEach((freq, i) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = "sine";
+        osc.frequency.value = freq;
+        const at = t0 + i * 0.22;
+        gain.gain.setValueAtTime(0, at);
+        gain.gain.linearRampToValueAtTime(0.25, at + 0.03);
+        gain.gain.setValueAtTime(0.25, at + 0.14);
+        gain.gain.linearRampToValueAtTime(0, at + 0.18);
+        osc.connect(gain).connect(ctx.destination);
+        osc.start(at);
+        osc.stop(at + 0.2);
+      });
+    } catch {
+      /* нет WebAudio */
+    }
+  };
+  return (
+    <button
+      onClick={playBeep}
+      className="rounded-full border border-white/15 bg-white/10 px-3 py-1.5 text-[11px] text-white/80 backdrop-blur transition hover:bg-white/20"
+      title="Проверить, работает ли звук на этой странице"
+    >
+      Тест звука
+    </button>
   );
 }
 

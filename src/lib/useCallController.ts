@@ -71,6 +71,12 @@ const ICE_SERVERS: RTCIceServer[] = [
 
 const INCOMING_POLL_MS = 3_000;
 const CALL_POLL_MS = 1_200;
+/** Точно как в эталонном примере Google webrtc/samples (pc1): оффер явно
+ *  просит принимать и аудио, и видео. */
+const OFFER_OPTIONS: RTCOfferOptions = {
+  offerToReceiveAudio: true,
+  offerToReceiveVideo: true,
+};
 /** Сколько ждём answer, прежде чем переотправить оффер. */
 
 
@@ -351,7 +357,9 @@ export function useCallController(
         if (!link) return;
         try {
           link.makingOffer = true;
-          await pc.setLocalDescription();
+          // Оффер — по образцу сэмпла: явные опции приёма аудио/видео.
+          const offer = await pc.createOffer(OFFER_OPTIONS);
+          await pc.setLocalDescription(offer);
           const d = pc.localDescription;
           const s = sessionRef.current;
           if (s && d)
@@ -566,7 +574,8 @@ const syncMesh = useCallback(
             Date.now() - link.createdAt > 8_000
           ) {
             try {
-              await link.pc.setLocalDescription();
+              const offer = await link.pc.createOffer(OFFER_OPTIONS);
+              await link.pc.setLocalDescription(offer);
               const d = link.pc.localDescription;
               if (d)
                 await sendSignal(callId, p.userId, "offer", {
@@ -1111,7 +1120,8 @@ const syncMesh = useCallback(
       try {
         l.offering = true;
         l.offeringSince = Date.now();
-        await l.pc.setLocalDescription();
+        const offer = await l.pc.createOffer(OFFER_OPTIONS);
+        await l.pc.setLocalDescription(offer);
         const d = l.pc.localDescription;
         const s = sessionRef.current;
         if (s && d) await sendSignal(s.id, peerId, d.type === "answer" ? "answer" : "offer", { type: d.type, sdp: d.sdp });
