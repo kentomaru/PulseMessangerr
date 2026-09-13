@@ -626,12 +626,6 @@ function CallBody({
           участник. Позовите кого-нибудь кнопкой «Пригласить» внизу.
         </div>
       )}
-      <div className="pointer-events-none absolute inset-x-0 top-3 z-10 flex justify-center gap-2">
-        <UnlockAudioButton />
-        <div className="pointer-events-auto">
-          <SoundTestButton />
-        </div>
-      </div>
       <MicSilenceWarning micLevelRef={micLevelRef} />
       <MicStateBadge localStreamRef={localStreamRef} />
       {screenSharers.map((p) => (
@@ -991,98 +985,6 @@ function MicMeter({ micLevelRef }: { micLevelRef: React.RefObject<number> }) {
   );
 }
 
-/** Тест звука: гудок ДВУМЯ независимыми путями сразу —
-    1) WebAudio-осциллятор, 2) обычный <audio> с WAV-файлом, собранным в коде.
-    Если НЕ слышно ни одного — значит, звук заблокирован не кодом, а
-    браузером/системой для этой страницы (сайт заглушён, микшер ОС, рамка
-    предпросмотра). Кнопка мигает, чтобы было видно: клик сработал. */
-function makeBeepWavDataUri(): string {
-  const rate = 8000;
-  const seconds = 0.6;
-  const n = Math.floor(rate * seconds);
-  const data = new Uint8Array(44 + n * 2);
-  const view = new DataView(data.buffer);
-  const wr = (o: number, s: string) => {
-    for (let i = 0; i < s.length; i++) view.setUint8(o + i, s.charCodeAt(i));
-  };
-  wr(0, "RIFF");
-  view.setUint32(4, 36 + n * 2, true);
-  wr(8, "WAVE");
-  wr(12, "fmt ");
-  view.setUint32(16, 16, true);
-  view.setUint16(20, 1, true);
-  view.setUint16(22, 1, true);
-  view.setUint32(24, rate, true);
-  view.setUint32(28, rate * 2, true);
-  view.setUint16(32, 2, true);
-  view.setUint16(34, 16, true);
-  wr(36, "data");
-  view.setUint32(40, n * 2, true);
-  for (let i = 0; i < n; i++) {
-    const t = i / rate;
-    // Две ноты, квадратная волна — слышно даже на тихих динамиках
-    const freq = t < 0.3 ? 880 : 660;
-    const v = Math.sign(Math.sin(2 * Math.PI * freq * t)) * 0.35;
-    view.setInt16(44 + i * 2, Math.round(v * 32767), true);
-  }
-  let bin = "";
-  for (let i = 0; i < data.length; i++) bin += String.fromCharCode(data[i]);
-  return `data:audio/wav;base64,${btoa(bin)}`;
-}
-
-function SoundTestButton() {
-  const [flash, setFlash] = useState(false);
-  const playBeep = () => {
-    setFlash(true);
-    setTimeout(() => setFlash(false), 900);
-    // Путь 1: WebAudio
-    try {
-      const ctx = getAudioContext();
-      if (ctx) {
-        if (ctx.state !== "running") void ctx.resume().catch(() => {});
-        const t0 = ctx.currentTime + 0.05;
-        [880, 660, 880].forEach((freq, i) => {
-          const osc = ctx.createOscillator();
-          const gain = ctx.createGain();
-          osc.type = "sine";
-          osc.frequency.value = freq;
-          const at = t0 + i * 0.22;
-          gain.gain.setValueAtTime(0, at);
-          gain.gain.linearRampToValueAtTime(0.3, at + 0.03);
-          gain.gain.setValueAtTime(0.3, at + 0.14);
-          gain.gain.linearRampToValueAtTime(0, at + 0.18);
-          osc.connect(gain).connect(ctx.destination);
-          osc.start(at);
-          osc.stop(at + 0.2);
-        });
-      }
-    } catch {
-      /* нет WebAudio */
-    }
-    // Путь 2: обычный <audio> с WAV — полностью независим от AudioContext
-    try {
-      const a = new Audio(makeBeepWavDataUri());
-      a.volume = 1;
-      void a.play().catch(() => {});
-    } catch {
-      /* ок */
-    }
-  };
-  return (
-    <button
-      onClick={playBeep}
-      className={`rounded-full border px-3 py-1.5 text-[11px] backdrop-blur transition ${
-        flash
-          ? "border-emerald-300/60 bg-emerald-400/30 text-white"
-          : "border-white/15 bg-white/10 text-white/80 hover:bg-white/20"
-      }`}
-      title="Проверить, работает ли звук на этой странице"
-    >
-      {flash ? "Звук запущен…" : "Тест звука"}
-    </button>
-  );
-}
-
 /** Предупреждение: микрофон молчит дольше 6 секунд — почти наверняка нет
     доступа к микрофону (браузер/рамка предпросмотра его не отдаёт). */
 function MicSilenceWarning({ micLevelRef }: { micLevelRef: React.RefObject<number> }) {
@@ -1133,27 +1035,6 @@ function MicStateBadge({
   );
 }
 
-/** Явная разблокировка звука: один клик проигрывает ВСЕ аудио-элементы
-    звонка внутри жеста пользователя — обходит автоплей-политики браузера. */
-function UnlockAudioButton() {
-  const [done, setDone] = useState(false);
-  if (done) return null;
-  return (
-    <button
-      onClick={() => {
-        document.querySelectorAll("audio").forEach((a) => {
-          void a.play().catch(() => {});
-        });
-        void getAudioContext()?.resume().catch(() => {});
-        setDone(true);
-      }}
-      className="pointer-events-auto rounded-full border border-white/15 bg-white/10 px-3 py-1.5 text-[11px] text-white/80 backdrop-blur transition hover:bg-white/20"
-    >
-      Не слышно? Нажмите, чтобы включить звук
-    </button>
-  );
-}
-
 function Controls({
   muted,
   cameraOn,
@@ -1178,7 +1059,6 @@ function Controls({
   onResetVolumes,
 }: WindowProps & { compact?: boolean }) {
   const [audioPanel, setAudioPanel] = useState(false);
-  const [diagOpen, setDiagOpen] = useState(false);
 
   return (
     <div
@@ -1201,75 +1081,8 @@ function Controls({
       >
         {muted ? <MicOff className="h-4.5 w-4.5" /> : <Mic className="h-4.5 w-4.5" />}
       </Control>
-      {/* Сброс громкостей участников к 100% — если кто-то случайно
-          скрутил ползунок в ноль, «звука нет» чинится одним нажатием. */}
-      {!compact && onResetVolumes && (
-        <Control
-          small={compact}
-          onClick={() => {
-            onResetVolumes();
-            notify("Громкость всех участников сброшена на 100%");
-          }}
-          title="Сбросить громкость всех участников на 100%"
-        >
-          <Volume2 className="h-4.5 w-4.5" />
-        </Control>
-      )}
       {/* Живой уровень микрофона — сразу видно, ловится ли голос */}
       {!compact && <MicMeter micLevelRef={micLevelRef} />}
-      {!compact && (
-        <Control
-          small={compact}
-          active={diagOpen}
-          onClick={() => setDiagOpen((v) => !v)}
-          title="Диагностика связи: сколько звука уходит и приходит"
-        >
-          <Activity className="h-4.5 w-4.5" />
-        </Control>
-      )}
-      {!compact && diagOpen && (
-        <div className="absolute bottom-full left-1/2 mb-3 w-72 -translate-x-1/2 rounded-xl border border-white/10 bg-[#0a1120]/95 p-3 text-left backdrop-blur-xl">
-          <p className="mb-2 text-[11px] font-semibold text-white/70">
-            Диагностика звука
-          </p>
-          <div className="space-y-1.5">
-            {Object.keys(audioWatchdog ?? {}).length === 0 && (
-              <p className="text-[11px] text-white/40">Пока нет соединений…</p>
-            )}
-            {Object.entries(audioWatchdog ?? {}).map(([uid, d]) => (
-              <div key={uid} className="flex items-center justify-between text-[11px]">
-                <span className={d.conn === "connected" ? "text-emerald-300" : "text-amber-300"}>
-                  {d.conn || "…"}
-                </span>
-                <span className="text-white/60">
-                  ↑ {d.sentKB} КБ · ↓ {d.recvKB} КБ · кадров: {d.frames}
-                </span>
-              </div>
-            ))}
-          </div>
-          <p className="mt-2 text-[10px] leading-relaxed text-white/35">
-            Если при разговоре ↑ растёт, а ↓ не растёт (или наоборот) — напишите
-            об этом разработчику вместе с цифрами.
-          </p>
-          <div className="mt-2 border-t border-white/10 pt-2 text-[11px] text-white/60">
-            Участников в звонке: {(session?.participants ?? []).length} · Соединений:{" "}
-            {Object.keys(audioWatchdog ?? {}).length}
-            {(session?.participants ?? []).length <= 1 && (
-              <p className="mt-1 text-amber-300/90">
-                Вы одни в звонке — звук и видео появятся, когда войдёт второй
-                участник. Позовите кого-нибудь кнопкой «Пригласить».
-              </p>
-            )}
-            {(session?.participants ?? []).length > 1 &&
-              Object.keys(audioWatchdog ?? {}).length === 0 && (
-                <p className="mt-1 text-amber-300/90">
-                  Соединение с участником устанавливается… Если дольше 20 секунд —
-                  перезапустите звонок.
-                </p>
-              )}
-          </div>
-        </div>
-      )}
       <Control
         small={compact}
         active={!cameraOn}

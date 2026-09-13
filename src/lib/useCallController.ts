@@ -693,6 +693,21 @@ const syncMesh = useCallback(
         status: s.status === "ringing" ? "ringing" : "live",
         participants: state.participants,
       };
+      // Личный звонок 1:1: собеседник вышел — звонок завершается сам, чтобы
+      // не висеть в пустой комнате («тыкаю на новое окошко и звонок
+      // сбрасывается» не нужен).
+      const others = next.participants.filter((p) => p.userId !== meIdRef.current);
+      const prev = sessionRef.current;
+      const wasLiveWithPeer =
+        !!prev && prev.status === "live" && prev.id === next.id &&
+        prev.participants.some((p) => p.userId !== meIdRef.current);
+      if (next.kind === "direct" && wasLiveWithPeer && others.length === 0) {
+        cleanup();
+        notifyRef.current("Собеседник вышел — звонок завершён");
+        endedRef.current();
+        return;
+      }
+
       sessionRef.current = next;
       setSession(next);
       setIncoming(null);
@@ -1111,12 +1126,12 @@ const syncMesh = useCallback(
    * а раньше «большая» сторона не могла добавить камеру — её оффер никто
    * не создавал, и собеседник не видел видео.
    */
-  const renegotiateAll = useCallback(async () => {
+  const renegotiateAll = useCallback(async (plain = false) => {
     for (const [peerId, l] of Array.from(linksRef.current.entries())) {
       try {
         l.offering = true;
         l.offeringSince = Date.now();
-        const offer = await l.pc.createOffer(OFFER_OPTIONS);
+        const offer = await l.pc.createOffer(plain ? undefined : OFFER_OPTIONS);
         await l.pc.setLocalDescription(offer);
         const d = l.pc.localDescription;
         const s = sessionRef.current;
@@ -1421,13 +1436,24 @@ const syncMesh = useCallback(
         void sender.replaceTrack(cameraTrack).catch(() => {});
       } else {
         l.pc.removeTrack(sender);
+        // ВАЖНО: сам видеотрансивер переводим в «неактивный». Если просто
+        // убрать трек, оффер с опцией «хочу принимать видео» оставлял
+        // m=видео как recvonly — у собеседника дорожка не заканчивалась,
+        // и ЧЁРНАЯ плитка демки висела вечно.
+        const tr = l.pc.getTransceivers().find((t) => t.sender === sender);
+        if (tr) {
+          try {
+            tr.direction = "inactive";
+          } catch {
+            /* браузер сам разберётся */
+          }
+        }
         needsRenegotiate = true;
       }
     }
-    // После демки всегда делаем чистое пересогласование: обе стороны
-    // переподтверждают состав дорожек, чтобы звонок гарантированно продолжил
-    // работать (раньше после демки звук/видео могли «застрять»).
-    void renegotiateAll();
+    // После демки — чистое пересогласование БЕЗ принудительного приёма
+    // видео (иначе видеосекция воскреснет пустой и плитка останется чёрной).
+    void renegotiateAll(true);
     if (s)
       void api(`/api/calls/${s.id}`, {
         method: "POST",
