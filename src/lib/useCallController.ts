@@ -567,7 +567,7 @@ export function useCallController(
    * всегда было видно, где именно тишина.
    */
   const [audioWatchdog, setAudioWatchdog] = useState<
-    Record<string, { conn: string; sentKB: number; recvKB: number }>
+    Record<string, { conn: string; sentKB: number; recvKB: number; frames: number }>
   >({});
   const watchdogRef = useRef<
     Record<string, { sent: number; recv: number; stuck: number }>
@@ -640,11 +640,12 @@ export function useCallController(
     if (!s || s.status !== "live") return;
     const t = setInterval(() => {
       (async () => {
-        const diag: Record<string, { conn: string; sentKB: number; recvKB: number }> = {};
+        const diag: Record<string, { conn: string; sentKB: number; recvKB: number; frames: number }> = {};
         let anyStuck = false;
         for (const [peerId, l] of linksRef.current) {
           let sent = 0;
           let recv = 0;
+          let frames = 0;
           try {
             const stats = await l.pc.getStats();
             stats.forEach((r) => {
@@ -652,6 +653,8 @@ export function useCallController(
                 sent = (r as RTCOutboundRtpStreamStats).bytesSent ?? sent;
               if (r.type === "inbound-rtp" && r.kind === "audio")
                 recv = (r as RTCInboundRtpStreamStats).bytesReceived ?? recv;
+              if (r.type === "inbound-rtp" && r.kind === "video")
+                frames = (r as RTCInboundRtpStreamStats).framesReceived ?? frames;
             });
           } catch {
             continue;
@@ -673,6 +676,7 @@ export function useCallController(
             conn: l.pc.connectionState,
             sentKB: Math.round(sent / 1024),
             recvKB: Math.round(recv / 1024),
+            frames,
           };
         }
         setAudioWatchdog(diag);

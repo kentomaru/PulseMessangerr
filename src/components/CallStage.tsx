@@ -93,7 +93,7 @@ type Props = {
   /** Текущий уровень микрофона (0–100) для индикатора. */
   micLevelRef: React.RefObject<number>;
   /** Живая статистика звука по каждому участнику (для панели «Диагностика»). */
-  audioWatchdog?: Record<string, { conn: string; sentKB: number; recvKB: number }>;
+  audioWatchdog?: Record<string, { conn: string; sentKB: number; recvKB: number; frames: number }>;
   /** Уровень связи с каждым участником: 0–3 «палочки». */
   connQuality?: Record<string, number>;
 };
@@ -559,6 +559,7 @@ function CallBody({
   streamTick,
   onViewUser,
   connQuality,
+  micLevelRef,
 }: WindowProps) {
   const localVideoRef = useRef<HTMLVideoElement | null>(null);
 
@@ -612,6 +613,10 @@ function CallBody({
           участник. Позовите кого-нибудь кнопкой «Пригласить» внизу.
         </div>
       )}
+      <div className="pointer-events-none absolute inset-x-0 top-3 z-10 flex justify-center">
+        <UnlockAudioButton />
+      </div>
+      <MicSilenceWarning micLevelRef={micLevelRef} />
       {screenSharers.map((p) => (
         <div key={`screen-${p.userId}`} className="mb-2.5 last:mb-0">
           <ScreenTile
@@ -969,6 +974,50 @@ function MicMeter({ micLevelRef }: { micLevelRef: React.RefObject<number> }) {
   );
 }
 
+/** Предупреждение: микрофон молчит дольше 6 секунд — почти наверняка нет
+    доступа к микрофону (браузер/рамка предпросмотра его не отдаёт). */
+function MicSilenceWarning({ micLevelRef }: { micLevelRef: React.RefObject<number> }) {
+  const [silent, setSilent] = useState(false);
+  useEffect(() => {
+    let silentSince = 0;
+    const t = setInterval(() => {
+      const lvl = micLevelRef.current ?? 0;
+      if (lvl > 2) silentSince = 0;
+      else if (silentSince === 0) silentSince = Date.now();
+      setSilent(silentSince > 0 && Date.now() - silentSince > 6_000);
+    }, 1_000);
+    return () => clearInterval(t);
+  }, [micLevelRef]);
+  if (!silent) return null;
+  return (
+    <div className="pointer-events-none absolute inset-x-0 bottom-3 z-20 mx-auto w-fit max-w-[94%] rounded-xl border border-amber-300/30 bg-amber-500/15 px-3 py-2 text-center text-[11px] text-amber-200 backdrop-blur">
+      Микрофон не улавливает звук. Проверьте значок доступа к микрофону в
+      адресной строке браузера.
+    </div>
+  );
+}
+
+/** Явная разблокировка звука: один клик проигрывает ВСЕ аудио-элементы
+    звонка внутри жеста пользователя — обходит автоплей-политики браузера. */
+function UnlockAudioButton() {
+  const [done, setDone] = useState(false);
+  if (done) return null;
+  return (
+    <button
+      onClick={() => {
+        document.querySelectorAll("audio").forEach((a) => {
+          void a.play().catch(() => {});
+        });
+        void getAudioContext()?.resume().catch(() => {});
+        setDone(true);
+      }}
+      className="pointer-events-auto rounded-full border border-white/15 bg-white/10 px-3 py-1.5 text-[11px] text-white/80 backdrop-blur transition hover:bg-white/20"
+    >
+      Не слышно? Нажмите, чтобы включить звук
+    </button>
+  );
+}
+
 function Controls({
   muted,
   cameraOn,
@@ -1042,7 +1091,7 @@ function Controls({
                   {d.conn || "…"}
                 </span>
                 <span className="text-white/60">
-                  ↑ {d.sentKB} КБ · ↓ {d.recvKB} КБ
+                  ↑ {d.sentKB} КБ · ↓ {d.recvKB} КБ · кадров: {d.frames}
                 </span>
               </div>
             ))}
