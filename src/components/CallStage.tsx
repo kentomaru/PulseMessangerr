@@ -58,6 +58,8 @@ import type { CallSession, IncomingCall } from "@/lib/useCallController";
 import type { CallParticipantInfo, PublicUser } from "@/lib/types";
 
 type Props = {
+  /** Сбросить громкости всех участников к 100%. */
+  onResetVolumes?: () => void;
   meId: string;
   session: CallSession | null;
   incoming: IncomingCall | null;
@@ -149,6 +151,16 @@ export default function CallStage(props: Props) {
     setVolumes((all) => ({ ...all, [userId]: v }));
     saveUserVolume(userId, v);
   }, []);
+  /** Сброс всех громкостей к 100% — на случай, если кто-то случайно
+      скрутил ползунок в ноль и «звука нет». */
+  const resetVolumes = useCallback(() => {
+    setVolumes({});
+    try {
+      localStorage.removeItem("pulse_user_volumes_v1");
+    } catch {
+      /* ок */
+    }
+  }, []);
   const volumesValue = useMemo(() => ({ volumes, setVolume }), [volumes, setVolume]);
 
   const streamsValue = useMemo(
@@ -186,6 +198,7 @@ export default function CallStage(props: Props) {
           <CallWindow
             key="window"
             {...props}
+            onResetVolumes={resetVolumes}
             onCopyLink={copyLink}
             onShareLink={props.onCopyLink}
             copied={copied}
@@ -1082,6 +1095,7 @@ function Controls({
   notify,
   micLevelRef,
   audioWatchdog,
+  onResetVolumes,
 }: WindowProps & { compact?: boolean }) {
   const [audioPanel, setAudioPanel] = useState(false);
   const [diagOpen, setDiagOpen] = useState(false);
@@ -1107,6 +1121,20 @@ function Controls({
       >
         {muted ? <MicOff className="h-4.5 w-4.5" /> : <Mic className="h-4.5 w-4.5" />}
       </Control>
+      {/* Сброс громкостей участников к 100% — если кто-то случайно
+          скрутил ползунок в ноль, «звука нет» чинится одним нажатием. */}
+      {!compact && onResetVolumes && (
+        <Control
+          small={compact}
+          onClick={() => {
+            onResetVolumes();
+            notify("Громкость всех участников сброшена на 100%");
+          }}
+          title="Сбросить громкость всех участников на 100%"
+        >
+          <Volume2 className="h-4.5 w-4.5" />
+        </Control>
+      )}
       {/* Живой уровень микрофона — сразу видно, ловится ли голос */}
       {!compact && <MicMeter micLevelRef={micLevelRef} />}
       {!compact && (
