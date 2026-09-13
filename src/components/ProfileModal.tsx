@@ -205,7 +205,7 @@ export default function ProfileModal({ me, onClose, onSaved, onDeletedAccount }:
                   onClick={() => setBannerUrl(active ? null : b.key)}
                   title={b.label}
                   className={`h-12 w-24 shrink-0 overflow-hidden rounded-xl transition-all ${
-                    active ? "ring-2 ring-[#5865f2] ring-offset-2 ring-offset-[#0d0d18]" : "opacity-80 hover:opacity-100"
+                    active ? "ring-2 ring-[#5865f2] ring-offset-2 ring-offset-[#24272d]" : "opacity-80 hover:opacity-100"
                   }`}
                   style={bannerStyle(b.key)}
                 >
@@ -217,7 +217,7 @@ export default function ProfileModal({ me, onClose, onSaved, onDeletedAccount }:
             })}
             {bannerUrl && isFileBanner(bannerUrl) && (
               <div
-                className="h-12 w-24 shrink-0 overflow-hidden rounded-xl ring-2 ring-[#5865f2] ring-offset-2 ring-offset-[#0d0d18]"
+                className="h-12 w-24 shrink-0 overflow-hidden rounded-xl ring-2 ring-[#5865f2] ring-offset-2 ring-offset-[#24272d]"
                 style={bannerStyle(bannerUrl)}
                 title="Ваш баннер"
               />
@@ -231,7 +231,7 @@ export default function ProfileModal({ me, onClose, onSaved, onDeletedAccount }:
       <div className="relative z-10 -mt-10 flex flex-col items-center gap-2">
         <button
           onClick={() => avatarInput.current?.click()}
-          className="group relative rounded-full ring-4 ring-[#0d0d18]"
+          className="group relative rounded-full ring-4 ring-[#1b1e24]"
         >
           <Avatar name={displayName || me.username} src={avatarUrl} size={86} />
           <span className="absolute inset-0 grid place-items-center rounded-full bg-black/50 opacity-0 transition-opacity group-hover:opacity-100">
@@ -535,7 +535,7 @@ export function RecentGifRow({
           onClick={() => onPick(u)}
           title="Сделать статус-эмодзи"
           className={`h-12 w-12 shrink-0 overflow-hidden rounded-xl transition-all hover:scale-105 ${
-            active === u ? "ring-2 ring-[#5865f2] ring-offset-2 ring-offset-[#0d0d18]" : ""
+            active === u ? "ring-2 ring-[#5865f2] ring-offset-2 ring-offset-[#24272d]" : ""
           }`}
         >
           {/* eslint-disable-next-line @next/next/no-img-element */}

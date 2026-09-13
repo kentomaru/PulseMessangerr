@@ -59,7 +59,7 @@ export default function UserCardModal({ user, onClose, onMessage }: Props) {
       </div>
 
       <div className="relative -mt-10 flex justify-center">
-        <span className="rounded-full ring-4 ring-[#0d0d18]">
+        <span className="rounded-full ring-4 ring-[#1b1e24]">
           <Avatar name={user.displayName} src={user.avatarUrl} size={86} online={user.online} />
         </span>
       </div>

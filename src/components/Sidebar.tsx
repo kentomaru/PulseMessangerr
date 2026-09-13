@@ -190,7 +190,7 @@ export default function Sidebar({
   const linkToken = extractToken(query);
 
   return (
-    <aside className="flex h-full w-full flex-col border-r border-blue-200/8 bg-[linear-gradient(180deg,rgba(8,14,30,0.90),rgba(4,7,16,0.88))] backdrop-blur-2xl">
+    <aside className="flex h-full w-full flex-col border-r border-white/5 bg-[#1b1e24]">
       {/* Шапка: аватар + имя (клик — профиль), фирменный логотип градиентом */}
       <div className="flex items-center gap-3 px-5 pt-5 pb-3">
         <button onClick={onOpenProfile} className="transition-transform hover:scale-105 active:scale-95">

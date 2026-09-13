@@ -72,7 +72,7 @@ export default function WallpaperModal({ conversationId, current, onClose, onSav
               title={p.label}
               onClick={() => setSelected(p.key)}
               className={`aspect-square rounded-2xl transition-all hover:scale-105 ${
-                selected === p.key ? "ring-2 ring-[#5865f2] ring-offset-2 ring-offset-[#0d0d18]" : ""
+                selected === p.key ? "ring-2 ring-[#5865f2] ring-offset-2 ring-offset-[#24272d]" : ""
               } ${p.anim ? "relative overflow-hidden" : ""}`}
               style={{
                 ...wallpaperStyle(p.key),
