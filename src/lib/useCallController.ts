@@ -22,7 +22,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiError } from "@/lib/api";
 import { ensureAudioUnlocked, getAudioContext } from "@/lib/notify";
 import {
-  audioConstraints,
+
   loadAudioSettings,
   saveAudioSettings,
   type AudioSettings,
@@ -709,29 +709,25 @@ const syncMesh = useCallback(
   /* ─────────────────────── вход в комнату ─────────────────────── */
 
   const acquireMedia = useCallback(async (media: CallMedia): Promise<MediaStream | null> => {
-    // Шумо-/эхоподавление и автоусиление — из настроек звука (пункты
-    // «шумоподавление», «порог активации голоса» включаются в панели звонка).
-    const audio = audioConstraints();
+    // ВАЖНО: захватываем микрофон МАКСИМАЛЬНО ПРОСТО — { audio: true }, как
+    // в старой рабочей версии и в эталонных примерах. Ограничения
+    // (шумоподавление и т.д.) применяются ТОЛЬКО если пользователь сам нажмёт
+    // «Применить» в панели настроек звука: на части систем они ломают захват
+    // и звонок становился немым.
     try {
-      return await navigator.mediaDevices.getUserMedia({ audio, video: media === "video" });
-    } catch (err) {
+      return await navigator.mediaDevices.getUserMedia({ audio: true, video: media === "video" });
+    } catch {
       if (media === "video") {
         // Камеры может не быть — продолжаем хотя бы с аудио
         try {
-          return await navigator.mediaDevices.getUserMedia({ audio });
+          return await navigator.mediaDevices.getUserMedia({ audio: true });
         } catch {
           /* пробуем дальше */
         }
       }
-      // Некоторые браузеры не знают отдельные ограничения — пробуем просто аудио
-      try {
-        return await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-      } catch {
-        /* пробуем дальше */
-      }
-      // Ничего не дали (нет доступа к микрофону/камере, запрет в браузере и
-      // т.п.) — НЕ роняем звонок: заходим в режиме прослушивания (собеседников
-      // будет слышно и видно, но вас — нет). Раньше звонок вообще не начинался.
+      // Ничего не дало (нет доступа к микрофону, запрет в браузере и т.п.) —
+      // НЕ роняем звонок: заходим в режиме прослушивания (собеседников будет
+      // слышно и видно, но вас — нет).
       notifyRef.current(
         "Нет доступа к микрофону/камере — вы в режиме прослушивания. Разрешите доступ в настройках браузера, чтобы говорить",
       );
@@ -1428,7 +1424,10 @@ const syncMesh = useCallback(
         needsRenegotiate = true;
       }
     }
-    if (needsRenegotiate) void renegotiateAll();
+    // После демки всегда делаем чистое пересогласование: обе стороны
+    // переподтверждают состав дорожек, чтобы звонок гарантированно продолжил
+    // работать (раньше после демки звук/видео могли «застрять»).
+    void renegotiateAll();
     if (s)
       void api(`/api/calls/${s.id}`, {
         method: "POST",
