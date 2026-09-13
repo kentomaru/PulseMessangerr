@@ -72,16 +72,25 @@ const ICE_SERVERS: RTCIceServer[] = [
 const INCOMING_POLL_MS = 3_000;
 const CALL_POLL_MS = 1_200;
 /** Сколько ждём answer, прежде чем переотправить оффер. */
-const OFFER_RETRY_MS = 6_000;
 
-/** Состояние соединения с одним участником. */
+
+/** Состояние соединения с одним участником (паттерн Perfect Negotiation,
+ *  рекомендованный W3C/MDN: https://developer.mozilla.org/en-US/docs/Web/API/WebRTC_API/Perfect_negotiation). */
 type PeerLink = {
   pc: RTCPeerConnection;
-  /** Кто инициировал текущее согласование. */
+  /** Вежливая сторона уступает при столкновении офферов (детерминированно). */
+  polite: boolean;
+  /** Готовим свой оффер прямо сейчас (аналог makingOffer из паттерна). */
+  makingOffer: boolean;
+  /** Игнорировать входящие кандидаты отклонённого оффера. */
+  ignoreOffer: boolean;
+  /** Применяем answer прямо сейчас. */
+  settingRemoteAnswer: boolean;
+  /** Когда создан линк — для страховочного повторного оффера. */
+  createdAt: number;
+  /** Кто инициировал текущее согласование (для совместимости). */
   offering: boolean;
-  /** Когда отправили оффер — чтобы повторить, если ответ так и не пришёл. */
   offeringSince: number | null;
-  /** SDP, который я опубликовал/отправил этому участнику. */
   publishedSdp: string | null;
   /** Когда последний раз делали ICE-рестарт (защита от спама). */
   lastIceRestart?: number;
@@ -308,7 +317,7 @@ export function useCallController(
   );
 
   /** Я предлагаю соединение, если мой id «меньше» (детерминированно для обоих). */
-  const iShouldOffer = useCallback((peerId: string) => meIdRef.current < peerId, []);
+
 
   const createLink = useCallback(
     (peerId: string): PeerLink => {
@@ -331,6 +340,31 @@ export function useCallController(
         streamsRef.current.set(peerId, stream);
       }
       const remote = stream;
+
+      /* PERFECT NEGOTIATION: роли назначаются детерминированно по id,
+         офферы создаются САМИ по событию negotiationneeded (после каждого
+         addTrack/removeTrack/replaceTrack-через-добавление) — ручной
+         очереди «кто кому должен предложить» больше нет. */
+      const polite = meIdRef.current > peerId;
+      pc.onnegotiationneeded = async () => {
+        const link = linksRef.current.get(peerId);
+        if (!link) return;
+        try {
+          link.makingOffer = true;
+          await pc.setLocalDescription();
+          const d = pc.localDescription;
+          const s = sessionRef.current;
+          if (s && d)
+            await sendSignal(s.id, peerId, d.type === "answer" ? "answer" : "offer", {
+              type: d.type,
+              sdp: d.sdp,
+            });
+        } catch {
+          /* событие повторится */
+        } finally {
+          link.makingOffer = false;
+        }
+      };
 
     pc.ontrack = (e) => {
       // ВАЖНО: берём именно e.track — дорожку ЭТОГО события. Раньше брали
@@ -389,6 +423,11 @@ export function useCallController(
 
       const link: PeerLink = {
         pc,
+        polite,
+        makingOffer: false,
+        ignoreOffer: false,
+        settingRemoteAnswer: false,
+        createdAt: Date.now(),
         offering: false,
         offeringSince: null,
         publishedSdp: null,
@@ -415,7 +454,65 @@ export function useCallController(
    * Синхронизация mesh-соединений по состоянию комнаты:
    * создаём недостающие пиры, отвечаем на офферы, предлагаем свои.
    */
-  const syncMesh = useCallback(
+  /** Обработка одного входящего сигнала по канонам Perfect Negotiation
+ *  (MDN/W3C): вежливый уступает при коллизии, невежливый игнорирует чужой
+ *  оффер. Один и тот же код для «звонящего» и «принимающего». */
+const handlePeerSignal = async (
+  link: PeerLink,
+  peerId: string,
+  sig: { kind: "offer" | "answer" | "ice"; payload?: unknown },
+) => {
+  const pc = link.pc;
+  const s = sessionRef.current;
+
+  if (sig.kind === "ice" && sig.payload) {
+    if (pc.remoteDescription) {
+      try {
+        await pc.addIceCandidate(sig.payload as RTCIceCandidateInit);
+      } catch {
+        /* кандидат от отклонённого оффера или устаревший */
+      }
+    } else {
+      link.pendingIce.push(sig.payload as RTCIceCandidateInit);
+    }
+    return;
+  }
+
+  if (
+    (sig.kind === "offer" || sig.kind === "answer") &&
+    sig.payload &&
+    typeof (sig.payload as { sdp?: unknown }).sdp === "string"
+  ) {
+    const description: RTCSessionDescriptionInit = {
+      type: sig.kind,
+      sdp: (sig.payload as { sdp: string }).sdp,
+    };
+    const readyForOffer =
+      !link.makingOffer &&
+      (pc.signalingState === "stable" || link.settingRemoteAnswer);
+    const offerCollision = description.type === "offer" && !readyForOffer;
+    link.ignoreOffer = !link.polite && offerCollision;
+    if (link.ignoreOffer) return;
+
+    link.settingRemoteAnswer = description.type === "answer";
+    await pc.setRemoteDescription(description);
+    link.settingRemoteAnswer = false;
+
+    if (description.type === "offer") {
+      // setLocalDescription() без аргументов сам создаёт ответ.
+      await pc.setLocalDescription();
+      const d = pc.localDescription;
+      if (s && d)
+        await sendSignal(s.id, peerId, d.type === "answer" ? "answer" : "offer", {
+          type: d.type,
+          sdp: d.sdp,
+        });
+    }
+    await flushIce(link);
+  }
+};
+
+const syncMesh = useCallback(
     async (state: CallState) => {
       if (syncingRef.current) return;
       syncingRef.current = true;
@@ -424,8 +521,6 @@ export function useCallController(
       const lockTimer = setTimeout(() => {
         syncingRef.current = false;
       }, 12_000);
-      // Сервер уже пометил выданные сигналы прочитанными — обрабатываем всё,
-      // что накопилось в очереди (включая недообработанное прошлым проходом).
       const signals = signalQueueRef.current.splice(0, signalQueueRef.current.length);
       try {
         const me = meIdRef.current;
@@ -439,113 +534,47 @@ export function useCallController(
         }
 
         for (const p of active) {
-          const existing = linksRef.current.get(p.userId);
-          const pc = existing?.pc ?? createLink(p.userId).pc;
-          const link = linksRef.current.get(p.userId)!;
+          const link = linksRef.current.get(p.userId) ?? createLink(p.userId);
 
-          // 1) Собеседник опубликовал SDP-оффер — значит, он ждёт мой answer
-          if (p.sdp) {
-            const remoteChanged =
-              pc.remoteDescription?.sdp !== p.sdp ||
-              (pc.signalingState === "stable" && !existing);
-            if (remoteChanged) {
-              try {
-                // Встречные офферы: «вежливая» сторона откатывает свой
-                if (pc.signalingState === "have-local-offer" && !iShouldOffer(p.userId)) {
-                  await pc.setLocalDescription({ type: "rollback" });
-                  link.offering = false;
-                  link.offeringSince = null;
-                }
-                await pc.setRemoteDescription({ type: "offer", sdp: p.sdp });
-                link.publishedSdp = p.sdp;
-                await flushIce(link);
-                const answer = await pc.createAnswer();
-                await pc.setLocalDescription(answer);
-                await sendSignal(callId, p.userId, "answer", {
-                  type: answer.type,
-                  sdp: answer.sdp,
-                });
-                continue;
-              } catch {
-                /* попробуем на следующем опросе */
-              }
+          // Оффер, опубликованный при входе, может прийти через поле участника
+          if (p.sdp && link.pc.remoteDescription?.sdp !== p.sdp) {
+            try {
+              await handlePeerSignal(link, p.userId, {
+                kind: "offer",
+                payload: { type: "offer", sdp: p.sdp },
+              });
+            } catch {
+              /* повторится на следующем опросе */
             }
           }
 
-          // 2) Входящие сигналы (answer / ice / offer) от этого участника
+          // Все накопленные сигналы от этого участника — через один обработчик
           for (const sig of signals.filter((s) => s.from === p.userId)) {
             try {
-              if (sig.kind === "answer" && typeof sig.payload?.sdp === "string") {
-                if (pc.signalingState === "have-local-offer") {
-                  await pc.setRemoteDescription({ type: "answer", sdp: sig.payload.sdp });
-                  link.offering = false; // согласование завершено
-                  link.offeringSince = null;
-                  await flushIce(link);
-                }
-              } else if (sig.kind === "ice" && sig.payload) {
-                if (pc.remoteDescription) await pc.addIceCandidate(sig.payload as RTCIceCandidateInit);
-                else link.pendingIce.push(sig.payload as RTCIceCandidateInit);
-              } else if (sig.kind === "offer" && typeof sig.payload?.sdp === "string") {
-                // Внезапный оффер (например, после включения камеры)
-                if (pc.signalingState === "have-local-offer" && iShouldOffer(p.userId)) {
-                  // «Невоспитанная» сторона игнорирует встречный оффер
-                  continue;
-                }
-                if (pc.signalingState !== "stable") {
-                  await pc.setLocalDescription({ type: "rollback" }).catch(() => {});
-                }
-                await pc.setRemoteDescription({ type: "offer", sdp: sig.payload.sdp });
-                await flushIce(link);
-                const answer = await pc.createAnswer();
-                await pc.setLocalDescription(answer);
-                await sendSignal(callId, p.userId, "answer", { type: answer.type, sdp: answer.sdp });
-              }
+              await handlePeerSignal(link, p.userId, sig);
             } catch {
-              /* сигнал обработаем повторно */
+              /* попробуем на следующем опросе */
             }
           }
 
-          // 3) Ответ на НАШ оффер потерялся (сеть моргнула, вкладка спала) —
-          // откатываемся и отправляем оффер заново. Проверяем для ОБЕИХ сторон:
-          // при ренеготиации (включили камеру/экран) оффер шлёт и «большая»
-          // сторона, и раньше она навсегда оставалась в have-local-offer.
+          // Страховка от потерянного оффера: если связи всё ещё нет дольше
+          // 8 секунд — напоминаем о себе (идемпотентно, по паттерну).
           if (
-            link.offering &&
-            link.offeringSince !== null &&
-            Date.now() - link.offeringSince > OFFER_RETRY_MS &&
-            pc.signalingState === "have-local-offer"
+            link.pc.signalingState === "stable" &&
+            !link.pc.remoteDescription &&
+            !link.makingOffer &&
+            Date.now() - link.createdAt > 8_000
           ) {
-            await pc.setLocalDescription({ type: "rollback" }).catch(() => {});
-            link.offering = false;
-            link.offeringSince = null;
-            // Сразу отправляем оффер заново — не дожидаясь следующего условия.
             try {
-              link.offering = true;
-              link.offeringSince = Date.now();
-              const offer = await pc.createOffer();
-              await pc.setLocalDescription(offer);
-              await sendSignal(callId, p.userId, "offer", { type: offer.type, sdp: offer.sdp });
+              await link.pc.setLocalDescription();
+              const d = link.pc.localDescription;
+              if (d)
+                await sendSignal(callId, p.userId, "offer", {
+                  type: d.type,
+                  sdp: d.sdp,
+                });
             } catch {
-              link.offering = false;
-              link.offeringSince = null;
-            }
-          }
-
-          // 4) Моя очередь предлагать — создаём/обновляем оффер
-          if (iShouldOffer(p.userId)) {
-            const needOffer =
-              !existing || (pc.signalingState === "stable" && !pc.remoteDescription);
-            if (needOffer && !link.offering) {
-              try {
-                link.offering = true;
-                link.offeringSince = Date.now();
-                const offer = await pc.createOffer();
-                await pc.setLocalDescription(offer);
-                await sendSignal(callId, p.userId, "offer", { type: offer.type, sdp: offer.sdp });
-              } catch {
-                link.offering = false;
-                link.offeringSince = null;
-              }
+              /* следующее событие договорит */
             }
           }
         }
@@ -554,7 +583,7 @@ export function useCallController(
         syncingRef.current = false;
       }
     },
-    [createLink, dropPeer, flushIce, iShouldOffer, sendSignal],
+    [createLink, dropPeer, flushIce, sendSignal],
   );
   const syncMeshRef = useRef(syncMesh);
   syncMeshRef.current = syncMesh;
@@ -1161,10 +1190,10 @@ export function useCallController(
       try {
         l.offering = true;
         l.offeringSince = Date.now();
-        const offer = await l.pc.createOffer();
-        await l.pc.setLocalDescription(offer);
+        await l.pc.setLocalDescription();
+        const d = l.pc.localDescription;
         const s = sessionRef.current;
-        if (s) await sendSignal(s.id, peerId, "offer", { type: offer.type, sdp: offer.sdp });
+        if (s && d) await sendSignal(s.id, peerId, d.type === "answer" ? "answer" : "offer", { type: d.type, sdp: d.sdp });
       } catch {
         l.offering = false;
         l.offeringSince = null;
