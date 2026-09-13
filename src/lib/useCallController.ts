@@ -56,11 +56,8 @@ const ICE_SERVERS: RTCIceServer[] = [
       "stun:stun2.l.google.com:19302",
     ],
   },
-  {
-    urls: ["turn:openrelay.metered.ca:80", "turn:openrelay.metered.ca:443", "turns:openrelay.metered.ca:443"],
-    username: "openrelayproject",
-    credential: "openrelayproject",
-  },
+  // TURN — из переменных окружения (см. .env: NEXT_PUBLIC_TURN_URL и т.д.).
+  // Старый открытый релей больше не используется.
   ...(process.env.NEXT_PUBLIC_TURN_URL
     ? [
         {
@@ -316,7 +313,15 @@ export function useCallController(
   const createLink = useCallback(
     (peerId: string): PeerLink => {
       const callId = sessionRef.current?.id ?? "";
-      const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+      // ВАЖНО: «max-bundle» — аудио и видео идут по ОДНОМУ транспорту.
+      // С политикой по умолчанию браузер мог развести их по разным
+      // транспортам: видео (демка) шло по рабочему, а звук — по мёртвому,
+      // и звонок был немым, пока пересогласование случайно не переносило
+      // аудио на рабочий транспорт.
+      const pc = new RTCPeerConnection({
+        iceServers: ICE_SERVERS,
+        bundlePolicy: "max-bundle",
+      });
       const local = localStreamRef.current;
       if (local) local.getTracks().forEach((t) => pc.addTrack(t, local));
 
@@ -691,7 +696,12 @@ export function useCallController(
       clearInterval(t);
       watchdogRef.current = {};
     };
-  }, [session, healAudioNow]);
+  // В зависимостях ТОЛЬКО стабильные значения: объект session меняется
+  // каждые 2 секунды опроса, и интервал пересоздавался раньше, чем успевал
+  // сработать (3 с) — из-за этого диагностика вечно показывала
+  // «Пока нет соединений», а сторож никогда не лечил тишину.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session?.id, session?.status, healAudioNow]);
 
   /** Применить состояние комнаты к локальному состоянию + синхронизировать mesh. */
   const applyState = useCallback(
