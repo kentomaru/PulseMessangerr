@@ -35,7 +35,7 @@ export default function StoriesRow({ me, groups, onOpen, onAdd }: Props) {
               e.stopPropagation();
               onAdd();
             }}
-            className="btn-gradient absolute -right-0.5 -bottom-0.5 flex h-5 w-5 items-center justify-center rounded-full border-2 border-[#1b1e24] text-white transition-transform hover:scale-110"
+            className="absolute -right-0.5 -bottom-0.5 flex h-5 w-5 items-center justify-center rounded-full border-2 border-[#1b1e24] bg-white/15 text-white/90 transition-transform hover:scale-110"
           >
             <Plus className="h-3 w-3" />
           </span>

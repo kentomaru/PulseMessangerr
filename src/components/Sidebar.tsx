@@ -215,7 +215,7 @@ export default function Sidebar({
           <button
             onClick={() => setCreateOpen((v) => !v)}
             title="Создать группу или канал"
-            className="btn-gradient flex h-9 w-9 items-center justify-center rounded-xl text-white"
+            className="flex h-9 w-9 items-center justify-center rounded-xl bg-white/10 text-white/80 hover:bg-white/15"
           >
             <Plus className="h-4 w-4" />
           </button>
@@ -330,7 +330,7 @@ export default function Sidebar({
                       onClick={() => onSetUiScale(v)}
                       className={`rounded-lg px-1 py-1.5 text-[11px] font-medium transition-colors ${
                         uiScale === v
-                          ? "btn-gradient text-white"
+                          ? "bg-white/10 text-white"
                           : "text-white/50 hover:bg-white/8 hover:text-white/80"
                       }`}
                     >

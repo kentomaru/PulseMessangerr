@@ -303,7 +303,7 @@ select:focus-visible,
 }
 
 .story-ring {
-  background: conic-gradient(from 140deg, #5865f2, #7289da, #5865f2);
+  background: #8b93a3;
 }
 
 .story-ring-seen {
