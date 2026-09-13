@@ -990,41 +990,94 @@ function MicMeter({ micLevelRef }: { micLevelRef: React.RefObject<number> }) {
   );
 }
 
-/** Тест звука: короткий гудок через тот же аудиоконтур, что и звонок.
-    Если гудка НЕ слышно — значит, браузер/рамка блокирует воспроизведение
-    на этой странице, и дело не в коде звонка. */
+/** Тест звука: гудок ДВУМЯ независимыми путями сразу —
+    1) WebAudio-осциллятор, 2) обычный <audio> с WAV-файлом, собранным в коде.
+    Если НЕ слышно ни одного — значит, звук заблокирован не кодом, а
+    браузером/системой для этой страницы (сайт заглушён, микшер ОС, рамка
+    предпросмотра). Кнопка мигает, чтобы было видно: клик сработал. */
+function makeBeepWavDataUri(): string {
+  const rate = 8000;
+  const seconds = 0.6;
+  const n = Math.floor(rate * seconds);
+  const data = new Uint8Array(44 + n * 2);
+  const view = new DataView(data.buffer);
+  const wr = (o: number, s: string) => {
+    for (let i = 0; i < s.length; i++) view.setUint8(o + i, s.charCodeAt(i));
+  };
+  wr(0, "RIFF");
+  view.setUint32(4, 36 + n * 2, true);
+  wr(8, "WAVE");
+  wr(12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, rate, true);
+  view.setUint32(28, rate * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  wr(36, "data");
+  view.setUint32(40, n * 2, true);
+  for (let i = 0; i < n; i++) {
+    const t = i / rate;
+    // Две ноты, квадратная волна — слышно даже на тихих динамиках
+    const freq = t < 0.3 ? 880 : 660;
+    const v = Math.sign(Math.sin(2 * Math.PI * freq * t)) * 0.35;
+    view.setInt16(44 + i * 2, Math.round(v * 32767), true);
+  }
+  let bin = "";
+  for (let i = 0; i < data.length; i++) bin += String.fromCharCode(data[i]);
+  return `data:audio/wav;base64,${btoa(bin)}`;
+}
+
 function SoundTestButton() {
+  const [flash, setFlash] = useState(false);
   const playBeep = () => {
+    setFlash(true);
+    setTimeout(() => setFlash(false), 900);
+    // Путь 1: WebAudio
     try {
       const ctx = getAudioContext();
-      if (!ctx) return;
-      if (ctx.state !== "running") void ctx.resume().catch(() => {});
-      const t0 = ctx.currentTime + 0.05;
-      [880, 660, 880].forEach((freq, i) => {
-        const osc = ctx.createOscillator();
-        const gain = ctx.createGain();
-        osc.type = "sine";
-        osc.frequency.value = freq;
-        const at = t0 + i * 0.22;
-        gain.gain.setValueAtTime(0, at);
-        gain.gain.linearRampToValueAtTime(0.25, at + 0.03);
-        gain.gain.setValueAtTime(0.25, at + 0.14);
-        gain.gain.linearRampToValueAtTime(0, at + 0.18);
-        osc.connect(gain).connect(ctx.destination);
-        osc.start(at);
-        osc.stop(at + 0.2);
-      });
+      if (ctx) {
+        if (ctx.state !== "running") void ctx.resume().catch(() => {});
+        const t0 = ctx.currentTime + 0.05;
+        [880, 660, 880].forEach((freq, i) => {
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.type = "sine";
+          osc.frequency.value = freq;
+          const at = t0 + i * 0.22;
+          gain.gain.setValueAtTime(0, at);
+          gain.gain.linearRampToValueAtTime(0.3, at + 0.03);
+          gain.gain.setValueAtTime(0.3, at + 0.14);
+          gain.gain.linearRampToValueAtTime(0, at + 0.18);
+          osc.connect(gain).connect(ctx.destination);
+          osc.start(at);
+          osc.stop(at + 0.2);
+        });
+      }
     } catch {
       /* нет WebAudio */
+    }
+    // Путь 2: обычный <audio> с WAV — полностью независим от AudioContext
+    try {
+      const a = new Audio(makeBeepWavDataUri());
+      a.volume = 1;
+      void a.play().catch(() => {});
+    } catch {
+      /* ок */
     }
   };
   return (
     <button
       onClick={playBeep}
-      className="rounded-full border border-white/15 bg-white/10 px-3 py-1.5 text-[11px] text-white/80 backdrop-blur transition hover:bg-white/20"
+      className={`rounded-full border px-3 py-1.5 text-[11px] backdrop-blur transition ${
+        flash
+          ? "border-emerald-300/60 bg-emerald-400/30 text-white"
+          : "border-white/15 bg-white/10 text-white/80 hover:bg-white/20"
+      }`}
       title="Проверить, работает ли звук на этой странице"
     >
-      Тест звука
+      {flash ? "Звук запущен…" : "Тест звука"}
     </button>
   );
 }
