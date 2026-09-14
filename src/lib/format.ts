@@ -140,7 +140,8 @@ export function parseAttachment(type: string, content: string): AttachmentInfo |
 export function legacyAttachmentKind(att: AttachmentInfo | null): "voice" | "video_note" | null {
   if (!att || !att.mimeType) return null;
   const mime = att.mimeType.toLowerCase();
-  if (mime.startsWith("video/")) return "video_note";
+  // Кружок — это записанное видео с длительностью; обычный видео-файл кружком не является
+  if (mime.startsWith("video/")) return att.duration ? "video_note" : null;
   if (mime.startsWith("audio/")) return "voice";
   return null;
 }
@@ -171,6 +172,9 @@ export function previewInfo(type: string, content: string): { kind: PreviewKind;
         kind: "video",
         text: `Видеосообщение${att.duration ? ` · ${formatDuration(Math.round(att.duration))}` : ""}`,
       };
+    // обычное видео (в т.ч. старое «сломанное» text-сообщение с видео)
+    if ((att.mimeType ?? "").toLowerCase().startsWith("video/"))
+      return { kind: "video", text: `Видео${caption}` };
     if (type === "file") {
       // Видео-файл — отдельная подпись, как в ТГ
       if ((att.mimeType ?? "").toLowerCase().startsWith("video/"))

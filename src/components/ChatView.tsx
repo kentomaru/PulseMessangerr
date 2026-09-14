@@ -3408,6 +3408,9 @@ function MessageBubble({
   const sticker = message.type === "text" && emojiOnly(message.content);
   /** Анимированная гифка (как в ТГ): сообщение вида «gifpack:<id>». */
   const gif = message.type === "text" ? gifpackId(message.content) : null;
+  /** Старое «сломанное» text-сообщение с видео-файлом (не кружок). */
+  const legacyVideo =
+    message.type === "text" && !!att && (att.mimeType ?? "").toLowerCase().startsWith("video/") && !att.duration;
   const legacyKind = message.type === "text" ? legacyAttachmentKind(att) : null;
   const isVoice = message.type === "voice" || legacyKind === "voice";
   const isNote = message.type === "video_note" || legacyKind === "video_note";
@@ -3474,8 +3477,8 @@ function MessageBubble({
 
         <div
           className={`relative overflow-hidden ${
-            media || sticker || gif ? "" : own && !space ? "bubble-own text-white" : "bubble-peer text-white/90"
-          } ${media || sticker || gif ? "" : `${own && !space ? "bubble-own-radius" : "bubble-peer-radius"} px-4 py-2.5`} ${
+            media || sticker || gif || legacyVideo ? "" : own && !space ? "bubble-own text-white" : "bubble-peer text-white/90"
+          } ${media || sticker || gif || legacyVideo ? "" : `${own && !space ? "bubble-own-radius" : "bubble-peer-radius"} px-4 py-2.5`} ${
             highlighted ? "ring-2 ring-[#5865f2]/60" : ""
           }`}
         >
@@ -3524,6 +3527,8 @@ function MessageBubble({
               )}
             </div>
           ) : isFile && att && (att.mimeType ?? "").toLowerCase().startsWith("video/") ? (
+            <VideoBubble url={att.url} caption={att.caption} own={own && !space} onOpenImage={onOpenImage} />
+          ) : legacyVideo && att ? (
             <VideoBubble url={att.url} caption={att.caption} own={own && !space} onOpenImage={onOpenImage} />
           ) : isFile && att ? (
             <FileCard att={att} />

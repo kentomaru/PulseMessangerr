@@ -1244,7 +1244,7 @@ export function ModalShell({
         exit={{ opacity: 0, scale: 0.95, y: 12 }}
         transition={{ type: "spring", bounce: 0.22, duration: 0.45 }}
         onClick={(e) => e.stopPropagation()}
-        className={`glass-strong w-full overflow-hidden rounded-[1.8rem] shadow-[0_40px_100px_-20px_rgba(0,0,0,0.9)] ${
+        className={`glass-strong nice-scroll m-auto max-h-[90vh] w-full overflow-y-auto rounded-[1.8rem] shadow-[0_40px_100px_-20px_rgba(0,0,0,0.9)] ${
           wide ? "max-w-lg" : "max-w-md"
         }`}
       >

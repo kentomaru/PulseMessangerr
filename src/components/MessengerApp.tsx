@@ -560,6 +560,25 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
     }
   };
 
+  // «печатает…» в заголовке вкладки браузера — как в Telegram
+  useEffect(() => {
+    const tick = () => {
+      const now = Date.now();
+      const peer = activeConv?.peer;
+      const typing =
+        peer && peer.typingAt && now - new Date(peer.typingAt).getTime() < 10_000
+          ? peer.displayName
+          : null;
+      document.title = typing ? `${typing} печатает… — Pulse` : "Pulse";
+    };
+    tick();
+    const t = window.setInterval(tick, 2_500);
+    return () => {
+      window.clearInterval(t);
+      document.title = "Pulse";
+    };
+  }, [activeConv, conversations]);
+
   const openConversationWith = useCallback(
     async (user: PublicUser) => {
       try {
@@ -846,7 +865,8 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
                 : undefined
             }
             commentFilter={
-              commentFilter && commentFilter.channelId !== activeConv.id ? null : commentFilter
+              // в самой канал-ленте фильтра нет; в группе-обсуждении — режим комментариев
+              commentFilter && commentFilter.channelId === activeConv.id ? null : commentFilter
             }
             onExitCommentMode={() => {
               if (commentFilter) {

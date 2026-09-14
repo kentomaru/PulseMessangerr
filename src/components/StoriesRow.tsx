@@ -17,7 +17,7 @@ export default function StoriesRow({ me, groups, onOpen, onAdd }: Props) {
   const others = groups.filter((g) => g.user.id !== me.id);
 
   return (
-    <div className="nice-scroll flex shrink-0 items-start gap-4 overflow-x-auto border-b border-white/5 px-5 py-3">
+    <div className="nice-scroll flex shrink-0 items-start gap-4 overflow-x-auto border-b border-white/5 px-4 py-2.5">
       {/* Моя история: клик по кружку — СМОТРЕТЬ свои истории, клик по «+» — добавить */}
       <button onClick={() => (mine ? onOpen(groups.indexOf(mine)) : onAdd())} className="group flex w-14 shrink-0 flex-col items-center gap-1.5">
         <div className="relative">

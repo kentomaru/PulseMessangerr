@@ -137,25 +137,34 @@ function PreviewNode({ conv, meId }: { conv: ConversationListItem; meId: string 
   return (
     <span className="inline-flex min-w-0 items-center gap-1.5">
       {url && lm.type === "image" && (
-        <img src={url} alt="" className="h-9 w-9 shrink-0 rounded-lg object-cover" loading="lazy" />
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={url} alt="" className="h-10 w-10 shrink-0 rounded-md object-cover" loading="lazy" />
       )}
       {url && (lm.type === "video_note" || isVideoFile) && (
-        /* Маленький квадратик с прогруженным первым кадром — как в ТГ */
-        <span className="relative h-9 w-9 shrink-0 overflow-hidden rounded-lg bg-white/10">
+        /* Квадратик как в ТГ: первый кадр видео подгружается и виден сразу */
+        <span className="relative h-10 w-10 shrink-0 overflow-hidden rounded-md bg-white/10">
           <video
             src={url}
             muted
             playsInline
             preload="metadata"
+            onLoadedMetadata={(e) => {
+              // заставляем браузер отрисовать первый кадр в превью
+              try {
+                e.currentTarget.currentTime = 0.01;
+              } catch {
+                /* не критично */
+              }
+            }}
             className="h-full w-full object-cover"
           />
-          <span className="absolute inset-0 flex items-center justify-center">
-            <Play className="h-3.5 w-3.5 text-white drop-shadow" />
+          <span className="absolute right-0.5 bottom-0.5 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-black/60">
+            <Play className="h-2 w-2 text-white" />
           </span>
         </span>
       )}
       {lm.type === "voice" && (
-        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white/10">
+        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-white/10">
           <Mic className="h-4 w-4 text-white/60" />
         </span>
       )}
@@ -599,7 +608,8 @@ export default function Sidebar({
               ? conversations.filter((c) => c.unreadCount > 0).length
               : f === "all"
               ? conversations.reduce((s, c) => s + c.unreadCount, 0)
-              : 0;
+              // на папке — сколько чатов этого типа с непрочитанным
+              : conversations.filter((c) => c.kind === f && c.unreadCount > 0).length;
           return (
             <button
               key={f}
@@ -625,7 +635,7 @@ export default function Sidebar({
       <StoriesRow me={me} groups={storyGroups} onOpen={onOpenStories} onAdd={onAddStory} />
 
       {/* Список диалогов */}
-      <div className="nice-scroll min-h-0 flex-1 overflow-y-auto px-3 pb-4">
+      <div className="nice-scroll min-h-0 flex-1 overflow-y-auto px-2.5 pb-4">
         {/* Закреплённые чаты — всегда сверху, в одном списке */}
         {pinned.length > 0 && (
           <>
@@ -712,7 +722,7 @@ export default function Sidebar({
 
 function SectionLabel({ children }: { children: React.ReactNode }) {
   return (
-    <p className="px-2 pt-2 pb-1 text-[11px] font-semibold tracking-widest text-white/25 uppercase">
+    <p className="px-2.5 pt-1.5 pb-1 text-[11px] font-semibold tracking-widest text-white/25 uppercase">
       {children}
     </p>
   );
