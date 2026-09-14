@@ -6,6 +6,8 @@ import {
   ArrowLeft,
   ArrowRight,
   Ban,
+  BellOff,
+  BellRing,
   Bookmark,
   Check,
   CheckCheck,
@@ -28,6 +30,7 @@ import {
   Plus,
   VolumeX,
   Info,
+  Link2,
   Loader2,
   Lock,
   Megaphone,
@@ -118,6 +121,13 @@ type Props = {
   initialAvatar: string | null;
   /** Непрочитанные на момент открытия (для разделителя «Непрочитанные»). */
   initialUnread?: number;
+  /** Переход к сообщению по ссылке (#msg=…) сразу после загрузки истории. */
+  initialJumpId?: string | null;
+  onJumpConsumed?: () => void;
+  /** Чат заглушён. */
+  muted?: boolean;
+  /** Переключить мьют текущего чата. */
+  onToggleMuteChat?: () => void;
   peer: Peer | null;
   onBack: () => void;
   onCall: (media: CallMedia) => void;
@@ -247,6 +257,10 @@ export default function ChatView({
   initialKind,
   initialAvatar,
   initialUnread,
+  initialJumpId,
+  onJumpConsumed,
+  muted,
+  onToggleMuteChat,
   peer,
   onBack,
   onCall,
@@ -1091,6 +1105,16 @@ ${x.text}` : x.text));
     void api(`/api/conversations/${conversationId}/typing`, { method: "POST" }).catch(() => {});
   };
 
+  // Открытие по ссылке «#msg=<id>»: прыгаем, как только история загрузилась.
+  useEffect(() => {
+    if (!initialJumpId || !loaded) return;
+    if (messages.some((m) => m.id === initialJumpId)) {
+      jumpTo(initialJumpId);
+      onJumpConsumed?.();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialJumpId, loaded, messages.length]);
+
   const jumpTo = (id: string) => {
     const el = scrollRef.current?.querySelector<HTMLElement>(`[data-mid="${id}"]`);
     if (!el) {
@@ -1420,6 +1444,17 @@ ${x.text}` : x.text));
           >
             <Search className="h-4.5 w-4.5" />
           </button>
+          {onToggleMuteChat && (
+            <button
+              onClick={onToggleMuteChat}
+              title={muted ? "Включить уведомления" : "Заглушить чат"}
+              className={`glass flex h-10 w-10 items-center justify-center rounded-xl transition-colors hover:text-white ${
+                muted ? "text-amber-300" : "text-white/75"
+              }`}
+            >
+              {muted ? <BellRing className="h-4.5 w-4.5" /> : <BellOff className="h-4.5 w-4.5" />}
+            </button>
+          )}
           {!isSaved && kind !== "channel" && (
             <>
               <button
@@ -1803,6 +1838,7 @@ ${x.text}` : x.text));
                       onEdit={() => startEdit(m)}
                       onPin={() => void togglePin(m)}
                       onReact={(emoji) => void toggleReaction(m.id, emoji)}
+                      onDoubleTap={() => void toggleReaction(m.id, "❤️")}
                       onMenu={openContextMenu}
                       onJump={jumpTo}
                       onViewUser={onViewUser}
@@ -2530,6 +2566,14 @@ ${x.text}` : x.text));
               void saveToSaved(ctxMenu.message);
               setCtxMenu(null);
             }}
+            onCopyLink={() => {
+              const url = `${window.location.origin}${window.location.pathname}#msg=${ctxMenu.message.id}`;
+              void navigator.clipboard.writeText(url).then(
+                () => notify("Ссылка на сообщение скопирована"),
+                () => notify("Не удалось скопировать ссылку"),
+              );
+              setCtxMenu(null);
+            }}
             onDelete={() => {
               requestDelete(ctxMenu.message);
               setCtxMenu(null);
@@ -2605,6 +2649,7 @@ function MessageContextMenu({
   onCopy,
   onForward,
   onSave,
+  onCopyLink,
   onDelete,
 }: {
   state: ContextMenuState;
@@ -2620,6 +2665,8 @@ function MessageContextMenu({
   onForward: () => void;
   /** Быстрое сохранение в «Избранное». */
   onSave: () => void;
+  /** Скопировать ссылку на сообщение. */
+  onCopyLink: () => void;
   onDelete: () => void;
 }) {
   const m = state.message;
@@ -2707,6 +2754,11 @@ function MessageContextMenu({
       {hasText && (
         <ContextItem icon={<Copy className="h-4 w-4 text-slate-400" />} label="Копировать" onClick={onCopy} />
       )}
+      <ContextItem
+        icon={<Link2 className="h-4 w-4 text-slate-400" />}
+        label="Ссылка на сообщение"
+        onClick={onCopyLink}
+      />
       {isEditable && (
         <ContextItem icon={<Pencil className="h-4 w-4 text-amber-300" />} label="Изменить" onClick={onEdit} />
       )}
@@ -3235,6 +3287,7 @@ function MessageBubble({
   onOpenUsername,
   onJump,
   onViewUser,
+  onDoubleTap,
 }: {
   message: ChatMessage;
   /** id текущего пользователя — чтобы в цитате писать «Вы», а не имя. */
@@ -3259,6 +3312,8 @@ function MessageBubble({
   onOpenUsername?: (name: string) => void;
   onJump: (id: string) => void;
   onViewUser: (u: PublicUser) => void;
+  /** Двойной клик по сообщению — быстрая реакция, как в Telegram. */
+  onDoubleTap?: () => void;
 }) {
   const sender = message.sender;
   const alignRight = own && !space;
@@ -3333,7 +3388,7 @@ function MessageBubble({
         e.preventDefault();
         onMenu(e.clientX, e.clientY, message);
       }}
-      onDoubleClick={() => onReply()}
+      onDoubleClick={() => (onDoubleTap ? onDoubleTap() : onReply())}
       onTouchStart={onTouchStart}
       onTouchMove={onTouchMove}
       onTouchEnd={onTouchEnd}

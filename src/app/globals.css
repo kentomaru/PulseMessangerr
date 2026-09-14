@@ -509,6 +509,8 @@ html[data-bradius="lg"] .bubble-peer-radius { border-radius: 1.8rem 1.8rem 1.8re
 /* Размер текста в сообщениях */
 html[data-chatfs="s"] .msg-text { font-size: 13px; }
 html[data-chatfs="l"] .msg-text { font-size: 17px; }
+/* Длинные слова/ссылки не должны вылазить из пузыря — ломаем где угодно */
+.msg-text { overflow-wrap: anywhere; min-width: 0; }
 /* Шрифт интерфейса */
 html[data-font="round"] body {
   font-family: ui-rounded, "SF Pro Rounded", "Nunito", "Manrope", system-ui, sans-serif;

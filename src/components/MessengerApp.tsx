@@ -164,6 +164,27 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
     };
   }, [loadConversations, loadStories]);
 
+  /** Переход по ссылке на сообщение: #msg=<id> (как в мессенджерах). */
+  const [jumpMsgId, setJumpMsgId] = useState<string | null>(null);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const m = window.location.hash.match(/^#msg=([a-zA-Z0-9-]+)/);
+    if (!m) return;
+    const msgId = m[1];
+    // хэш убираем сразу, чтобы повторная загрузка не прыгала снова
+    window.history.replaceState(null, "", window.location.pathname + window.location.search);
+    void fetch(`/api/messages/${msgId}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data: { message?: { conversationId?: string } } | null) => {
+        const convId = data?.message?.conversationId;
+        if (convId) {
+          setActiveId(convId);
+          setJumpMsgId(msgId);
+        }
+      })
+      .catch(() => undefined);
+  }, []);
+
   /** Звук входящего звонка (рингтон). */
   const [callSoundOn, setCallSoundOn] = useState(true);
   /** Браузерные уведомления о новых сообщениях. */
@@ -748,6 +769,10 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
           onAddStory={() => setStoryComposer(true)}
           onCreateGroup={(kind) => setCreateKind(kind)}
           onDiscover={() => setDiscover(true)}
+          onOpenMessage={(convId, msgId) => {
+            setActiveId(convId);
+            setJumpMsgId(msgId);
+          }}
           onOpenSaved={() => void openSaved()}
           onJoinByToken={(token) => void joinByToken(token)}
         />
@@ -798,6 +823,10 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
             initialKind={activeConv.kind}
             initialAvatar={activeConv.avatarUrl}
             initialUnread={activeConv.unreadCount}
+            initialJumpId={jumpMsgId}
+            onJumpConsumed={() => setJumpMsgId(null)}
+            muted={mutedIds.has(activeConv.id)}
+            onToggleMuteChat={() => toggleMuted(activeConv.id)}
             peer={activeConv.kind === "direct" ? activeConv.peer : null}
             onBack={() => setActiveId(null)}
             onCall={(media) => callCtl.startCall(activeConv.id, media)}
