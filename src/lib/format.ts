@@ -1,4 +1,5 @@
 import type { AttachmentInfo, CallLogInfo } from "@/lib/types";
+import { gifpackId, findGif } from "./premiumContent";
 
 export function timeHHmm(iso: string | Date) {
   const d = new Date(iso);
@@ -153,6 +154,9 @@ export function previewInfo(type: string, content: string): { kind: PreviewKind;
     const info = parseCallContent(content);
     return { kind: "call", text: info ? callLogLabel(info) : "Звонок" };
   }
+  // Анимированная гифка (сообщение «gifpack:<id>»)
+  const gif = type === "text" ? gifpackId(content) : null;
+  if (gif) return { kind: "video", text: `ГИФ${findGif(gif) ? ` · ${findGif(gif)!.title}` : ""}` };
   const att = parseAttachment(type, content);
   if (att) {
     const caption = att.caption ? ` ${att.caption.replace(/\n/g, " ").slice(0, 40)}` : "";
@@ -167,7 +171,12 @@ export function previewInfo(type: string, content: string): { kind: PreviewKind;
         kind: "video",
         text: `Видеосообщение${att.duration ? ` · ${formatDuration(Math.round(att.duration))}` : ""}`,
       };
-    if (type === "file") return { kind: "file", text: `${att.name ?? "Файл"}${caption}` };
+    if (type === "file") {
+      // Видео-файл — отдельная подпись, как в ТГ
+      if ((att.mimeType ?? "").toLowerCase().startsWith("video/"))
+        return { kind: "video", text: `Видео${caption}` };
+      return { kind: "file", text: `${att.name ?? "Файл"}${caption}` };
+    }
   }
   return { kind: null, text: content.replace(/\n/g, " ").slice(0, 80) };
 }

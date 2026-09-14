@@ -35,6 +35,7 @@ import {
   Lock,
   Megaphone,
   MessageSquare,
+  Sparkles,
   Mic,
   MoreVertical,
   Music,
@@ -72,6 +73,7 @@ import { audioConstraints } from "@/lib/audioSettings";
 import { claimPlayback, releasePlayback } from "@/lib/playback";
 import { EMOJI_CATEGORIES, STICKERS } from "@/lib/emojis";
 import { renderRichText } from "@/lib/richText";
+import { GIF_PACK, CUSTOM_EMOJI, findGif, gifpackId } from "@/lib/premiumContent";
 import {
   callLogLabel,
   dayLabel,
@@ -533,6 +535,21 @@ ${x.text}` : x.text));
   const canPost = kind !== "channel" || meta?.myRole === "owner" || meta?.myRole === "admin";
   /** Лимиты как в Telegram: текст 4096; подпись к медиа 1024 (2048 с Premium). */
   const msgLimit = draftFiles.length > 0 ? (me.premium ? 2048 : 1024) : 4096;
+
+  /** Pulse Premium: локальное зеркало + включение в два клика (бесплатно). */
+  const [isPremium, setIsPremium] = useState(!!me.premium);
+  useEffect(() => setIsPremium(!!me.premium), [me.premium]);
+  const enablePremium = useCallback(async () => {
+    try {
+      await api<{ user: { premium?: boolean } }>("/api/auth/me", {
+        method: "PATCH",
+        body: JSON.stringify({ premium: true }),
+      });
+      setIsPremium(true);
+    } catch {
+      notify("Не удалось включить Premium — попробуйте ещё раз");
+    }
+  }, [notify]);
   /** «Избранное» — чат с самим собой: без звонков, подпись «сохранённые». */
   const isSaved = kind === "direct" && (peerState?.id ?? peer?.id) === me.id;
   const pinnedCurrent = pinned.length > 0 ? pinned[Math.min(pinnedIdx, pinned.length - 1)] : null;
@@ -1204,6 +1221,9 @@ ${x.text}` : x.text));
   }, [kind, conversationId]);
   useEffect(() => {
     loadPostCounts();
+    // счётчики живые: подтягиваем, пока открыт канал
+    const t = window.setInterval(loadPostCounts, 30_000);
+    return () => window.clearInterval(t);
   }, [loadPostCounts]);
 
   // Автофокус поля ввода при открытии чата
@@ -2384,6 +2404,12 @@ ${x.text}` : x.text));
                   }}
                   stickerBusy={stickerBusy}
                   onClose={() => setEmojiOpen(false)}
+                  premium={isPremium}
+                  onEnablePremium={() => void enablePremium()}
+                  onSendGif={(id) => {
+                    setEmojiOpen(false);
+                    void send(`gifpack:${id}`);
+                  }}
                 />
               </motion.div>
             )}
@@ -3380,6 +3406,8 @@ function MessageBubble({
   const att = parseAttachment(message.type, message.content);
   /** «Стикер»: сообщение только из эмодзи рисуем крупно и без пузыря. */
   const sticker = message.type === "text" && emojiOnly(message.content);
+  /** Анимированная гифка (как в ТГ): сообщение вида «gifpack:<id>». */
+  const gif = message.type === "text" ? gifpackId(message.content) : null;
   const legacyKind = message.type === "text" ? legacyAttachmentKind(att) : null;
   const isVoice = message.type === "voice" || legacyKind === "voice";
   const isNote = message.type === "video_note" || legacyKind === "video_note";
@@ -3446,8 +3474,8 @@ function MessageBubble({
 
         <div
           className={`relative overflow-hidden ${
-            media || sticker ? "" : own && !space ? "bubble-own text-white" : "bubble-peer text-white/90"
-          } ${media || sticker ? "" : `${own && !space ? "bubble-own-radius" : "bubble-peer-radius"} px-4 py-2.5`} ${
+            media || sticker || gif ? "" : own && !space ? "bubble-own text-white" : "bubble-peer text-white/90"
+          } ${media || sticker || gif ? "" : `${own && !space ? "bubble-own-radius" : "bubble-peer-radius"} px-4 py-2.5`} ${
             highlighted ? "ring-2 ring-[#5865f2]/60" : ""
           }`}
         >
@@ -3495,8 +3523,17 @@ function MessageBubble({
                 </p>
               )}
             </div>
+          ) : isFile && att && (att.mimeType ?? "").toLowerCase().startsWith("video/") ? (
+            <VideoBubble url={att.url} caption={att.caption} own={own && !space} onOpenImage={onOpenImage} />
           ) : isFile && att ? (
             <FileCard att={att} />
+          ) : gif ? (
+            /* Анимированная гифка — крупно, без пузыря, как в ТГ */
+            <div
+              className="py-0.5 select-none [&_svg]:h-36 [&_svg]:w-36"
+              // SVG из доверенного набора приложения
+              dangerouslySetInnerHTML={{ __html: findGif(gif)?.svg ?? "" }}
+            />
           ) : sticker ? (
             /* «Стикер»: только эмодзи — крупно, без пузыря (как в мессенджерах) */
             <p className="py-0.5 text-[52px] leading-none select-none">{message.content.trim()}</p>
@@ -3505,13 +3542,20 @@ function MessageBubble({
           )}
         </div>
 
-        {/* Комментарии канала — открывают привязанную группу-обсуждение */}
+        {/* Комментарии канала — пузырь-кнопка как в Telegram */}
         {onDiscuss && (
           <button
             onClick={() => onDiscuss(message.id)}
-            className="mt-1 flex items-center gap-1 text-[11px] text-slate-400 transition-colors hover:text-slate-200"
+            className={`mt-1.5 flex items-center justify-center gap-1.5 rounded-xl px-3 py-1.5 text-[12px] font-medium transition-colors ${
+              own
+                ? "bg-black/25 text-white/85 hover:bg-black/35"
+                : "bg-white/[0.07] text-slate-300 hover:bg-white/[0.12]"
+            }`}
           >
-            <MessageSquare className="h-3 w-3" /> Комментарии{commentCount != null && commentCount > 0 ? ` · ${commentCount}` : ""}
+            <MessageSquare className="h-3.5 w-3.5 opacity-80" />
+            {commentCount != null && commentCount > 0
+              ? `${commentCount} ${commentCount % 10 === 1 && commentCount % 100 !== 11 ? "комментарий" : [2, 3, 4].includes(commentCount % 10) && ![12, 13, 14].includes(commentCount % 100) ? "комментария" : "комментариев"}`
+              : "Комментировать"}
           </button>
         )}
 
@@ -3803,6 +3847,64 @@ function VideoNoteBubble({ url, duration }: { url: string; duration: number }) {
 }
 
 /* ─────────────────────────── карточка файла ─────────────────────────── */
+
+/** Видео-файл в чате: прямоугольный плеер с превью-кадром (как в ТГ), НЕ кружок. */
+function VideoBubble({
+  url,
+  caption,
+  own,
+  onOpenImage,
+}: {
+  url: string;
+  caption?: string;
+  own?: boolean;
+  onOpenImage?: (url: string) => void;
+}) {
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const [started, setStarted] = useState(false);
+  return (
+    <div className="w-[min(78vw,340px)]">
+      <div className="relative overflow-hidden rounded-xl bg-black/60">
+        {/* preload=metadata — браузер подтягивает первый кадр как превью */}
+        <video
+          ref={videoRef}
+          src={url}
+          playsInline
+          preload="metadata"
+          controls={started}
+          onPlay={() => setStarted(true)}
+          onPause={() => setStarted(false)}
+          onEnded={() => setStarted(false)}
+          className="max-h-[400px] w-full cursor-pointer object-contain"
+          onClick={() => {
+            const v = videoRef.current;
+            if (!v) return;
+            if (v.paused) void v.play();
+            else v.pause();
+          }}
+        />
+        {!started && (
+          <button
+            onClick={() => {
+              const v = videoRef.current;
+              if (v) void v.play();
+            }}
+            title="Воспроизвести видео"
+            className="absolute inset-0 flex items-center justify-center transition-colors hover:bg-black/20"
+          >
+            <span className="flex h-14 w-14 items-center justify-center rounded-full bg-black/55 backdrop-blur-sm">
+              <Play className="ml-1 h-6 w-6 text-white" />
+            </span>
+          </button>
+        )}
+      </div>
+      {caption && (
+        <p className="msg-text px-1 pt-2 pb-1 text-[15px] leading-relaxed break-words whitespace-pre-wrap">{caption}</p>
+      )}
+      {!caption && own && <span className="sr-only">Видео</span>}
+    </div>
+  );
+}
 
 function FileCard({ att }: { att: AttachmentInfo }) {
   const mime = att.mimeType ?? "";
@@ -4113,6 +4215,9 @@ function EmojiPicker({
   onUploadSticker,
   stickerBusy,
   onClose,
+  premium,
+  onEnablePremium,
+  onSendGif,
 }: {
   onPick: (emoji: string) => void;
   /** Отправить стикер отдельным сообщением. */
@@ -4125,6 +4230,12 @@ function EmojiPicker({
   onUploadSticker: (file: File) => void;
   stickerBusy?: boolean;
   onClose: () => void;
+  /** Pulse Premium активен — кастом-эмодзи доступны. */
+  premium: boolean;
+  /** Включить Pulse Premium бесплатно. */
+  onEnablePremium: () => void;
+  /** Отправить анимированную гифку. */
+  onSendGif: (id: string) => void;
 }) {
   /** catIdx === -1 — вкладка стикеров, остальное — категории эмодзи. */
   const [catIdx, setCatIdx] = useState(0);
@@ -4162,6 +4273,24 @@ function EmojiPicker({
         >
           <Sticker className="h-4 w-4" />
         </button>
+        <button
+          onClick={() => setCatIdx(-2)}
+          title="Гифки — анимированные, отправляются отдельным сообщением"
+          className={`flex h-8 w-9 shrink-0 items-center justify-center rounded-xl transition-colors ${
+            catIdx === -2 ? "bg-white/12 text-white" : "text-white/45 hover:bg-white/6 hover:text-white/80"
+          }`}
+        >
+          <Film className="h-4 w-4" />
+        </button>
+        <button
+          onClick={() => setCatIdx(-3)}
+          title="Кастом-эмодзи — анимированные (Pulse Premium)"
+          className={`flex h-8 w-9 shrink-0 items-center justify-center rounded-xl transition-colors ${
+            catIdx === -3 ? "bg-white/12 text-amber-300" : "text-amber-300/60 hover:bg-white/6 hover:text-amber-200"
+          }`}
+        >
+          <Sparkles className="h-4 w-4" />
+        </button>
         {cats.map((c, i) => (
           <button
             key={c.name}
@@ -4183,7 +4312,52 @@ function EmojiPicker({
         </button>
       </div>
 
-      {catIdx === -1 ? (
+      {catIdx === -2 ? (
+        /* Гифки: анимированные, отправляются отдельным сообщением */
+        <div className="nice-scroll grid max-h-64 grid-cols-3 gap-2 overflow-y-auto p-2.5 max-sm:grid-cols-2">
+          {GIF_PACK.map((g) => (
+            <button
+              key={g.id}
+              onClick={() => onSendGif(g.id)}
+              title={`Отправить гифку «${g.title}»`}
+              className="flex h-24 items-center justify-center overflow-hidden rounded-2xl bg-white/[0.03] transition-transform hover:scale-105 hover:bg-white/8 active:scale-95"
+              // SVG из доверенного набора приложения
+              dangerouslySetInnerHTML={{ __html: g.svg }}
+            />
+          ))}
+        </div>
+      ) : catIdx === -3 ? (
+        /* Кастом-эмодзи — анимированные, только с Pulse Premium */
+        premium ? (
+          <div className="nice-scroll grid max-h-64 grid-cols-8 gap-1 overflow-y-auto p-2.5 max-sm:grid-cols-6">
+            {CUSTOM_EMOJI.map((c) => (
+              <button
+                key={c.id}
+                onClick={() => onPick(c.token)}
+                title={`${c.title} — вставить в текст`}
+                className="flex h-10 items-center justify-center rounded-xl text-[22px] transition-transform hover:scale-125 hover:bg-white/8 active:scale-95"
+                // SVG из доверенного набора приложения
+                dangerouslySetInnerHTML={{ __html: c.svg }}
+              />
+            ))}
+          </div>
+        ) : (
+          <div className="flex flex-col items-center gap-2.5 px-6 py-7 text-center">
+            <span className="flex h-14 w-14 items-center justify-center rounded-full bg-gradient-to-br from-amber-300/25 to-violet-400/25 text-3xl">💎</span>
+            <p className="text-sm font-bold">Кастом-эмодзи — это Pulse Premium</p>
+            <p className="max-w-64 text-[12px] leading-snug text-white/45">
+              Анимированные эмодзи, которые вставляются прямо в текст сообщения.
+              Бесплатно, включается в два клика.
+            </p>
+            <button
+              onClick={onEnablePremium}
+              className="mt-1 flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-amber-300 to-violet-300 px-4 py-2 text-[12px] font-bold text-black/80 transition-opacity hover:opacity-90"
+            >
+              <Sparkles className="h-3.5 w-3.5" /> Включить бесплатно
+            </button>
+          </div>
+        )
+      ) : catIdx === -1 ? (
         /* Стикеры: нажатие сразу отправляет их в чат крупным сообщением */
         <>
           <div className="nice-scroll grid max-h-64 grid-cols-6 gap-1 overflow-y-auto p-2.5 max-sm:grid-cols-5">

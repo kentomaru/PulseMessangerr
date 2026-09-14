@@ -139,9 +139,19 @@ function PreviewNode({ conv, meId }: { conv: ConversationListItem; meId: string 
       {url && lm.type === "image" && (
         <img src={url} alt="" className="h-9 w-9 shrink-0 rounded-lg object-cover" loading="lazy" />
       )}
-      {(lm.type === "video_note" || isVideoFile) && (
-        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-white/10">
-          <Play className="h-4 w-4 text-white/60" />
+      {url && (lm.type === "video_note" || isVideoFile) && (
+        /* Маленький квадратик с прогруженным первым кадром — как в ТГ */
+        <span className="relative h-9 w-9 shrink-0 overflow-hidden rounded-lg bg-white/10">
+          <video
+            src={url}
+            muted
+            playsInline
+            preload="metadata"
+            className="h-full w-full object-cover"
+          />
+          <span className="absolute inset-0 flex items-center justify-center">
+            <Play className="h-3.5 w-3.5 text-white drop-shadow" />
+          </span>
         </span>
       )}
       {lm.type === "voice" && (

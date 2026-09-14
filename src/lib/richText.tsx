@@ -13,6 +13,7 @@
  */
 import { useState, type ReactNode } from "react";
 import { Check, Copy } from "lucide-react";
+import { findCustomEmoji } from "./premiumContent";
 
 /* ─────────────────────────── спойлер ─────────────────────────── */
 
@@ -66,7 +67,7 @@ function CodeBlock({ code }: { code: string }) {
 /* ─────────────────────────── инлайн-разметка ─────────────────────────── */
 
 type InlineRule = {
-  id: "code" | "bold" | "underline" | "strike" | "italic" | "spoiler" | "mention" | "link";
+  id: "customEmoji" | "code" | "bold" | "underline" | "strike" | "italic" | "spoiler" | "mention" | "link";
   re: RegExp;
   render: (
     m: RegExpExecArray,
@@ -76,6 +77,24 @@ type InlineRule = {
 };
 
 const INLINE_RULES: InlineRule[] = [
+  {
+    /* Кастом-эмодзи Pulse Premium: токены :ce_<id>: → анимированные SVG */
+    id: "customEmoji",
+    re: /:ce_([a-z0-9_]+):/,
+    render: (m) => {
+      const ce = findCustomEmoji(m[1]);
+      if (!ce) return <span key={`ce-${m.index}`}>{m[0]}</span>;
+      return (
+        <span
+          key={`ce-${m.index}`}
+          title={ce.title}
+          className="inline-block text-[1.3em] leading-none"
+          // SVG приходит из нашего доверенного модуля, не из пользовательского ввода
+          dangerouslySetInnerHTML={{ __html: ce.svg }}
+        />
+      );
+    },
+  },
   {
     id: "code",
     re: /`([^`\n]+)`/,
@@ -208,6 +227,7 @@ export function renderRichText(
 /** Убирает разметку — для превью в цитатах и сайдбаре. */
 export function stripMarkdown(text: string): string {
   return text
+    .replace(/:ce_([a-z0-9_]+):/g, "⭐")
     .replace(/```([\s\S]*?)```/g, "$1")
     .replace(/`([^`]+)`/g, "$1")
     .replace(/\*\*([^*]+)\*\*/g, "$1")
