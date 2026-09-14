@@ -531,6 +531,8 @@ ${x.text}` : x.text));
   const avatar = kind === "direct" ? (peerState?.avatarUrl ?? initialAvatar) : (meta?.avatarUrl ?? initialAvatar);
   const isSpace = kind !== "direct";
   const canPost = kind !== "channel" || meta?.myRole === "owner" || meta?.myRole === "admin";
+  /** Лимиты как в Telegram: текст 4096; подпись к медиа 1024 (2048 с Premium). */
+  const msgLimit = draftFiles.length > 0 ? (me.premium ? 2048 : 1024) : 4096;
   /** «Избранное» — чат с самим собой: без звонков, подпись «сохранённые». */
   const isSaved = kind === "direct" && (peerState?.id ?? peer?.id) === me.id;
   const pinnedCurrent = pinned.length > 0 ? pinned[Math.min(pinnedIdx, pinned.length - 1)] : null;
@@ -701,6 +703,7 @@ ${x.text}` : x.text));
       });
       await load();
       refreshConversations();
+      loadPostCounts();
     } catch (e) {
       setText(content);
       setReplyTo(reply);
@@ -1191,7 +1194,7 @@ ${x.text}` : x.text));
   }, [searchOpen, replyTo, editing]);
 
   // Сколько комментариев в обсуждении канала — цифра под постами
-  useEffect(() => {
+  const loadPostCounts = useCallback(() => {
     if (kind !== "channel") return;
     api<{ discussion: { id: string } | null; postCounts?: Record<string, number> }>(
       `/api/conversations/${conversationId}/discussion`,
@@ -1199,6 +1202,9 @@ ${x.text}` : x.text));
       .then((d) => setPostCounts(d.postCounts ?? {}))
       .catch(() => {});
   }, [kind, conversationId]);
+  useEffect(() => {
+    loadPostCounts();
+  }, [loadPostCounts]);
 
   // Автофокус поля ввода при открытии чата
   useEffect(() => {
@@ -2109,6 +2115,10 @@ ${x.text}` : x.text));
                 value={text}
                 onChange={(e) => {
                   setText(e.target.value);
+                  // поле растёт само, до лимита высоты — листать не нужно
+                  const el = e.target;
+                  el.style.height = "auto";
+                  el.style.height = Math.min(el.scrollHeight, 128) + "px";
                   sendTyping();
                   // @-автодополнение: набираем @ник участника
                   const m = e.target.value.match(/(?:^|\s)@([a-zA-Z0-9_]*)$/);
@@ -2137,7 +2147,7 @@ ${x.text}` : x.text));
                   }
                 }}
                 rows={1}
-                maxLength={4000}
+                maxLength={msgLimit}
                 placeholder={draftFiles.length > 0 ? "Подпись к файлам (необязательно)…" : kind === "channel" ? "Написать в канал…" : "Сообщение…"}
                 className="ring-focus nice-scroll max-h-32 min-h-11 flex-1 resize-none rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3 text-[15px] transition-all placeholder:text-white/30"
               />
@@ -2151,9 +2161,9 @@ ${x.text}` : x.text));
               >
                 <Smile className="h-4.5 w-4.5" />
               </button>
-              {text.length > 3400 && (
+              {text.length > Math.floor(msgLimit * 0.85) && (
                 <span className="absolute -top-5 right-14 text-[10px] text-white/35 tabular-nums">
-                  {text.length}/4000
+                  {text.length}/{msgLimit}
                 </span>
               )}
               {/* Отправка + меню способов: тихо, отложить, быстрые ответы */}

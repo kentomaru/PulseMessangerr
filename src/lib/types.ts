@@ -19,6 +19,8 @@ export type PublicUser = {
   discoverable: boolean;
   /** Дата рождения (строка, необязательно). */
   birthday: string;
+  /** Pulse Premium: длинные подписи к медиа и значок. */
+  premium: boolean;
 };
 
 export type Peer = PublicUser & { lastReadAt?: string | null; typingAt?: string | null };

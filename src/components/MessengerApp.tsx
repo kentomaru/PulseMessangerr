@@ -168,21 +168,27 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
   const [jumpMsgId, setJumpMsgId] = useState<string | null>(null);
   useEffect(() => {
     if (typeof window === "undefined") return;
-    const m = window.location.hash.match(/^#msg=([a-zA-Z0-9-]+)/);
-    if (!m) return;
-    const msgId = m[1];
-    // хэш убираем сразу, чтобы повторная загрузка не прыгала снова
-    window.history.replaceState(null, "", window.location.pathname + window.location.search);
-    void fetch(`/api/messages/${msgId}`)
-      .then((r) => (r.ok ? r.json() : null))
-      .then((data: { message?: { conversationId?: string } } | null) => {
-        const convId = data?.message?.conversationId;
-        if (convId) {
-          setActiveId(convId);
-          setJumpMsgId(msgId);
-        }
-      })
-      .catch(() => undefined);
+    const resolveHash = () => {
+      const m = window.location.hash.match(/^#msg=([a-zA-Z0-9-]+)/);
+      if (!m) return;
+      const msgId = m[1];
+      // хэш убираем сразу, чтобы повторная загрузка не прыгала снова
+      window.history.replaceState(null, "", window.location.pathname + window.location.search);
+      void fetch(`/api/messages/${msgId}`)
+        .then((r) => (r.ok ? r.json() : null))
+        .then((data: { message?: { conversationId?: string } } | null) => {
+          const convId = data?.message?.conversationId;
+          if (convId) {
+            setActiveId(convId);
+            setJumpMsgId(msgId);
+          }
+        })
+        .catch(() => undefined);
+    };
+    resolveHash();
+    // ссылка может быть вставлена в уже открытую вкладку — слушаем смену хэша
+    window.addEventListener("hashchange", resolveHash);
+    return () => window.removeEventListener("hashchange", resolveHash);
   }, []);
 
   /** Звук входящего звонка (рингтон). */

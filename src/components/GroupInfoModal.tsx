@@ -94,7 +94,7 @@ export default function GroupInfoModal({
       setIsPrivate(d.conversation.isPrivate);
       setAvatarUrl(d.conversation.avatarUrl);
       const tk = (d.conversation as { inviteToken?: string | null }).inviteToken ?? "";
-      setUsername(/^[a-z0-9_]{4,20}$/.test(tk) ? tk : "");
+      setUsername(/^[a-z0-9_]{5,32}$/.test(tk) ? tk : "");
     } catch (e) {
       notify(e instanceof Error ? e.message : "Не удалось загрузить");
     } finally {
@@ -290,7 +290,7 @@ export default function GroupInfoModal({
               <input
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                maxLength={60}
+                maxLength={32}
                 className="ring-focus w-full rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-[15px] font-semibold"
               />
             ) : (
@@ -339,9 +339,10 @@ export default function GroupInfoModal({
                 <input
                   value={username}
                   onChange={(e) =>
-                    setUsername(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, "").slice(0, 20))
+                    setUsername(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, "").slice(0, 32))
                   }
-                  placeholder="юзернейм чата (4–20: a-z, 0-9, _)"
+                  maxLength={32}
+                  placeholder="юзернейм чата (5–32: a-z, 0-9, _)"
                   className="ring-focus w-full rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-sm placeholder:text-white/25"
                 />
               </div>
@@ -350,7 +351,7 @@ export default function GroupInfoModal({
               value={about}
               onChange={(e) => setAbout(e.target.value)}
               rows={2}
-              maxLength={280}
+              maxLength={255}
               placeholder="Описание"
               className="ring-focus nice-scroll w-full resize-none rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-sm placeholder:text-white/25"
             />

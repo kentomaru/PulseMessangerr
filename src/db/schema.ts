@@ -30,6 +30,8 @@ export const users = pgTable("users", {
   avatarUrl: text("avatar_url"),
   bannerUrl: text("banner_url"),
   bio: text("bio").notNull().default(""),
+  /** Pulse Premium: выдаётся бесплатно, расширяет лимиты. */
+  premium: boolean("premium").notNull().default(false),
   // Кастомный статус-эмодзи в профиле: обычный эмодзи («🔥») или ссылка
   // на загруженную АНИМИРОВАННУЮ гифку (/api/files/…).
   statusEmoji: text("status_emoji").notNull().default(""),

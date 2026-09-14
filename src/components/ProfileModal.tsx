@@ -155,6 +155,19 @@ export default function ProfileModal({
     }
   };
 
+  /** Pulse Premium: включить/выключить бесплатно, сразу. */
+  const togglePremium = async () => {
+    try {
+      const d = await api<{ user: PublicUser }>("/api/auth/me", {
+        method: "PATCH",
+        body: JSON.stringify({ premium: !me.premium }),
+      });
+      onSaved(d.user);
+    } catch {
+      setError("Не удалось изменить Premium");
+    }
+  };
+
   const logoutAll = async () => {
     if (!confirm("Выйти со всех устройств? Текущий вход тоже завершится.")) return;
     try {
@@ -428,7 +441,7 @@ export default function ProfileModal({
               className="ring-focus w-full rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3 text-[15px] transition-all"
             />
           </div>
-          <p className="mt-1 text-[11px] text-white/30">3–20 символов: латиница, цифры, «_»</p>
+          <p className="mt-1 text-[11px] text-white/30">5–32 символа: латиница, цифры, «_»</p>
         </label>
 
         <label className="block">
@@ -438,13 +451,37 @@ export default function ProfileModal({
           <textarea
             value={bio}
             onChange={(e) => setBio(e.target.value)}
-            maxLength={280}
+            maxLength={70}
             rows={3}
             placeholder="Пара слов о себе…"
             className="ring-focus nice-scroll w-full resize-none rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3 text-[15px] transition-all placeholder:text-white/25"
           />
-          <span className="mt-1 block text-right text-[11px] text-white/25">{bio.length}/280</span>
+          <span className="mt-1 block text-right text-[11px] text-white/25">{bio.length}/70</span>
         </label>
+
+        {/* Pulse Premium — бесплатно, включается в два клика */}
+        <div className="flex items-center gap-3 rounded-2xl border border-amber-300/20 bg-gradient-to-r from-amber-400/10 to-violet-400/10 px-4 py-3">
+          <span className="text-2xl">💎</span>
+          <div className="min-w-0 flex-1">
+            <p className="flex items-center gap-1.5 text-sm font-bold">
+              Pulse Premium
+              {me.premium && <span className="rounded-full bg-amber-300/20 px-2 py-0.5 text-[10px] font-bold text-amber-200">АКТИВЕН</span>}
+            </p>
+            <p className="text-[11px] leading-snug text-white/45">
+              Подписи к фото и видео до 2048 символов, значок в профиле. Бесплатно.
+            </p>
+          </div>
+          <button
+            onClick={() => void togglePremium()}
+            className={`shrink-0 rounded-xl px-3.5 py-2 text-[12px] font-bold transition-colors ${
+              me.premium
+                ? "bg-white/10 text-white/70 hover:bg-white/15"
+                : "bg-gradient-to-r from-amber-300 to-violet-300 text-black/80 hover:opacity-90"
+            }`}
+          >
+            {me.premium ? "Выключить" : "Включить"}
+          </button>
+        </div>
 
         {/* Дата рождения */}
         <label className="block">
@@ -932,7 +969,7 @@ function FriendsTab({ me }: { me: PublicUser }) {
     <button
       onClick={onClick}
       disabled={disabled}
-      className={`rounded-lg px-2.5 py-1.5 text-[11px] font-semibold transition-colors disabled:opacity-40 ${
+      className={`shrink-0 whitespace-nowrap rounded-lg px-2.5 py-1.5 text-[11px] font-semibold transition-colors disabled:opacity-40 ${
         tone === "accent"
           ? "bg-[#5865f2] text-white hover:bg-[#4752c4]"
           : tone === "danger"
@@ -945,7 +982,7 @@ function FriendsTab({ me }: { me: PublicUser }) {
   );
 
   return (
-    <div className="space-y-5">
+    <div className="nice-scroll max-h-[52vh] space-y-5 overflow-y-auto pr-1">
       <p className="text-xs leading-relaxed text-white/35">
         Добавляйте людей в друзья — как в Discord. Входящие заявки ждут подтверждения.
       </p>

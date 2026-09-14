@@ -31,13 +31,15 @@ export const PATCH = withApi("auth/me", async ({ req, me, log }) => {
       return NextResponse.json({ error: "Имя не может быть пустым" }, { status: 400 });
     patch.displayName = dn;
   }
-  if (typeof body.bio === "string") patch.bio = body.bio.trim().slice(0, 280);
+  if (typeof body.bio === "string") patch.bio = body.bio.trim().slice(0, 70);
+  // Pulse Premium: включается/выключается бесплатно в два клика.
+  if (typeof body.premium === "boolean") patch.premium = body.premium;
   // Смена юзернейма: латиница/цифры/«_», 3–20 символов, уникальность
   if (typeof body.username === "string") {
-    const un = body.username.trim().toLowerCase().replace(/^@+/, "").slice(0, 20);
-    if (!/^[a-z0-9_]{3,20}$/.test(un))
+    const un = body.username.trim().toLowerCase().replace(/^@+/, "").slice(0, 32);
+    if (!/^[a-z0-9_]{5,32}$/.test(un))
       return NextResponse.json(
-        { error: "Юзернейм: 3–20 символов, латиница, цифры и «_»" },
+        { error: "Юзернейм: 5–32 символа, латиница, цифры и «_»" },
         { status: 400 },
       );
     if (un !== me.username) {

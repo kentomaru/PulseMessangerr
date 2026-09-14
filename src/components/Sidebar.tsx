@@ -16,6 +16,7 @@ import {
   LogOut,
   Megaphone,
   Mic,
+  Play,
   MonitorSmartphone,
   Phone,
   Pin,
@@ -117,14 +118,17 @@ function PreviewNode({ conv, meId }: { conv: ConversationListItem; meId: string 
   const url = previewUrl(lm.type, lm.content);
   // подпись: у фото/видео — подпись из вложения или тип
   let caption = "";
+  let mime = "";
   if (lm.type === "image" || lm.type === "video_note" || lm.type === "voice" || lm.type === "file") {
     try {
-      const att = JSON.parse(lm.content) as { caption?: string; name?: string };
+      const att = JSON.parse(lm.content) as { caption?: string; name?: string; mimeType?: string };
       caption = att.caption ?? att.name ?? "";
+      mime = att.mimeType ?? "";
     } catch {
       caption = "";
     }
   }
+  const isVideoFile = lm.type === "file" && mime.startsWith("video/");
   const label =
     lm.type === "image" ? caption || "Фото"
     : lm.type === "video_note" ? caption || "Видеосообщение"
@@ -135,8 +139,10 @@ function PreviewNode({ conv, meId }: { conv: ConversationListItem; meId: string 
       {url && lm.type === "image" && (
         <img src={url} alt="" className="h-9 w-9 shrink-0 rounded-lg object-cover" loading="lazy" />
       )}
-      {url && lm.type === "video_note" && (
-        <img src={url} alt="" className="h-9 w-9 shrink-0 rounded-full object-cover" loading="lazy" />
+      {(lm.type === "video_note" || isVideoFile) && (
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-white/10">
+          <Play className="h-4 w-4 text-white/60" />
+        </span>
       )}
       {lm.type === "voice" && (
         <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white/10">
@@ -159,9 +165,9 @@ function extractToken(value: string): string | null {
   if (!v) return null;
   const m = v.match(/#group=([A-Za-z0-9_-]+)/);
   if (m) return m[1];
-  // Голый токен/юзернейм: допускаем @префикс и длину 4–32 (юзернеймы бывают короткими)
+  // Голый токен/юзернейм: допускаем @префикс и длину 5–32 (как в Telegram)
   const bare = v.replace(/^@/, "");
-  if (/^[A-Za-z0-9_-]{4,32}$/.test(bare)) return bare;
+  if (/^[A-Za-z0-9_-]{5,32}$/.test(bare)) return bare;
   return null;
 }
 
@@ -567,8 +573,8 @@ export default function Sidebar({
         </AnimatePresence>
       </div>
 
-      {/* Папки чатов — быстрый фильтр по типу */}
-      <div className="flex gap-1 px-4 pb-2">
+      {/* Папки чатов — быстрый фильтр по типу, во всю ширину без переполнения */}
+      <div className="flex w-full gap-1.5 px-3 pb-2">
         {(
           [
             ["all", "Все"],
@@ -588,7 +594,7 @@ export default function Sidebar({
             <button
               key={f}
               onClick={() => pickFolder(f)}
-              className={`flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-medium transition-colors ${
+              className={`flex min-w-0 flex-1 items-center justify-center gap-1 whitespace-nowrap rounded-full px-2 py-1 text-[11px] font-medium transition-colors ${
                 folder === f
                   ? "bg-[#5865f2]/25 text-white ring-1 ring-[#5865f2]/60"
                   : "bg-white/[0.05] text-white/45 hover:bg-white/10 hover:text-white/70"
@@ -696,7 +702,7 @@ export default function Sidebar({
 
 function SectionLabel({ children }: { children: React.ReactNode }) {
   return (
-    <p className="px-2 pt-3 pb-2 text-[11px] font-semibold tracking-widest text-white/25 uppercase">
+    <p className="px-2 pt-2 pb-1 text-[11px] font-semibold tracking-widest text-white/25 uppercase">
       {children}
     </p>
   );

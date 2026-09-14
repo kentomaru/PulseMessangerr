@@ -191,14 +191,14 @@ export default function GroupCreateModal({
             <input
               value={name}
               onChange={(e) => setName(e.target.value)}
-              maxLength={60}
+              maxLength={32}
               placeholder={kind === "channel" ? "Название канала" : "Название группы"}
               className="ring-focus w-full rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3 text-[15px] placeholder:text-white/25"
             />
             <input
               value={about}
               onChange={(e) => setAbout(e.target.value)}
-              maxLength={140}
+              maxLength={255}
               placeholder="О чём это (необязательно)"
               className="ring-focus w-full rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-2.5 text-sm placeholder:text-white/25"
             />

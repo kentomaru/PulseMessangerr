@@ -172,10 +172,10 @@ export const POST = withApi("conversations:create", async ({ req, me, log }) => 
 
   /* ── Группа / канал ── */
   if (kind === "group" || kind === "channel") {
-    const name = String(body.name ?? "").trim().slice(0, 60);
-    if (name.length < 2)
-      return NextResponse.json({ error: "Название должно быть не короче 2 символов" }, { status: 400 });
-    const about = String(body.about ?? "").trim().slice(0, 280);
+    const name = String(body.name ?? "").trim().slice(0, 32);
+    if (name.length < 5)
+      return NextResponse.json({ error: "Название: от 5 до 32 символов" }, { status: 400 });
+    const about = String(body.about ?? "").trim().slice(0, 255);
     const avatarUrl =
       typeof body.avatarUrl === "string" && body.avatarUrl.startsWith("/api/files/")
         ? body.avatarUrl

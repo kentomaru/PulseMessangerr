@@ -372,6 +372,12 @@ html[data-theme="light"] {
 .via-\[\#1e2127\] { --tw-gradient-stops: var(--tw-gradient-from), var(--panel-3), var(--tw-gradient-to) !important; }
 .to-\[\#16181c\] { --tw-gradient-to: var(--panel-2) !important; }
 .border-\[\#1b1e24\] { border-color: var(--panel) !important; }
+/* Поверхности с прозрачностью (звонки и оверлеи) тоже следуют теме */
+.bg-\[\#1b1e24\]\/95 { background-color: color-mix(in srgb, var(--panel) 95%, transparent) !important; }
+.bg-\[\#16181c\]\/97 { background-color: color-mix(in srgb, var(--panel-2) 97%, transparent) !important; }
+.bg-\[\#16181c\]\/80 { background-color: color-mix(in srgb, var(--panel-2) 80%, transparent) !important; }
+.bg-\[\#16181c\]\/70 { background-color: color-mix(in srgb, var(--panel-2) 70%, transparent) !important; }
+.bg-\[\#1e2127\]\/90 { background-color: color-mix(in srgb, var(--panel-3) 90%, transparent) !important; }
 .border-\[\#16181c\] { border-color: var(--panel-2) !important; }
 .ring-\[\#1b1e24\] { --tw-ring-color: var(--panel) !important; }
 

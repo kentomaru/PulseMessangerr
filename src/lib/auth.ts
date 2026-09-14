@@ -90,5 +90,6 @@ export function publicUser(u: User) {
     allowGroupInvites: u.allowGroupInvites,
     discoverable: u.discoverable,
     birthday: u.birthday,
+    premium: u.premium,
   };
 }

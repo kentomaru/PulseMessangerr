@@ -67,12 +67,12 @@ export const PATCH = withApi<{ id: string }>("conversations:update", async ({ re
   const patch: Partial<typeof conversations.$inferInsert> = {};
 
   if (typeof body.name === "string") {
-    const name = body.name.trim().slice(0, 60);
-    if (name.length < 2)
-      return NextResponse.json({ error: "Название должно быть не короче 2 символов" }, { status: 400 });
+    const name = body.name.trim().slice(0, 32);
+    if (name.length < 5)
+      return NextResponse.json({ error: "Название: от 5 до 32 символов" }, { status: 400 });
     patch.name = name;
   }
-  if (typeof body.about === "string") patch.about = body.about.trim().slice(0, 280);
+  if (typeof body.about === "string") patch.about = body.about.trim().slice(0, 255);
   if (typeof body.avatarUrl === "string" || body.avatarUrl === null)
     patch.avatarUrl = body.avatarUrl && String(body.avatarUrl).startsWith("/api/files/") ? body.avatarUrl : null;
   if (typeof body.isPrivate === "boolean") patch.isPrivate = body.isPrivate;
@@ -80,14 +80,14 @@ export const PATCH = withApi<{ id: string }>("conversations:update", async ({ re
   if (typeof body.username === "string") {
     if (access.membership.role !== "owner")
       return NextResponse.json({ error: "Юзернейм задаёт владелец" }, { status: 403 });
-    const un = body.username.trim().toLowerCase().replace(/^@+/, "").slice(0, 20);
+    const un = body.username.trim().toLowerCase().replace(/^@+/, "").slice(0, 32);
     if (un === "") {
       // очистить — вернём случайный токен ссылки
       patch.inviteToken = null;
     } else {
-      if (!/^[a-z0-9_]{4,20}$/.test(un))
+      if (!/^[a-z0-9_]{5,32}$/.test(un))
         return NextResponse.json(
-          { error: "Юзернейм: 4–20 символов, латиница, цифры и «_»" },
+          { error: "Юзернейм: 5–32 символа, латиница, цифры и «_»" },
           { status: 400 },
         );
       const [taken] = await db

@@ -313,7 +313,27 @@ export const POST = withApi("messages:send", async ({ req, me, log }) => {
 
   if (!conversationId || !content)
     return NextResponse.json({ error: "Пустое сообщение" }, { status: 400 });
-  if (content.length > 4000)
+  // Подписи к медиа: до 1024 символов (2048 с Pulse Premium) — как в Telegram.
+  if (content.trimStart().startsWith("{")) {
+    try {
+      const parsed = JSON.parse(content) as { caption?: unknown };
+      const cap = typeof parsed.caption === "string" ? parsed.caption : "";
+      const limit = me.premium ? 2048 : 1024;
+      if (cap.length > limit)
+        return NextResponse.json(
+          {
+            error: me.premium
+              ? `Подпись к медиа — не больше ${limit} символов`
+              : `Подпись к медиа — не больше 1024 символов (с Pulse Premium — 2048)`,
+          },
+          { status: 400 },
+        );
+    } catch {
+      /* не JSON — обычный текст, проверяется ниже */
+    }
+  }
+
+  if (content.length > 4096)
     return NextResponse.json({ error: "Слишком длинное сообщение" }, { status: 400 });
 
   // Для вложений content — JSON {url, ...} (у image допускается и просто url).
@@ -383,6 +403,36 @@ export const POST = withApi("messages:send", async ({ req, me, log }) => {
     .values({ conversationId, senderId: me.id, type, content, replyToId, silent })
     .returning();
   if (clientKey) rememberKey(clientKey, msg.id);
+
+  // Как в Telegram: пост канала дублируется в привязанную группу-обсуждение,
+  // чтобы участники группы видели пост и могли его обсуждать.
+  if (!replyToId) {
+    try {
+      const [postConv] = await db
+        .select({ kind: conversations.kind })
+        .from(conversations)
+        .where(eq(conversations.id, conversationId))
+        .limit(1);
+      if (postConv && normalizeKind(postConv.kind) === "channel") {
+        const [disc] = await db
+          .select({ id: conversations.id })
+          .from(conversations)
+          .where(eq(conversations.about, DISCUSSION_MARKER + conversationId))
+          .limit(1);
+        if (disc) {
+          await db.insert(messages).values({
+            conversationId: disc.id,
+            senderId: me.id,
+            type,
+            content,
+            silent: true,
+          });
+        }
+      }
+    } catch {
+      /* зеркало — не критично */
+    }
+  }
 
   await db
     .update(conversationMembers)
