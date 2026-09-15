@@ -21,10 +21,14 @@ import {
   File as FileIcon,
   FileText,
   Film,
+  BarChart3,
+  Flame,
+  Star,
   Hash,
   ImagePlus,
   ChevronUp,
   Clock,
+  Eye,
   EyeOff,
   MessageSquareText,
   Plus,
@@ -109,6 +113,10 @@ type ConvMeta = {
   avatarUrl: string | null;
   about: string;
   isPrivate: boolean;
+  /** Ограниченный чат: контент нельзя копировать/сохранять (как в ТГ). */
+  restricted?: boolean;
+  /** Слоумод: пауза между сообщениями участника в секундах (0 — выключен). */
+  slowMode?: number;
   memberCount: number;
   myRole: MemberRole;
   title: string;
@@ -238,6 +246,8 @@ const EXTRA_REACTIONS = [
 ];
 
 const MAX_UPLOAD_BYTES = 500 * 1024 * 1024;
+// Pulse Premium: файлы до 4 ГБ — как в ТГ Премиум
+const PREMIUM_UPLOAD_BYTES = 4 * 1024 * 1024 * 1024;
 
 /** Первый поддерживаемый браузером MIME для MediaRecorder. */
 function pickRecorderMime(candidates: string[]): string | undefined {
@@ -303,6 +313,48 @@ export default function ChatView({
   useEffect(() => setLbZoom(1), [lightbox]);
   /** Меню способов отправки: тихо, отложить, быстрые ответы. */
   const [sendMenu, setSendMenu] = useState(false);
+  /** Черновик опроса (как в ТГ): вопрос + варианты. */
+  const [pollDraft, setPollDraft] = useState<{ q: string; opts: string[] } | null>(null);
+  /** Избранное как в ТГ Премиум: фильтр по #хэштегам. */
+  const [tagFilter, setTagFilter] = useState<string | null>(null);
+  /** Эффекты сообщений как в ТГ: одиночный эмодзи взлетает по экрану. */
+  const [fx, setFx] = useState<{ id: number; emoji: string; x: number }[]>([]);
+  const triggerFx = (content: string) => {
+    const emoji = content.trim();
+    if (!["❤️", "🧡", "💛", "💚", "💙", "💜", "🖤", "🤍", "🎉", "🔥", "👍", "😂", "✨"].includes(emoji)) return;
+    const id = Date.now() + Math.random();
+    setFx((cur) => [...cur.slice(-6), { id, emoji, x: 12 + Math.random() * 70 }]);
+    setTimeout(() => setFx((cur) => cur.filter((f) => f.id !== id)), 1600);
+  };
+
+  /** Самоудаляющиеся сообщения (как в ТГ): 0 — выключено, иначе секунд до удаления. */
+  const [selfDestruct, setSelfDestruct] = useState<0 | 10 | 30 | 60>(0);
+  /** Ставим таймер удаления на только что отправленное сообщение. */
+  const armSelfDestruct = (msgId?: string) => {
+    const sec = selfDestruct;
+    if (!sec || !msgId) return;
+    setTimeout(() => {
+      void api(`/api/messages/${msgId}`, { method: "DELETE" })
+        .then(() => load())
+        .catch(() => {});
+    }, sec * 1000);
+  };
+
+  /** Слоумод: до какого момента нельзя отправлять (для обычных участников). */
+  const [slowUntil, setSlowUntil] = useState(0);
+  const [slowNow, setSlowNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (slowUntil <= Date.now()) return;
+    const t = setInterval(() => setSlowNow(Date.now()), 500);
+    return () => clearInterval(t);
+  }, [slowUntil]);
+  const slowLeft = Math.max(0, Math.ceil((slowUntil - slowNow) / 1000));
+  const slowActive = slowLeft > 0;
+  /** Включаем паузу слоумода после успешной отправки (админы не ждут). */
+  const armSlow = () => {
+    const sm = meta?.slowMode ?? 0;
+    if (sm > 0 && meta?.myRole !== "owner" && meta?.myRole !== "admin") setSlowUntil(Date.now() + sm * 1000);
+  };
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const [scheduleTime, setScheduleTime] = useState("");
   const [scheduled, setScheduled] = useState<{ id: string; text: string; at: number }[]>([]);
@@ -552,6 +604,21 @@ ${x.text}` : x.text));
   }, [notify]);
   /** «Избранное» — чат с самим собой: без звонков, подпись «сохранённые». */
   const isSaved = kind === "direct" && (peerState?.id ?? peer?.id) === me.id;
+
+  /** Хэштеги в Избранном: собираем все #теги из сообщений. */
+  const savedTags = useMemo(() => {
+    if (!isSaved) return [] as string[];
+    const set = new Set<string>();
+    for (const m of messages) {
+      for (const t of m.content.matchAll(/#[\p{L}0-9_]{2,32}/gu)) set.add(t[0].toLowerCase());
+    }
+    return [...set].slice(0, 12);
+  }, [messages, isSaved]);
+  /** Список сообщений с учётом фильтра по тегу. */
+  const listMessages = useMemo(
+    () => (tagFilter && isSaved ? messages.filter((m) => m.content.toLowerCase().includes(tagFilter)) : messages),
+    [messages, tagFilter, isSaved],
+  );
   const pinnedCurrent = pinned.length > 0 ? pinned[Math.min(pinnedIdx, pinned.length - 1)] : null;
 
   /* ─────────────────────────── отправка ─────────────────────────── */
@@ -562,6 +629,11 @@ ${x.text}` : x.text));
    */
   const send = async (directText?: string, opts?: { silent?: boolean }) => {
     if (sending || uploading || !canPost) return;
+    // Слоумод как в ТГ: обычные участники ждут паузу между сообщениями
+    if (slowActive) {
+      notify(`Слоумод: следующее сообщение через ${slowLeft} с`);
+      return;
+    }
 
     // Отложенная отправка: если выбрано время — не шлём сразу, ставим в очередь
     if (directText === undefined && !editing && scheduleOpen && scheduleTime && text.trim()) {
@@ -585,7 +657,7 @@ ${x.text}` : x.text));
       const reply = replyTo;
       setReplyTo(null);
       try {
-        await api("/api/messages", {
+        const sentMsg = await api<{ message?: { id: string } }>("/api/messages", {
           method: "POST",
           body: JSON.stringify({
             conversationId,
@@ -595,8 +667,11 @@ ${x.text}` : x.text));
             silent: opts?.silent ?? false,
           }),
         });
+        armSelfDestruct(sentMsg.message?.id);
+        triggerFx(content);
         await load();
         refreshConversations();
+        armSlow();
       } catch (e) {
         setReplyTo(reply);
         notify(e instanceof Error ? e.message : "Не удалось отправить");
@@ -696,6 +771,7 @@ ${x.text}` : x.text));
         setReplyTo(null);
         await load();
         refreshConversations();
+        armSlow();
       })();
       return;
     }
@@ -708,7 +784,7 @@ ${x.text}` : x.text));
     const reply = replyTo;
     setReplyTo(null);
     try {
-      await api("/api/messages", {
+      const sentMsg = await api<{ message?: { id: string } }>("/api/messages", {
         method: "POST",
         body: JSON.stringify({
           conversationId,
@@ -718,9 +794,12 @@ ${x.text}` : x.text));
           silent: opts?.silent ?? false,
         }),
       });
+      armSelfDestruct(sentMsg.message?.id);
+      triggerFx(content);
       await load();
       refreshConversations();
       loadPostCounts();
+      armSlow();
     } catch (e) {
       setText(content);
       setReplyTo(reply);
@@ -777,6 +856,7 @@ ${x.text}` : x.text));
       setReplyTo(null);
       await load();
       refreshConversations();
+      armSlow();
     } catch (e) {
       notify(e instanceof Error ? e.message : "Не удалось отправить");
     } finally {
@@ -792,8 +872,9 @@ ${x.text}` : x.text));
       setDraftFiles((ds) => {
         const next = [...ds];
         for (const f of files) {
-          if (f.size > MAX_UPLOAD_BYTES) {
-            notify(`«${f.name}» больше 500 МБ`);
+          const capBytes = me.premium ? PREMIUM_UPLOAD_BYTES : MAX_UPLOAD_BYTES;
+          if (f.size > capBytes) {
+            notify(`«${f.name}» больше ${me.premium ? "4 ГБ — лимит Premium" : "500 МБ (с Premium — до 4 ГБ)"}`);
             continue;
           }
           next.push({
@@ -807,7 +888,7 @@ ${x.text}` : x.text));
       });
       inputRef.current?.focus();
     },
-    [canPost, notify],
+    [canPost, notify, me.premium],
   );
 
   const removeDraftFile = (id: string) => {
@@ -1387,6 +1468,21 @@ ${x.text}` : x.text));
 
   return (
     <div className="relative flex h-full min-w-0 flex-1 flex-col">
+      {/* Эффекты сообщений: эмодзи взлетают, как в ТГ */}
+      <div className="pointer-events-none absolute inset-0 z-50 overflow-hidden">
+        {fx.map((f) => (
+          <motion.span
+            key={f.id}
+            initial={{ opacity: 1, y: 0, scale: 0.5 }}
+            animate={{ opacity: 0, y: -240, scale: 2 }}
+            transition={{ duration: 1.5, ease: "easeOut" }}
+            className="absolute bottom-28 text-4xl"
+            style={{ left: `${f.x}%` }}
+          >
+            {f.emoji}
+          </motion.span>
+        ))}
+      </div>
       {/* Обои: key по значению — при смене пресета элемент пересоздаётся,
           и CSS-анимация «живых» обоев гарантированно перезапускается
           (раньше второй живой пресет не играл до перезагрузки страницы). */}
@@ -1416,12 +1512,20 @@ ${x.text}` : x.text));
           title={meta?.about ? `Описание: ${meta.about}` : undefined}
           className="flex min-w-0 items-center gap-3 text-left"
         >
-          <Avatar
-            name={title}
-            src={avatar}
-            size={42}
-            online={kind === "direct" ? peerState?.online : undefined}
-          />
+          <span
+            className={`relative shrink-0 rounded-full ${
+              kind === "direct" && peerState?.premium
+                ? "bg-gradient-to-tr from-amber-300 via-fuchsia-400 to-sky-400 p-[2px]"
+                : ""
+            }`}
+          >
+            <Avatar
+              name={title}
+              src={avatar}
+              size={42}
+              online={kind === "direct" ? peerState?.online : undefined}
+            />
+          </span>
           <div className="min-w-0">
             <p className="flex items-center gap-1.5 truncate text-[15px] font-semibold">
               {commentFilter && onExitCommentMode && (
@@ -1433,7 +1537,20 @@ ${x.text}` : x.text));
                   <ArrowLeft className="h-3 w-3" /> {commentFilter.channelTitle}
                 </button>
               )}
-              <span className="truncate">{commentFilter ? "Комментарии" : title}</span>
+              <span
+                className="truncate"
+                style={
+                  kind === "direct" && peerState?.nameColor
+                    ? { color: peerState.nameColor }
+                    : undefined
+                }
+              >
+                {commentFilter ? "Комментарии" : title}
+              </span>
+              {/* Звезда Premium — как в ТГ */}
+              {kind === "direct" && peerState?.premium && (
+                <Star className="h-3.5 w-3.5 shrink-0 fill-amber-300 text-amber-300" />
+              )}
               {/* Кастомный статус-эмодзи собеседника (эмодзи или анимированная гифка) */}
               {kind === "direct" && peerState?.statusEmoji && (
                 <StatusEmoji value={peerState.statusEmoji} size={28} />
@@ -1801,8 +1918,8 @@ ${x.text}` : x.text));
           </div>
         ) : (
           <div className="mx-auto flex max-w-2xl flex-col gap-0.5">
-            {messages.map((m, i) => {
-              const prev = messages[i - 1];
+            {listMessages.map((m, i) => {
+              const prev = listMessages[i - 1];
               const showDay = !prev || !sameDay(prev.createdAt, m.createdAt);
               const grouped =
                 !!prev &&
@@ -1859,6 +1976,7 @@ ${x.text}` : x.text));
                         kind === "channel" && onOpenDiscussion ? onOpenDiscussion : undefined
                       }
                       commentCount={postCounts?.[m.id] ?? 0}
+                      restricted={!!meta?.restricted}
                       meUsername={me.username}
                       onOpenUsername={onOpenUsername}
                       onEdit={() => startEdit(m)}
@@ -2016,6 +2134,105 @@ ${x.text}` : x.text));
             </div>
           )}
 
+          {/* Хэштеги Избранного — клик фильтрует заметки */}
+          {isSaved && savedTags.length > 0 && (
+            <div className="glass-strong mb-2 flex flex-wrap items-center gap-1.5 rounded-2xl px-3 py-2">
+              <span className="text-[11px] font-semibold tracking-widest text-white/30 uppercase">Теги</span>
+              {tagFilter && (
+                <button
+                  onClick={() => setTagFilter(null)}
+                  className="rounded-full bg-white/10 px-2.5 py-1 text-[11px] text-white/70 hover:bg-white/15"
+                >
+                  Все ✕
+                </button>
+              )}
+              {savedTags.map((t) => (
+                <button
+                  key={t}
+                  onClick={() => setTagFilter((cur) => (cur === t ? null : t))}
+                  className={`rounded-full px-2.5 py-1 text-[11px] transition-colors ${
+                    tagFilter === t ? "bg-[#5865f2] text-white" : "bg-white/5 text-sky-300 hover:bg-white/10"
+                  }`}
+                >
+                  {t}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* Создание опроса — как в ТГ */}
+          {pollDraft && (
+            <div className="glass-strong mb-2 rounded-2xl p-3.5">
+              <div className="flex items-center gap-2 pb-2">
+                <BarChart3 className="h-4 w-4 text-white/50" />
+                <p className="flex-1 text-[13px] font-semibold text-white/80">Новый опрос</p>
+                <button
+                  onClick={() => setPollDraft(null)}
+                  title="Отменить опрос"
+                  className="rounded-lg p-1 text-white/40 hover:bg-white/10 hover:text-white"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+              <input
+                value={pollDraft.q}
+                onChange={(e) => setPollDraft({ ...pollDraft, q: e.target.value })}
+                maxLength={255}
+                placeholder="Вопрос…"
+                className="ring-focus mb-2 w-full rounded-xl border border-white/10 bg-white/[0.05] px-3 py-2 text-sm"
+              />
+              {pollDraft.opts.map((o, i) => (
+                <div key={i} className="mb-1.5 flex items-center gap-1.5">
+                  <input
+                    value={o}
+                    onChange={(e) => {
+                      const opts = [...pollDraft.opts];
+                      opts[i] = e.target.value;
+                      setPollDraft({ ...pollDraft, opts });
+                    }}
+                    maxLength={100}
+                    placeholder={`Вариант ${i + 1}`}
+                    className="ring-focus w-full rounded-xl border border-white/10 bg-white/[0.05] px-3 py-2 text-sm"
+                  />
+                  {pollDraft.opts.length > 2 && (
+                    <button
+                      onClick={() => setPollDraft({ ...pollDraft, opts: pollDraft.opts.filter((_, j) => j !== i) })}
+                      title="Убрать вариант"
+                      className="shrink-0 rounded-lg p-1.5 text-white/35 hover:bg-white/10 hover:text-rose-300"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  )}
+                </div>
+              ))}
+              <div className="mt-2 flex items-center gap-2">
+                {pollDraft.opts.length < 10 && (
+                  <button
+                    onClick={() => setPollDraft({ ...pollDraft, opts: [...pollDraft.opts, ""] })}
+                    className="rounded-xl px-3 py-1.5 text-[12px] text-white/55 hover:bg-white/8 hover:text-white"
+                  >
+                    + Добавить вариант
+                  </button>
+                )}
+                <button
+                  onClick={() => {
+                    const q = pollDraft.q.trim();
+                    const opts = pollDraft.opts.map((o) => o.trim()).filter(Boolean);
+                    if (!q || opts.length < 2) {
+                      notify("Нужен вопрос и минимум два варианта");
+                      return;
+                    }
+                    setPollDraft(null);
+                    void send(`poll:${JSON.stringify({ q, opts })}`);
+                  }}
+                  className="btn-gradient ml-auto rounded-xl px-4 py-1.5 text-[12px] font-semibold"
+                >
+                  Отправить опрос
+                </button>
+              </div>
+            </div>
+          )}
+
           {(replyTo || editing) && (
               <motion.div
                 key={editing ? "editing" : "reply"}
@@ -2099,7 +2316,7 @@ ${x.text}` : x.text));
               <button
                 onClick={() => fileRef.current?.click()}
                 disabled={sending}
-                title="Прикрепить файл (до 500 МБ)"
+                title={me.premium ? "Прикрепить файл (до 4 ГБ — Premium)" : "Прикрепить файл (до 500 МБ)"}
                 className="glass flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl text-white/70 transition-colors hover:text-white disabled:opacity-50"
               >
                 {uploading ? <Loader2 className="h-4.5 w-4.5 animate-spin" /> : <Paperclip className="h-4.5 w-4.5" />}
@@ -2190,8 +2407,8 @@ ${x.text}` : x.text));
               <div className="relative flex shrink-0 items-center">
                 <button
                   onClick={() => void send()}
-                  disabled={(!canSendSomething && !editing) || sending || uploading}
-                  title="Отправить"
+                  disabled={(!canSendSomething && !editing) || sending || uploading || slowActive}
+                  title={slowActive ? `Слоумод: ещё ${slowLeft} с` : "Отправить"}
                   className="btn-gradient flex h-11 w-11 items-center justify-center rounded-l-2xl text-white"
                 >
                   {sending ? <Loader2 className="h-4.5 w-4.5 animate-spin" /> : <Send className="h-4.5 w-4.5" />}
@@ -2234,6 +2451,29 @@ ${x.text}` : x.text));
                       >
                         <MessageSquareText className="h-4 w-4 text-white/45" /> Быстрые ответы
                       </button>
+                      {canPost && (
+                        <button
+                          onClick={() => {
+                            setSendMenu(false);
+                            setPollDraft({ q: "", opts: ["", ""] });
+                          }}
+                          className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-left text-[13px] text-white/75 hover:bg-white/10"
+                        >
+                          <BarChart3 className="h-4 w-4 text-white/45" /> Опрос…
+                        </button>
+                      )}
+                      {canPost && (
+                        <button
+                          onClick={() => {
+                            setSendMenu(false);
+                            setSelfDestruct((v) => (v === 0 ? 10 : v === 10 ? 30 : v === 30 ? 60 : 0));
+                          }}
+                          className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-left text-[13px] text-white/75 hover:bg-white/10"
+                        >
+                          <Flame className={`h-4 w-4 ${selfDestruct ? "text-orange-400" : "text-white/45"}`} />
+                          {selfDestruct ? `Исчезнет через ${selfDestruct} с ✓` : "Исчезающее сообщение"}
+                        </button>
+                      )}
                     </div>
                   </>
                 )}
@@ -2571,6 +2811,7 @@ ${x.text}` : x.text));
       <AnimatePresence>
         {ctxMenu && (
           <MessageContextMenu
+            restricted={!!meta?.restricted}
             key="ctx"
             state={ctxMenu}
             meId={me.id}
@@ -2677,6 +2918,7 @@ function MessageContextMenu({
   meId,
   isSpace,
   myRole,
+  restricted,
   onClose,
   onReact,
   onReply,
@@ -2692,6 +2934,8 @@ function MessageContextMenu({
   meId: string;
   isSpace: boolean;
   myRole: MemberRole;
+  /** Ограниченный чат (как в ТГ): нельзя копировать, пересылать, сохранять. */
+  restricted?: boolean;
   onClose: () => void;
   onReact: (emoji: string) => void;
   onReply: () => void;
@@ -2787,7 +3031,7 @@ function MessageContextMenu({
           onClick={onPin}
         />
       )}
-      {hasText && (
+      {hasText && !restricted && (
         <ContextItem icon={<Copy className="h-4 w-4 text-slate-400" />} label="Копировать" onClick={onCopy} />
       )}
       <ContextItem
@@ -2798,16 +3042,20 @@ function MessageContextMenu({
       {isEditable && (
         <ContextItem icon={<Pencil className="h-4 w-4 text-amber-300" />} label="Изменить" onClick={onEdit} />
       )}
-      <ContextItem
-        icon={<ChevronRight className="h-4 w-4 text-emerald-300" />}
-        label="Переслать"
-        onClick={onForward}
-      />
-      <ContextItem
-        icon={<Bookmark className="h-4 w-4 text-amber-300" />}
-        label="В Избранное"
-        onClick={onSave}
-      />
+      {!restricted && (
+        <ContextItem
+          icon={<ChevronRight className="h-4 w-4 text-emerald-300" />}
+          label="Переслать"
+          onClick={onForward}
+        />
+      )}
+      {!restricted && (
+        <ContextItem
+          icon={<Bookmark className="h-4 w-4 text-amber-300" />}
+          label="В Избранное"
+          onClick={onSave}
+        />
+      )}
       {canDelete && (
         <ContextItem icon={<Trash2 className="h-4 w-4 text-rose-300" />} label="Удалить" onClick={onDelete} danger />
       )}
@@ -3319,6 +3567,7 @@ function MessageBubble({
   onMenu,
   onDiscuss,
   commentCount,
+  restricted,
   meUsername,
   onOpenUsername,
   onJump,
@@ -3344,6 +3593,8 @@ function MessageBubble({
   onMenu: (x: number, y: number, message: ChatMessage) => void;
   onDiscuss?: (postId: string) => void;
   commentCount?: number | null;
+  /** Ограниченный чат (как в ТГ): без копирования/сохранения. */
+  restricted?: boolean;
   meUsername?: string;
   onOpenUsername?: (name: string) => void;
   onJump: (id: string) => void;
@@ -3408,6 +3659,8 @@ function MessageBubble({
   const sticker = message.type === "text" && emojiOnly(message.content);
   /** Анимированная гифка (как в ТГ): сообщение вида «gifpack:<id>». */
   const gif = message.type === "text" ? gifpackId(message.content) : null;
+  /** Опрос: «poll:{...}». */
+  const poll = message.type === "text" ? parsePoll(message.content) : null;
   /** Старое «сломанное» text-сообщение с видео-файлом (не кружок). */
   const legacyVideo =
     message.type === "text" && !!att && (att.mimeType ?? "").toLowerCase().startsWith("video/") && !att.duration;
@@ -3470,6 +3723,7 @@ function MessageBubble({
           <button
             onClick={() => onViewUser(sender)}
             className="mb-1 block text-left text-[12px] font-semibold text-slate-400/90 hover:text-slate-300"
+            style={sender.nameColor ? { color: sender.nameColor } : undefined}
           >
             {sender.displayName}
           </button>
@@ -3477,8 +3731,8 @@ function MessageBubble({
 
         <div
           className={`relative overflow-hidden ${
-            media || sticker || gif || legacyVideo ? "" : own && !space ? "bubble-own text-white" : "bubble-peer text-white/90"
-          } ${media || sticker || gif || legacyVideo ? "" : `${own && !space ? "bubble-own-radius" : "bubble-peer-radius"} px-4 py-2.5`} ${
+            media || sticker || gif || legacyVideo || poll ? "" : own && !space ? "bubble-own text-white" : "bubble-peer text-white/90"
+          } ${media || sticker || gif || legacyVideo || poll ? "" : `${own && !space ? "bubble-own-radius" : "bubble-peer-radius"} px-4 py-2.5`} ${
             highlighted ? "ring-2 ring-[#5865f2]/60" : ""
           }`}
         >
@@ -3531,7 +3785,7 @@ function MessageBubble({
           ) : legacyVideo && att ? (
             <VideoBubble url={att.url} caption={att.caption} own={own && !space} onOpenImage={onOpenImage} />
           ) : isFile && att ? (
-            <FileCard att={att} />
+            <FileCard att={att} restricted={restricted} />
           ) : gif ? (
             /* Анимированная гифка — крупно, без пузыря, как в ТГ */
             <div
@@ -3542,8 +3796,13 @@ function MessageBubble({
           ) : sticker ? (
             /* «Стикер»: только эмодзи — крупно, без пузыря (как в мессенджерах) */
             <p className="py-0.5 text-[52px] leading-none select-none">{message.content.trim()}</p>
+          ) : poll ? (
+            <PollCard msgId={message.id} q={poll.q} opts={poll.opts} />
           ) : (
-            <LongText content={message.content} meUsername={meUsername} onOpenUsername={onOpenUsername} />
+            <>
+              <LongText content={message.content} meUsername={meUsername} onOpenUsername={onOpenUsername} />
+              {message.type === "text" && <LinkPreview text={message.content} />}
+            </>
           )}
         </div>
 
@@ -3597,9 +3856,22 @@ function MessageBubble({
               <Pin className="h-3 w-3 text-slate-400" />
             </span>
           )}
+          {/* Просмотры поста канала — «глазик» как в ТГ */}
+          {onDiscuss && message.views != null && (
+            <span className="flex items-center gap-0.5 tabular-nums">
+              <Eye className="h-3 w-3" />
+              {message.views >= 1000
+                ? `${(message.views / 1000).toFixed(message.views >= 10000 ? 0 : 1).replace(".", ",")}K`
+                : message.views}
+            </span>
+          )}
           {message.editedAt && <span className="italic">изменено</span>}
           {own &&
             (read ? <CheckCheck className="h-3.5 w-3.5 text-slate-400" /> : <Check className="h-3.5 w-3.5" />)}
+          {/* Подпись поста канала именем администратора — как в ТГ */}
+          {onDiscuss && !message.replyToId && message.sender?.displayName && (
+            <span className="italic text-white/40">{message.sender.displayName.split(" ")[0]}</span>
+          )}
         </div>
       </div>
 
@@ -3853,6 +4125,144 @@ function VideoNoteBubble({ url, duration }: { url: string; duration: number }) {
 
 /* ─────────────────────────── карточка файла ─────────────────────────── */
 
+/** Опрос как в ТГ: вопрос, варианты, проценты после голоса. Голоса считаются локально. */
+function PollCard({ msgId, q, opts }: { msgId: string; q: string; opts: string[] }) {
+  const [myVote, setMyVote] = useState<number | null>(() => {
+    try {
+      const all = JSON.parse(localStorage.getItem("pulse_poll_votes_v1") ?? "{}") as Record<string, number>;
+      return typeof all[msgId] === "number" ? all[msgId] : null;
+    } catch {
+      return null;
+    }
+  });
+  const [counts, setCounts] = useState<number[]>(() => {
+    try {
+      const all = JSON.parse(localStorage.getItem("pulse_poll_counts_v1") ?? "{}") as Record<string, number[]>;
+      const c = all[msgId];
+      if (Array.isArray(c) && c.length === opts.length) return c;
+    } catch {
+      /* ignore */
+    }
+    return opts.map(() => 0);
+  });
+  const total = counts.reduce((sum, n) => sum + n, 0);
+  const vote = (i: number) => {
+    if (myVote != null) return;
+    const next = [...counts];
+    next[i] += 1;
+    setCounts(next);
+    setMyVote(i);
+    try {
+      const votes = JSON.parse(localStorage.getItem("pulse_poll_votes_v1") ?? "{}") as Record<string, number>;
+      votes[msgId] = i;
+      localStorage.setItem("pulse_poll_votes_v1", JSON.stringify(votes));
+      const all = JSON.parse(localStorage.getItem("pulse_poll_counts_v1") ?? "{}") as Record<string, number[]>;
+      all[msgId] = next;
+      localStorage.setItem("pulse_poll_counts_v1", JSON.stringify(all));
+    } catch {
+      /* приватный режим */
+    }
+  };
+  return (
+    <div className="w-[min(78vw,340px)] py-0.5">
+      <p className="mb-0.5 flex items-center gap-1.5 text-[11px] text-white/40">
+        <BarChart3 className="h-3 w-3" /> Опрос
+      </p>
+      <p className="mb-2 text-[15px] font-semibold break-words">{q}</p>
+      <div className="flex flex-col gap-1.5">
+        {opts.map((o, i) => {
+          const pct = total > 0 ? Math.round((counts[i] / total) * 100) : 0;
+          const chosen = myVote === i;
+          return (
+            <button
+              key={i}
+              onClick={() => vote(i)}
+              disabled={myVote != null}
+              className={`relative overflow-hidden rounded-xl border px-3 py-2 text-left text-[13px] transition-colors ${
+                chosen
+                  ? "border-[#5865f2]/60 text-white"
+                  : "border-white/10 text-white/80 " + (myVote == null ? "hover:bg-white/8" : "")
+              }`}
+            >
+              {myVote != null && (
+                <span
+                  className="absolute inset-y-0 left-0 bg-[#5865f2]/25 transition-all"
+                  style={{ width: `${pct}%` }}
+                />
+              )}
+              <span className="relative flex items-center gap-2">
+                <span
+                  className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full border ${
+                    chosen ? "border-[#5865f2] bg-[#5865f2]" : "border-white/30"
+                  }`}
+                >
+                  {chosen && <Check className="h-2.5 w-2.5 text-white" />}
+                </span>
+                <span className="min-w-0 flex-1 break-words">{o}</span>
+                {myVote != null && <span className="shrink-0 text-[11px] text-white/45 tabular-nums">{pct}%</span>}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+      <p className="mt-1.5 text-[11px] text-white/35 tabular-nums">
+        {total > 0 ? `Проголосовало: ${total}` : "Проголосуйте — результаты появятся сразу"}
+      </p>
+    </div>
+  );
+}
+
+/** Разобрать сообщение-опрос вида «poll:{json}». */
+function parsePoll(content: string): { q: string; opts: string[] } | null {
+  if (!content.startsWith("poll:")) return null;
+  try {
+    const p = JSON.parse(content.slice(5)) as { q?: unknown; opts?: unknown };
+    if (typeof p.q === "string" && Array.isArray(p.opts) && p.opts.every((o) => typeof o === "string"))
+      return { q: p.q, opts: p.opts.slice(0, 10) };
+  } catch {
+    /* не опрос */
+  }
+  return null;
+}
+
+/** Превью ссылки в тексте — карточка с доменом, как в ТГ. */
+function LinkPreview({ text }: { text: string }) {
+  const m = text.match(/https?:\/\/[^\s<>"']+/i);
+  if (!m) return null;
+  let url: URL;
+  try {
+    url = new URL(m[0]);
+  } catch {
+    return null;
+  }
+  const host = url.hostname.replace(/^www\./, "");
+  return (
+    <a
+      href={m[0]}
+      target="_blank"
+      rel="noopener noreferrer"
+      onClick={(e) => e.stopPropagation()}
+      className="mt-1.5 flex max-w-72 items-center gap-2.5 rounded-xl border-l-2 border-[#5865f2] bg-white/[0.05] px-3 py-2 transition-colors hover:bg-white/[0.09]"
+    >
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={`https://www.google.com/s2/favicons?domain=${encodeURIComponent(host)}&sz=32`}
+        alt=""
+        className="h-7 w-7 shrink-0 rounded-md bg-white/10"
+        onError={(e) => {
+          e.currentTarget.style.display = "none";
+        }}
+      />
+      <span className="min-w-0">
+        <span className="block truncate text-[12px] font-semibold text-[#8ea1ff]">{host}</span>
+        <span className="block truncate text-[11px] text-white/40">
+          {url.pathname !== "/" ? url.pathname : "Ссылка"}
+        </span>
+      </span>
+    </a>
+  );
+}
+
 /** Видео-файл в чате: прямоугольный плеер с превью-кадром (как в ТГ), НЕ кружок. */
 function VideoBubble({
   url,
@@ -3911,7 +4321,7 @@ function VideoBubble({
   );
 }
 
-function FileCard({ att }: { att: AttachmentInfo }) {
+function FileCard({ att, restricted }: { att: AttachmentInfo; restricted?: boolean }) {
   const mime = att.mimeType ?? "";
   // Скачивание с прогрессом «0.0 МБ из N МБ», как в Telegram
   const [prog, setProg] = useState<{ l: number; t: number } | null>(null);
@@ -3969,16 +4379,25 @@ function FileCard({ att }: { att: AttachmentInfo }) {
           )}
           {dlErr && <p className="mt-0.5 text-[11px] text-rose-300">{dlErr}</p>}
         </div>
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            void download();
-          }}
-          title="Скачать"
-          className="glass flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-white/75 transition-colors hover:text-white"
-        >
-          <Download className="h-4.5 w-4.5" />
-        </button>
+        {restricted ? (
+          <span
+            title="В этом чате запрещено сохранение контента"
+            className="glass flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-white/35"
+          >
+            <Lock className="h-4.5 w-4.5" />
+          </span>
+        ) : (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              void download();
+            }}
+            title="Скачать"
+            className="glass flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-white/75 transition-colors hover:text-white"
+          >
+            <Download className="h-4.5 w-4.5" />
+          </button>
+        )}
       </div>
       {(mime.startsWith("audio/") || mime.startsWith("video/")) && (
         <div className="mt-2">

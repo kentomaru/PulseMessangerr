@@ -136,6 +136,9 @@ export async function serializeConversation(
     avatarUrl: conv.avatarUrl,
     about: conv.about ?? "",
     isPrivate: !!conv.isPrivate,
+    // «Запрет копирования/сохранения» — как ограниченные каналы в ТГ
+    restricted: !!(conv as { restricted?: boolean }).restricted,
+    slowMode: typeof (conv as { slowMode?: number }).slowMode === "number" ? (conv as { slowMode?: number }).slowMode ?? 0 : 0,
     ownerId: conv.ownerId,
     createdAt: new Date(conv.createdAt).toISOString(),
     memberCount: rows.length,

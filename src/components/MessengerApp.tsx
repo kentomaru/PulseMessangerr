@@ -41,15 +41,17 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
   const [helpOpen, setHelpOpen] = useState(false);
   /** Свёрнутый сайдбар — чат на всю ширину. */
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  // Тема оформления: серый (по умолчанию), синий как в TG, светлая
-  const [theme, setTheme] = useState<"gray" | "tg" | "light">(() => {
+  // Тема оформления: серый (по умолчанию), синий как в TG, светлая, авто (день/ночь)
+  const [theme, setTheme] = useState<"gray" | "tg" | "light" | "auto">(() => {
     try {
       const t = localStorage.getItem("pulse_theme_v1");
-      return t === "tg" || t === "light" ? t : "gray";
+      return t === "tg" || t === "light" || t === "auto" ? t : "gray";
     } catch {
       return "gray";
     }
   });
+  /** Авто-тема: днём серая, ночью (22:00–8:00) синяя как в ТГ. */
+  const [autoTick, setAutoTick] = useState(0);
   const [online, setOnline] = useState(true);
   // Полная кастомизация: цвет/радиус пузырей, размер текста, компактность,
   // шрифт, анимации, Enter, «не беспокоить». Хранится локально.
@@ -307,13 +309,21 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
   }, [custom]);
 
   useEffect(() => {
-    document.documentElement.dataset.theme = theme;
+    void autoTick;
+    const applied =
+      theme === "auto" ? (new Date().getHours() >= 8 && new Date().getHours() < 22 ? "gray" : "tg") : theme;
+    document.documentElement.dataset.theme = applied;
     try {
       localStorage.setItem("pulse_theme_v1", theme);
     } catch {
       /* приватный режим */
     }
-  }, [theme]);
+    // в режиме «авто» пересчитываем раз в минуту
+    if (theme === "auto") {
+      const t = window.setInterval(() => setAutoTick((v) => v + 1), 60_000);
+      return () => window.clearInterval(t);
+    }
+  }, [theme, autoTick]);
 
   // Баннер «нет сети» и хоткей Ctrl+K — фокус на поиск чатов
   useEffect(() => {
@@ -996,6 +1006,7 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
         {storyComposer && (
           <StoryComposer
             key="story-composer"
+            premium={!!me.premium}
             onClose={() => setStoryComposer(false)}
             notify={notify}
             onPublished={() => {

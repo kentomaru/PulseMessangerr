@@ -7,6 +7,7 @@ export type PublicUser = {
   bio: string;
   /** Кастомный статус-эмодзи: эмодзи или ссылка на анимированную гифку. */
   statusEmoji: string;
+  nameColor?: string;
   /** null, если пользователь скрыл статус (приватность). */
   lastSeenAt: string | null;
   createdAt: string;
@@ -36,6 +37,8 @@ export type ConversationInfo = {
   avatarUrl: string | null;
   about: string;
   isPrivate: boolean;
+  restricted?: boolean;
+  slowMode?: number;
   ownerId: string | null;
   createdAt: string;
   memberCount: number;
@@ -142,6 +145,8 @@ export type ChatMessage = {
   replyToId: string | null;
   /** Тихое сообщение — без звука у получателей. */
   silent?: boolean;
+  /** Просмотры поста канала («глазик» как в ТГ). */
+  views?: number;
   createdAt: string;
   deletedAt: string | null;
   /** Когда сообщение отредактировано. */

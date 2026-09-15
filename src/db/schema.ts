@@ -32,6 +32,8 @@ export const users = pgTable("users", {
   bio: text("bio").notNull().default(""),
   /** Pulse Premium: выдаётся бесплатно, расширяет лимиты. */
   premium: boolean("premium").notNull().default(false),
+  // Pulse Premium: цвет имени в чатах (как «цвет профиля» в ТГ)
+  nameColor: text("name_color"),
   // Кастомный статус-эмодзи в профиле: обычный эмодзи («🔥») или ссылка
   // на загруженную АНИМИРОВАННУЮ гифку (/api/files/…).
   statusEmoji: text("status_emoji").notNull().default(""),
@@ -86,6 +88,10 @@ export const conversations = pgTable(
     isPrivate: boolean("is_private").notNull().default(true),
     /** Токен постоянной ссылки-приглашения: /#group=<token>. */
     inviteToken: text("invite_token").unique(),
+    /** «Запретить копирование/сохранение» — как ограниченные каналы в ТГ. */
+    restricted: boolean("restricted").notNull().default(false),
+  // Минимальная пауза между сообщениями участников (сек, 0 — выключен)
+  slowMode: integer("slow_mode").notNull().default(0),
     ownerId: uuid("owner_id").references(() => users.id, { onDelete: "set null" }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -253,6 +259,8 @@ export const messages = pgTable(
     replyToId: uuid("reply_to_id"),
     /** Тихое сообщение: без звука у получателей. */
     silent: boolean("silent").notNull().default(false),
+    /** Сколько раз просмотрели пост канала (как в ТГ — «глазик»). */
+    views: integer("views").notNull().default(0),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
     editedAt: timestamp("edited_at", { withTimezone: true }),

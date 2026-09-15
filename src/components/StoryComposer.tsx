@@ -12,18 +12,22 @@ type Props = {
   onClose: () => void;
   onPublished: (story: StoryItem) => void;
   notify: (msg: string) => void;
+  /** Pulse Premium включён — можно публиковать истории на 48 часов. */
+  premium?: boolean;
 };
 
 /** Истории — только фото/видео, максимум 100 МБ (пункт ТЗ). */
 const MAX_STORY_BYTES = 100 * 1024 * 1024;
 
-/** Создание истории: фото или видео + подпись, живёт 24 часа. */
-export default function StoryComposer({ onClose, onPublished, notify }: Props) {
+/** Создание истории: фото или видео + подпись, живёт 24 часа (48 — с Premium). */
+export default function StoryComposer({ onClose, onPublished, notify, premium }: Props) {
   const [file, setFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [caption, setCaption] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  /** Срок жизни истории: 24 ч всем, 48 ч — с Pulse Premium (как в ТГ). */
+  const [ttlHours, setTtlHours] = useState<24 | 48>(24);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
   const isVideo = !!file && file.type.startsWith("video/");
@@ -60,7 +64,7 @@ export default function StoryComposer({ onClose, onPublished, notify }: Props) {
       const mediaUrl = await uploadFile(light);
       const d = await api<{ story: StoryItem }>("/api/stories", {
         method: "POST",
-        body: JSON.stringify({ mediaUrl, caption }),
+        body: JSON.stringify({ mediaUrl, caption, ...(premium ? { ttlHours } : {}) }),
       });
       notify("История опубликована");
       onPublished(d.story);
@@ -121,6 +125,23 @@ export default function StoryComposer({ onClose, onPublished, notify }: Props) {
             <ImagePlus className="h-8 w-8" />
             <span className="text-sm">Фото или видео (до 100 МБ)</span>
           </button>
+        )}
+
+        {premium && (
+          <div className="flex items-center gap-2">
+            <span className="text-[11px] font-semibold tracking-widest text-white/30 uppercase">Срок жизни</span>
+            {([24, 48] as const).map((h) => (
+              <button
+                key={h}
+                onClick={() => setTtlHours(h)}
+                className={`rounded-xl px-3 py-1.5 text-xs font-medium transition-colors ${
+                  ttlHours === h ? "bg-[#5865f2] text-white" : "glass text-white/60 hover:text-white"
+                }`}
+              >
+                {h} ч
+              </button>
+            ))}
+          </div>
         )}
 
         <textarea

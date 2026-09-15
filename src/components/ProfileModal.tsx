@@ -39,8 +39,8 @@ type Props = {
   onSaved: (u: PublicUser) => void;
   onDeletedAccount: () => void;
   /** Настройки оформления — переехали сюда из сайдбара. */
-  theme?: "gray" | "tg" | "light";
-  onSetTheme?: (t: "gray" | "tg" | "light") => void;
+  theme?: "gray" | "tg" | "light" | "auto";
+  onSetTheme?: (t: "gray" | "tg" | "light" | "auto") => void;
   uiScale?: "s" | "m" | "l";
   onSetUiScale?: (v: "s" | "m" | "l") => void;
   custom?: import("./Sidebar").CustomSettings;
@@ -82,6 +82,8 @@ export default function ProfileModal({
   const [bannerUrl, setBannerUrl] = useState<string | null>(me.bannerUrl);
   /** Кастомный статус-эмодзи: эмодзи или анимированная гифка. */
   const [statusEmoji, setStatusEmoji] = useState(me.statusEmoji || "");
+  /** Pulse Premium: цвет имени в чатах («цвет профиля», как в ТГ). */
+  const [nameColor, setNameColor] = useState(me.nameColor || "");
   /** Панель выбора баннера (живые пресеты + загрузка гифки). */
   const [bannerPickerOpen, setBannerPickerOpen] = useState(false);
   /** Панель выбора статус-эмодзи. */
@@ -144,6 +146,7 @@ export default function ProfileModal({
           avatarUrl,
           bannerUrl,
           statusEmoji,
+          nameColor: nameColor || null,
           birthday,
         }),
       });
@@ -468,7 +471,7 @@ export default function ProfileModal({
               {me.premium && <span className="rounded-full bg-amber-300/20 px-2 py-0.5 text-[10px] font-bold text-amber-200">АКТИВЕН</span>}
             </p>
             <p className="text-[11px] leading-snug text-white/45">
-              Подписи к фото и видео до 2048 символов, значок в профиле. Бесплатно.
+              Файлы до 4 ГБ, цвет имени, сторис до 48 ч, кастом-эмодзи и не только. Бесплатно.
             </p>
           </div>
           <button
@@ -482,6 +485,18 @@ export default function ProfileModal({
             {me.premium ? "Выключить" : "Включить"}
           </button>
         </div>
+        {me.premium && (
+          <div className="-mt-1 grid grid-cols-2 gap-1.5 rounded-2xl border border-white/8 bg-white/[0.02] p-3 text-[11px] leading-snug text-white/55">
+            <span>📦 Файлы до 4 ГБ</span>
+            <span>🎨 Цвет имени в чатах</span>
+            <span>⏳ Сторис до 48 часов</span>
+            <span>✍️ Подписи до 2048 симв.</span>
+            <span>⭐ Кастом-эмодзи</span>
+            <span>🖼️ Анимированные стикеры</span>
+            <span>💎 Значок в профиле</span>
+            <span>🧬 Все лимиты удвоены</span>
+          </div>
+        )}
 
         {/* Дата рождения */}
         <label className="block">
@@ -554,6 +569,44 @@ export default function ProfileModal({
           )}
         </div>
 
+        {/* Цвет имени — как «цвет профиля» в ТГ Премиум */}
+        <div className="block">
+          <span className="mb-1.5 block text-xs font-medium tracking-wide text-white/45 uppercase">
+            Цвет имени в чатах {!me.premium && "· Premium"}
+          </span>
+          {me.premium ? (
+            <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3">
+              <button
+                onClick={() => setNameColor("")}
+                title="Стандартный"
+                className={`grid h-8 w-8 place-items-center rounded-full border text-[11px] transition-all ${
+                  !nameColor ? "border-white/60 ring-2 ring-white/25" : "border-white/15 hover:border-white/40"
+                }`}
+              >
+                Аа
+              </button>
+              {["#5b8def", "#a970ff", "#e8639c", "#ff7a59", "#f0c04b", "#4fc36c", "#35c2c1", "#ff5c5c"].map((c) => (
+                <button
+                  key={c}
+                  onClick={() => setNameColor((cur) => (cur === c ? "" : c))}
+                  title={c}
+                  style={{ background: c }}
+                  className={`h-8 w-8 rounded-full transition-all hover:scale-110 ${
+                    nameColor === c ? "ring-2 ring-white/70" : "ring-1 ring-black/20"
+                  }`}
+                />
+              ))}
+              <span className="ml-1 text-sm font-semibold" style={nameColor ? { color: nameColor } : undefined}>
+                {displayName || "Ваше имя"}
+              </span>
+            </div>
+          ) : (
+            <p className="rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3 text-xs text-white/40">
+              Доступно с Premium — включите его в разделе «Премиум».
+            </p>
+          )}
+        </div>
+
         {error && (
           <p className="rounded-xl border border-rose-500/25 bg-rose-500/10 px-4 py-2.5 text-sm text-rose-300">
             {error}
@@ -621,6 +674,7 @@ const THEMES: Record<string, { bg: string; panel: string; label: string }> = {
   gray: { bg: "#20232a", panel: "#2a2e36", label: "Серая" },
   tg: { bg: "#12202f", panel: "#17293a", label: "Синяя" },
   light: { bg: "#eef1f5", panel: "#ffffff", label: "Светлая" },
+  auto: { bg: "linear-gradient(135deg,#20232a 50%,#12202f 50%)", panel: "#2a2e36", label: "Авто" },
 };
 
 /**
@@ -641,8 +695,8 @@ function AppearanceTab({
   onToggleCallSound,
   onToggleNotify,
 }: {
-  theme: "gray" | "tg" | "light";
-  onSetTheme?: (t: "gray" | "tg" | "light") => void;
+  theme: "gray" | "tg" | "light" | "auto";
+  onSetTheme?: (t: "gray" | "tg" | "light" | "auto") => void;
   uiScale: "s" | "m" | "l";
   onSetUiScale?: (v: "s" | "m" | "l") => void;
   custom?: import("./Sidebar").CustomSettings;
@@ -719,7 +773,7 @@ function AppearanceTab({
           {(Object.keys(THEMES) as (keyof typeof THEMES)[]).map((k) => (
             <button
               key={k}
-              onClick={() => onSetTheme?.(k as "gray" | "tg" | "light")}
+              onClick={() => onSetTheme?.(k as "gray" | "tg" | "light" | "auto")}
               className={`rounded-xl border px-2 py-2.5 text-[12px] font-medium transition-all ${
                 theme === k
                   ? "border-[#5865f2] bg-[#5865f2]/15 text-white"

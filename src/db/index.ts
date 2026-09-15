@@ -103,6 +103,10 @@ export async function ensureSchema(): Promise<void> {
     alter table users add column if not exists allow_group_invites boolean not null default true;
     alter table users add column if not exists status_emoji text not null default '';
     alter table users add column if not exists premium boolean not null default false;
+    alter table messages add column if not exists views integer not null default 0;
+    alter table conversations add column if not exists restricted boolean not null default false;
+    alter table users add column if not exists name_color text;
+    alter table conversations add column if not exists slow_mode integer not null default 0;
 
     create table if not exists sessions (
       token text primary key,

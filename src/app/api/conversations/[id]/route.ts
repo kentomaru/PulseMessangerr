@@ -6,6 +6,7 @@ import { isUuid, withApi } from "@/lib/api-helpers";
 import {
   isManager,
   listMembers,
+  newInviteToken,
   normalizeKind,
   normalizeRole,
   requireMember,
@@ -103,6 +104,27 @@ export const PATCH = withApi<{ id: string }>("conversations:update", async ({ re
   if (body.kind === "group" || body.kind === "channel") {
     patch.kind = body.kind;
     patch.isGroup = body.kind === "group";
+  }
+
+  // «Запретить копирование/сохранение контента» — как ограниченные каналы в ТГ
+  if (typeof body.restricted === "boolean") {
+    if (access.membership.role !== "owner")
+      return NextResponse.json({ error: "Ограничения задаёт владелец" }, { status: 403 });
+    patch.restricted = body.restricted;
+  }
+
+  // Слоумод: минимальная пауза между сообщениями участников (как в ТГ)
+  if (typeof body.slowMode === "number") {
+    if (access.membership.role !== "owner" && access.membership.role !== "admin")
+      return NextResponse.json({ error: "Слоумод настраивают администраторы" }, { status: 403 });
+    patch.slowMode = Math.max(0, Math.min(3600, Math.round(body.slowMode)));
+  }
+
+  // Отозвать инвайт-ссылку: выпускаем новый случайный токен (старые перестают работать)
+  if (body.revokeInvite === true) {
+    if (access.membership.role !== "owner")
+      return NextResponse.json({ error: "Инвайт отзывает владелец" }, { status: 403 });
+    patch.inviteToken = newInviteToken();
   }
 
   if (Object.keys(patch).length === 0)

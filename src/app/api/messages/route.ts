@@ -104,6 +104,7 @@ async function serializeMessages(list: MessageRow[], meId: string): Promise<Chat
       content: m.content,
       replyToId: m.replyToId,
       silent: !!(m as { silent?: boolean }).silent,
+      views: (m as { views?: number }).views ?? 0,
       createdAt: new Date(m.createdAt).toISOString(),
       deletedAt: m.deletedAt ? new Date(m.deletedAt).toISOString() : null,
       editedAt: m.editedAt ? new Date(m.editedAt).toISOString() : null,

@@ -55,6 +55,9 @@ export const PATCH = withApi("auth/me", async ({ req, me, log }) => {
   }
   // Кастомный статус-эмодзи: эмодзи или ссылка на анимированную гифку
   if (typeof body.statusEmoji === "string") patch.statusEmoji = body.statusEmoji.trim().slice(0, 300);
+  // Pulse Premium: цвет имени в чатах
+  if (typeof body.nameColor === "string" || body.nameColor === null)
+    patch.nameColor = body.nameColor ? String(body.nameColor).slice(0, 20) : null;
   if (typeof body.avatarUrl === "string" || body.avatarUrl === null)
     patch.avatarUrl = body.avatarUrl || null;
   if (typeof body.bannerUrl === "string" || body.bannerUrl === null)

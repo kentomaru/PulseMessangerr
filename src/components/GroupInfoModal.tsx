@@ -19,6 +19,9 @@ import {
   Megaphone,
   Phone,
   Settings2,
+  ShieldBan,
+  Timer,
+  RefreshCw,
   Shield,
   Trash2,
   UserPlus,
@@ -71,6 +74,9 @@ export default function GroupInfoModal({
   const [name, setName] = useState("");
   const [about, setAbout] = useState("");
   const [isPrivate, setIsPrivate] = useState(true);
+  const [restricted, setRestricted] = useState(false);
+  /** Слоумод: пауза между сообщениями участников (сек, 0 — выключен). */
+  const [slowMode, setSlowMode] = useState(0);
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   const [username, setUsername] = useState("");
   const [saving, setSaving] = useState(false);
@@ -92,6 +98,8 @@ export default function GroupInfoModal({
       setName(d.conversation.name ?? "");
       setAbout(d.conversation.about ?? "");
       setIsPrivate(d.conversation.isPrivate);
+      setRestricted(!!(d.conversation as { restricted?: boolean }).restricted);
+      setSlowMode(typeof (d.conversation as { slowMode?: number }).slowMode === "number" ? (d.conversation as { slowMode?: number }).slowMode ?? 0 : 0);
       setAvatarUrl(d.conversation.avatarUrl);
       const tk = (d.conversation as { inviteToken?: string | null }).inviteToken ?? "";
       setUsername(/^[a-z0-9_]{5,32}$/.test(tk) ? tk : "");
@@ -210,7 +218,14 @@ export default function GroupInfoModal({
     try {
       await api(`/api/conversations/${conversationId}`, {
         method: "PATCH",
-        body: JSON.stringify({ name, about, isPrivate, avatarUrl, ...(info?.myRole === "owner" ? { username } : {}) }),
+        body: JSON.stringify({
+          name,
+          about,
+          isPrivate,
+          avatarUrl,
+          ...(info?.myRole === "owner" ? { username, restricted } : {}),
+          ...(info?.myRole === "owner" || info?.myRole === "admin" ? { slowMode } : {}),
+        }),
       });
       notify("Сохранено");
       setEdit(false);
@@ -229,6 +244,22 @@ export default function GroupInfoModal({
       setAvatarUrl(await uploadFile(file));
     } catch (e) {
       notify(e instanceof Error ? e.message : "Ошибка загрузки");
+    }
+  };
+
+  /** Отозвать инвайт-ссылку: старый токен перестаёт работать (как в ТГ). */
+  const revokeInvite = async () => {
+    if (!confirm("Отозвать текущую ссылку-приглашение? Старые ссылки перестанут работать.")) return;
+    try {
+      await api(`/api/conversations/${conversationId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ revokeInvite: true }),
+      });
+      notify("Ссылка отозвана — выпущена новая");
+      await load();
+      onChanged();
+    } catch (e) {
+      notify(e instanceof Error ? e.message : "Не удалось отозвать ссылку");
     }
   };
 
@@ -370,6 +401,44 @@ export default function GroupInfoModal({
               </span>
               <span className={`h-5 w-9 shrink-0 rounded-full ${isPrivate ? "bg-[#5865f2]" : "bg-white/20"}`} />
             </button>
+            {owner && (
+              <button
+                onClick={() => setRestricted((v) => !v)}
+                className="flex w-full items-center gap-3 rounded-xl border border-white/8 bg-white/[0.03] px-3 py-2.5 text-left"
+              >
+                <ShieldBan className="h-4 w-4 shrink-0 text-slate-400" />
+                <span className="min-w-0 flex-1">
+                  <span className="block text-sm font-medium">Запретить копирование и сохранение</span>
+                  <span className="block text-[11px] text-white/35">
+                    Как ограниченные каналы в ТГ: без скачивания, пересылки и копирования
+                  </span>
+                </span>
+                <span className={`h-5 w-9 shrink-0 rounded-full ${restricted ? "bg-rose-400/80" : "bg-white/20"}`} />
+              </button>
+            )}
+            {(owner || info.myRole === "admin") && (
+              <div className="flex w-full items-center gap-3 rounded-xl border border-white/8 bg-white/[0.03] px-3 py-2.5">
+                <Timer className="h-4 w-4 shrink-0 text-slate-400" />
+                <span className="min-w-0 flex-1">
+                  <span className="block text-sm font-medium">Слоумод</span>
+                  <span className="block text-[11px] text-white/35">
+                    Пауза между сообщениями участников — как в ТГ
+                  </span>
+                </span>
+                <select
+                  value={slowMode}
+                  onChange={(e) => setSlowMode(Number(e.target.value))}
+                  className="ring-focus rounded-lg border border-white/10 bg-white/[0.06] px-2 py-1 text-xs"
+                  title="Интервал слоумода"
+                >
+                  <option value={0}>Выкл</option>
+                  <option value={10}>10 сек</option>
+                  <option value={30}>30 сек</option>
+                  <option value={60}>1 мин</option>
+                  <option value={300}>5 мин</option>
+                </select>
+              </div>
+            )}
             <div className="flex gap-2">
               <button
                 onClick={() => void save()}
@@ -385,6 +454,8 @@ export default function GroupInfoModal({
                   setName(info.name ?? "");
                   setAbout(info.about);
                   setIsPrivate(info.isPrivate);
+                  setRestricted(!!info.restricted);
+                  setSlowMode(typeof info.slowMode === "number" ? info.slowMode : 0);
                   setAvatarUrl(info.avatarUrl);
                 }}
                 className="glass rounded-xl px-4 py-2.5 text-sm text-white/70"
@@ -404,6 +475,11 @@ export default function GroupInfoModal({
             <Action onClick={() => void copyInvite()} icon={copied ? <Check className="h-4 w-4 text-emerald-300" /> : <Copy className="h-4 w-4" />}>
               {copied ? "Скопировано" : "Ссылка"}
             </Action>
+            {owner && (
+              <Action onClick={() => void revokeInvite()} icon={<RefreshCw className="h-4 w-4" />}>
+                Отозвать
+              </Action>
+            )}
             <Action onClick={() => setPicker("add")} icon={<UserPlus className="h-4 w-4" />}>
               Добавить
             </Action>

@@ -128,6 +128,10 @@ export async function POST(req: NextRequest) {
   }
   if (!me) return NextResponse.json({ error: "Не авторизован" }, { status: 401 });
 
+  // Pulse Premium: файлы до 4 ГБ (обычные — до 500 МБ)
+  const capBytes = me.premium ? 4 * 1024 * 1024 * 1024 : MAX_UPLOAD_BYTES;
+  const capLabel = me.premium ? "4 ГБ" : "500 МБ";
+
   try {
     const contentType = req.headers.get("content-type") ?? "";
 
@@ -140,8 +144,8 @@ export async function POST(req: NextRequest) {
       const mime = url.searchParams.get("type");
       const declaredSize = Number(url.searchParams.get("size") ?? "0");
 
-      if (declaredSize > MAX_UPLOAD_BYTES) {
-        return NextResponse.json({ error: "Файл больше 500 МБ" }, { status: 400 });
+      if (declaredSize > capBytes) {
+        return NextResponse.json({ error: `Файл больше ${capLabel}` }, { status: 400 });
       }
       if (!req.body) {
         return NextResponse.json({ error: "Файл не найден" }, { status: 400 });
@@ -157,14 +161,14 @@ export async function POST(req: NextRequest) {
       source.on("data", (chunk: Buffer) => {
         written += chunk.length;
         // защита от «заявили меньше, прислали больше»
-        if (written > MAX_UPLOAD_BYTES) source.destroy(new Error("too_large"));
+        if (written > capBytes) source.destroy(new Error("too_large"));
       });
       try {
         await pipeline(source, createWriteStream(filePath));
       } catch (err) {
         const tooLarge = err instanceof Error && err.message === "too_large";
         return NextResponse.json(
-          { error: tooLarge ? "Файл больше 500 МБ" : "Не удалось загрузить файл" },
+          { error: tooLarge ? `Файл больше ${capLabel}` : "Не удалось загрузить файл" },
           { status: tooLarge ? 400 : 500 },
         );
       }
@@ -201,8 +205,8 @@ export async function POST(req: NextRequest) {
     const form = await req.formData();
     const file = form.get("file");
     if (!(file instanceof File)) return NextResponse.json({ error: "Файл не найден" }, { status: 400 });
-    if (file.size > MAX_UPLOAD_BYTES)
-      return NextResponse.json({ error: "Файл больше 500 МБ" }, { status: 400 });
+    if (file.size > capBytes)
+      return NextResponse.json({ error: `Файл больше ${capLabel}` }, { status: 400 });
 
     const ext = safeExtension(file.name, file.type);
     const fileName = `${randomUUID()}.${ext}`;

@@ -50,8 +50,8 @@ export default function AuthScreen() {
         setError("Пароли не совпадают");
         return;
       }
-      if (password.length < 6) {
-        setError("Пароль — не менее 6 символов");
+      if (password.length < 8) {
+        setError("Пароль — не менее 8 символов");
         return;
       }
     }
@@ -282,7 +282,7 @@ export default function AuthScreen() {
               <p className="text-center text-xs text-white/30">
                 {mode === "login"
                   ? "Нет аккаунта? Переключитесь на регистрацию"
-                  : "Имя пользователя — латиница, цифры и _, 3–24 символа. Пароль — не менее 6 символов"}
+                  : "Имя пользователя — латиница, цифры и _, 3–24 символа. Пароль — не менее 8 символов"}
               </p>
             </motion.form>
           </AnimatePresence>

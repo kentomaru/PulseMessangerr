@@ -17,6 +17,9 @@ import {
   Megaphone,
   Mic,
   Play,
+  Archive,
+  Mail,
+  ArrowLeft,
   MonitorSmartphone,
   Phone,
   Pin,
@@ -52,6 +55,10 @@ type Props = {
   /** Заглушённые чаты (без звука и уведомлений). */
   mutedIds: Set<string>;
   onTogglePin: (id: string) => void;
+  onToggleArchive?: (id: string) => void;
+  onToggleUnread?: (id: string) => void;
+  markedUnread?: boolean;
+  archived?: boolean;
   onToggleMute: (id: string) => void;
   /** Заглушить чат на срок (мс; 0 = навсегда). */
   onMuteFor?: (id: string, ms: number) => void;
@@ -59,7 +66,7 @@ type Props = {
   uiScale: "s" | "m" | "l";
   onSetUiScale: (v: "s" | "m" | "l") => void;
   /** Тема оформления: серый / синий / светлая. */
-  theme: "gray" | "tg" | "light";
+  theme: "gray" | "tg" | "light" | "auto";
   onSetTheme: (t: "gray" | "tg" | "light") => void;
   /** Кастомизация оформления (хранится локально у пользователя). */
   custom: CustomSettings;
@@ -268,6 +275,53 @@ export default function Sidebar({
       localStorage.setItem("pulse_folder_v1", f);
     } catch { /* ignore */ }
   };
+
+  /* Архив и «отметить непрочитанным» — как в ТГ, хранятся локально */
+  const [archivedIds, setArchivedIds] = useState<Set<string>>(() => {
+    try {
+      return new Set(JSON.parse(localStorage.getItem("pulse_archived_v1") ?? "[]") as string[]);
+    } catch {
+      return new Set();
+    }
+  });
+  const [archiveOpen, setArchiveOpen] = useState(false);
+  const [unreadMarks, setUnreadMarks] = useState<Set<string>>(() => {
+    try {
+      return new Set(JSON.parse(localStorage.getItem("pulse_unread_marks_v1") ?? "[]") as string[]);
+    } catch {
+      return new Set();
+    }
+  });
+  const toggleArchive = useCallback((id: string) => {
+    setArchivedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      try { localStorage.setItem("pulse_archived_v1", JSON.stringify([...next])); } catch { /* ignore */ }
+      return next;
+    });
+  }, []);
+  const toggleUnreadMark = useCallback((id: string) => {
+    setUnreadMarks((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      try { localStorage.setItem("pulse_unread_marks_v1", JSON.stringify([...next])); } catch { /* ignore */ }
+      return next;
+    });
+  }, []);
+  // Открыл чат — метка «не прочитано» снимается
+  useEffect(() => {
+    if (activeId && unreadMarks.has(activeId)) {
+      setUnreadMarks((prev) => {
+        const next = new Set(prev);
+        next.delete(activeId);
+        try { localStorage.setItem("pulse_unread_marks_v1", JSON.stringify([...next])); } catch { /* ignore */ }
+        return next;
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeId]);
   const [query, setQuery] = useState("");
   const [users, setUsers] = useState<PublicUser[]>([]);
   const [groups, setGroups] = useState<DiscoverItem[]>([]);
@@ -339,18 +393,23 @@ export default function Sidebar({
     },
     [folder],
   );
+  // архив показывается отдельной полкой: либо только он, либо всё без него
+  const inArchiveView = useCallback(
+    (c: { id: string }) => (archiveOpen ? archivedIds.has(c.id) : !archivedIds.has(c.id)),
+    [archiveOpen, archivedIds],
+  );
   const spaces = useMemo(
-    () => conversations.filter((c) => c.kind !== "direct" && inFolder(c)),
-    [conversations, inFolder],
+    () => conversations.filter((c) => c.kind !== "direct" && inFolder(c) && inArchiveView(c)),
+    [conversations, inFolder, inArchiveView],
   );
   const dms = useMemo(
-    () => conversations.filter((c) => c.kind === "direct" && inFolder(c)),
-    [conversations, inFolder],
+    () => conversations.filter((c) => c.kind === "direct" && inFolder(c) && inArchiveView(c)),
+    [conversations, inFolder, inArchiveView],
   );
   // Закреплённые чаты выводим отдельной секцией сверху (и убираем из обычных)
   const pinned = useMemo(
-    () => conversations.filter((c) => pinnedIds.has(c.id) && inFolder(c)),
-    [conversations, pinnedIds, inFolder],
+    () => conversations.filter((c) => pinnedIds.has(c.id) && inFolder(c) && inArchiveView(c)),
+    [conversations, pinnedIds, inFolder, inArchiveView],
   );
   const unpinnedSpaces = useMemo(
     () => spaces.filter((c) => !pinnedIds.has(c.id)),
@@ -636,6 +695,25 @@ export default function Sidebar({
 
       {/* Список диалогов */}
       <div className="nice-scroll min-h-0 flex-1 overflow-y-auto px-2.5 pb-4">
+        {/* Полка архива — как в ТГ */}
+        {archiveOpen ? (
+          <button
+            onClick={() => setArchiveOpen(false)}
+            className="mb-1 flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-[13px] font-medium text-white/70 transition-colors hover:bg-white/5"
+          >
+            <ArrowLeft className="h-4 w-4" /> Назад · Архив
+          </button>
+        ) : (
+          archivedIds.size > 0 && (
+            <button
+              onClick={() => setArchiveOpen(true)}
+              className="mb-1 flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-[13px] text-white/50 transition-colors hover:bg-white/5 hover:text-white/80"
+            >
+              <Archive className="h-4 w-4" /> Архив · {archivedIds.size}
+            </button>
+          )
+        )}
+
         {/* Закреплённые чаты — всегда сверху, в одном списке */}
         {pinned.length > 0 && (
           <>
@@ -655,6 +733,10 @@ export default function Sidebar({
                   onTogglePin={onTogglePin}
                   onToggleMute={onToggleMute}
                   onMuteFor={onMuteFor}
+                  onToggleArchive={toggleArchive}
+                  onToggleUnread={toggleUnreadMark}
+                  markedUnread={unreadMarks.has(conv.id)}
+                  archived={archivedIds.has(conv.id)}
                 />
               ))}
             </div>
@@ -677,6 +759,10 @@ export default function Sidebar({
               muted={mutedIds.has(conv.id)}
               onTogglePin={onTogglePin}
               onToggleMute={onToggleMute}
+              onToggleArchive={toggleArchive}
+              onToggleUnread={toggleUnreadMark}
+              markedUnread={unreadMarks.has(conv.id)}
+              archived={archivedIds.has(conv.id)}
             />
           ))}
         </div>
@@ -703,6 +789,10 @@ export default function Sidebar({
                 muted={mutedIds.has(conv.id)}
                 onTogglePin={onTogglePin}
                 onToggleMute={onToggleMute}
+                onToggleArchive={toggleArchive}
+                onToggleUnread={toggleUnreadMark}
+                markedUnread={unreadMarks.has(conv.id)}
+                archived={archivedIds.has(conv.id)}
               />
             ))}
           </div>
@@ -740,6 +830,10 @@ function ConvRow({
   onTogglePin,
   onToggleMute,
   onMuteFor,
+  onToggleArchive,
+  onToggleUnread,
+  markedUnread = false,
+  archived = false,
 }: {
   conv: ConversationListItem;
   active: boolean;
@@ -750,6 +844,10 @@ function ConvRow({
   draft?: string;
   compact?: boolean;
   onTogglePin?: (id: string) => void;
+  onToggleArchive?: (id: string) => void;
+  onToggleUnread?: (id: string) => void;
+  markedUnread?: boolean;
+  archived?: boolean;
   onToggleMute?: (id: string) => void;
   onMuteFor?: (id: string, ms: number) => void;
 }) {
@@ -854,6 +952,34 @@ function ConvRow({
                 )}
               </span>
             )}
+            {onToggleUnread && (
+              <span
+                role="button"
+                title={markedUnread ? "Снять метку «не прочитано»" : "Отметить непрочитанным"}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onToggleUnread(conv.id);
+                }}
+                className={`grid h-6 w-6 place-items-center rounded-lg hover:bg-white/10 ${
+                  markedUnread ? "text-[#5865f2]" : "text-white/35 hover:text-white/80"
+                }`}
+              >
+                <Mail className="h-3 w-3" />
+              </span>
+            )}
+            {onToggleArchive && (
+              <span
+                role="button"
+                title={archived ? "Вернуть из архива" : "В архив"}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onToggleArchive(conv.id);
+                }}
+                className="grid h-6 w-6 place-items-center rounded-lg text-white/35 hover:bg-white/10 hover:text-white/80"
+              >
+                <Archive className="h-3 w-3" />
+              </span>
+            )}
             {onTogglePin && (
               <span
                 role="button"
@@ -898,10 +1024,12 @@ function ConvRow({
               <PreviewNode conv={conv} meId={meId} />
             </p>
           )}
-          {conv.unreadCount > 0 && (
+          {conv.unreadCount > 0 ? (
             <span className="btn-gradient flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full px-1.5 text-[11px] font-bold text-white">
               {conv.unreadCount > 99 ? "99+" : conv.unreadCount}
             </span>
+          ) : (
+            markedUnread && <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-[#5865f2]" title="Отмечено непрочитанным" />
           )}
         </div>
       </div>
