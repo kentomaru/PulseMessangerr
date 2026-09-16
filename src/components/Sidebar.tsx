@@ -41,7 +41,7 @@ import PreviewLabel from "./PreviewLabel";
 import StatusEmoji from "./StatusEmoji";
 import StoriesRow from "./StoriesRow";
 import { api } from "@/lib/api";
-import { timeHHmm } from "@/lib/format";
+import { timeHHmm, cleanSnippet } from "@/lib/format";
 import type { ConversationListItem, DiscoverItem, PublicUser, StoryGroup } from "@/lib/types";
 
 type Props = {
@@ -312,7 +312,12 @@ export default function Sidebar({
     });
   }, []);
   // Открыл чат — метка «не прочитано» снимается
+  const firstRunRef = useRef(true);
   useEffect(() => {
+    if (firstRunRef.current) {
+      firstRunRef.current = false;
+      return;
+    }
     if (activeId && unreadMarks.has(activeId)) {
       setUnreadMarks((prev) => {
         const next = new Set(prev);
@@ -388,7 +393,7 @@ export default function Sidebar({
   const inFolder = useCallback(
     (c: ConversationListItem) => {
       if (folder === "all") return true;
-      if (folder === "unread") return c.unreadCount > 0;
+      if (folder === "unread") return c.unreadCount > 0 || unreadMarks.has(c.id);
       if (folder === "direct") return c.kind === "direct";
       return c.kind === folder; // group | channel
     },
@@ -645,7 +650,7 @@ export default function Sidebar({
                     <span className="block truncate text-sm font-medium">
                       {m.conversationName ?? "Личный чат"}
                     </span>
-                    <span className="block truncate text-xs text-white/40">{m.snippet}</span>
+                    <span className="block truncate text-xs text-white/40">{cleanSnippet(m.snippet)}</span>
                   </span>
                 </button>
               ))}
@@ -674,7 +679,7 @@ export default function Sidebar({
         ).map(([f, label]) => {
           const n =
             f === "unread"
-              ? conversations.filter((c) => c.unreadCount > 0).length
+              ? conversations.filter((c) => c.unreadCount > 0 || unreadMarks.has(c.id)).length
               : f === "all"
               ? conversations.reduce((s, c) => s + c.unreadCount, 0)
               // на папке — сколько чатов этого типа с непрочитанным
@@ -919,7 +924,7 @@ function ConvRow({
 
       <div className="min-w-0 flex-1">
         <div className="flex items-baseline justify-between gap-2">
-          <p className="flex min-w-0 items-center gap-1.5 truncate text-[15px] font-semibold">
+          <p className={`flex min-w-0 items-center gap-1.5 truncate text-[15px] ${markedUnread ? "font-bold" : "font-semibold"}`}>
             <span className="truncate">{conv.title}</span>
             {conv.isPrivate && isSpace && <Lock className="h-3 w-3 shrink-0 text-white/25" />}
             {muted && <BellOff className="h-3 w-3 shrink-0 text-white/25" />}

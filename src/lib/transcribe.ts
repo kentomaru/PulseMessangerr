@@ -7,8 +7,15 @@
  * (~45 МБ) и кэшируется браузером, аудио никуда не отправляется.
  */
 
-/** Небольшая русская модель Vosk. */
-const MODEL_URL = "https://alphacephei.com/vosk/models/vosk-model-small-ru-0.22.zip";
+/**
+ * Небольшая русская модель Vosk.
+ * ПРИОРИТЕТ 1 — та же модель, но разложенная на НАШЕМ сервере
+ * (public/stt/vosk-model-small-ru-0.22.zip → /stt/…). Со своего домена
+ * она грузится без CORS-проблем и не зависит от чужих хостов.
+ * Внешний адрес — только запасной, если на сервере файла пока нет.
+ */
+const MODEL_URL_LOCAL = "/stt/vosk-model-small-ru-0.22.zip";
+const MODEL_URL_FALLBACK = "https://alphacephei.com/vosk/models/vosk-model-small-ru-0.22.zip";
 /** Кэш моделей и распознавателей между вызовами. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let modelPromise: Promise<any> | null = null;
@@ -44,7 +51,14 @@ async function getModel(): Promise<any> {
   if (!modelPromise) {
     modelPromise = (async () => {
       const vosk = await import("vosk-browser");
-      return await vosk.createModel(MODEL_URL);
+      // Сначала пробуем модель со СВОЕГО сервера; если её там нет — запасной хост
+      try {
+        const head = await fetch(MODEL_URL_LOCAL, { method: "HEAD" });
+        if (head.ok) return await vosk.createModel(MODEL_URL_LOCAL);
+      } catch {
+        /* файла на сервере пока нет */
+      }
+      return await vosk.createModel(MODEL_URL_FALLBACK);
     })();
     modelPromise.catch(() => {
       modelPromise = null; // при ошибке пробуем заново в следующий раз

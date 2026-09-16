@@ -222,3 +222,20 @@ export function gifpackId(content: string): string | null {
   const m = /^gifpack:([a-z0-9_]+)$/.exec(t);
   return m ? m[1] : null;
 }
+
+/** Глиф кастомного эмодзи по токену — для превью, подсказок и поиска. */
+const GLYPH_BY_TOKEN: Map<string, string> = new Map(
+  CUSTOM_EMOJI.map((ce) => [
+    ce.token,
+    ce.svg.match(/<text[^>]*>([^<]+)</)?.[1] ?? "⭐",
+  ]),
+);
+
+export function customEmojiGlyph(token: string): string {
+  return GLYPH_BY_TOKEN.get(token) ?? "⭐";
+}
+
+/** Заменить все токены «:ce_x:» на настоящие эмодзи (для текстовых превью). */
+export function replaceCustomEmoji(text: string): string {
+  return text.replace(/:ce_[a-z0-9_]+:/g, (t) => customEmojiGlyph(t));
+}

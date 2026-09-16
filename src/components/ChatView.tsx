@@ -22,6 +22,9 @@ import {
   FileText,
   Film,
   BarChart3,
+  Contact,
+  CheckSquare,
+  MapPin,
   Flame,
   Star,
   Hash,
@@ -77,6 +80,8 @@ import { audioConstraints } from "@/lib/audioSettings";
 import { claimPlayback, releasePlayback } from "@/lib/playback";
 import { EMOJI_CATEGORIES, STICKERS } from "@/lib/emojis";
 import { renderRichText } from "@/lib/richText";
+import { addScheduled, readScheduled, removeScheduled, type ScheduledMsg } from "@/lib/scheduledStore";
+import { parseStoryQuote, type StoryQuoteInfo } from "@/lib/storyQuote";
 import { GIF_PACK, CUSTOM_EMOJI, findGif, gifpackId } from "@/lib/premiumContent";
 import {
   callLogLabel,
@@ -335,7 +340,7 @@ export default function ChatView({
   /** Меню способов отправки: тихо, отложить, быстрые ответы. */
   const [sendMenu, setSendMenu] = useState(false);
   /** Черновик опроса (как в ТГ): вопрос + варианты. */
-  const [pollDraft, setPollDraft] = useState<{ q: string; opts: string[] } | null>(null);
+  const [pollDraft, setPollDraft] = useState<{ q: string; opts: string[]; multi?: boolean; quiz?: number | null } | null>(null);
   /** Избранное как в ТГ Премиум: фильтр по #хэштегам. */
   const [tagFilter, setTagFilter] = useState<string | null>(null);
   /** Эффекты сообщений как в ТГ: одиночный эмодзи взлетает по экрану. */
@@ -378,7 +383,7 @@ export default function ChatView({
   };
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const [scheduleTime, setScheduleTime] = useState("");
-  const [scheduled, setScheduled] = useState<{ id: string; text: string; at: number }[]>([]);
+  const [scheduled, setScheduled] = useState<ScheduledMsg[]>([]);
   const [snippetsOpen, setSnippetsOpen] = useState(false);
   const [snippets, setSnippets] = useState<{ id: string; text: string }[]>(() => {
     try {
@@ -421,6 +426,9 @@ export default function ChatView({
   });
   const [dragOver, setDragOver] = useState(false);
   const [ctxMenu, setCtxMenu] = useState<ContextMenuState | null>(null);
+  /** Режим выделения: галочки у сообщений и массовое удаление. */
+  const [selectMode, setSelectMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [forwarding, setForwarding] = useState<ChatMessage | null>(null);
   /** Сообщение, ожидающее подтверждения удаления (защита от случайных кликов). */
   const [confirmDelete, setConfirmDelete] = useState<ChatMessage | null>(null);
@@ -555,34 +563,14 @@ export default function ChatView({
     return () => clearInterval(t);
   }, [load]);
 
-  // Отложенные сообщения: раз в секунду проверяем, не пора ли отправить
+  // Отложенные сообщения хранятся глобально и отправляются из MessengerApp —
+  // здесь только показываем список для текущего чата.
   useEffect(() => {
-    if (scheduled.length === 0) return;
-    const t = setInterval(() => {
-      const now = Date.now();
-      const due = scheduled.filter((x) => x.at <= now);
-      if (due.length === 0) return;
-      setScheduled((cur) => cur.filter((x) => x.at > now));
-      due.forEach((x) => {
-        api("/api/messages", {
-          method: "POST",
-          body: JSON.stringify({
-            conversationId,
-            type: "text",
-            content: x.text,
-            replyToId: commentFilter?.postId ?? null,
-          }),
-        })
-          .then(() => load())
-          .catch(() => {
-            setText((cur) => (cur ? `${cur}
-${x.text}` : x.text));
-            notify("Не удалось отправить отложенное сообщение — вернул в поле ввода");
-          });
-      });
-    }, 1000);
+    const read = () => setScheduled(readScheduled().filter((x) => x.conversationId === conversationId));
+    read();
+    const t = setInterval(read, 1000);
     return () => clearInterval(t);
-  }, [scheduled, conversationId, commentFilter, load, notify]);
+  }, [conversationId]);
 
   // Черновик (текст + файлы) держим в общем хранилище, чтобы при переключении
   // чатов он не пропадал. Синхронизируем на каждое изменение.
@@ -662,7 +650,13 @@ ${x.text}` : x.text));
       const at = new Date();
       at.setHours(hh, mm, 0, 0);
       if (at.getTime() <= Date.now()) at.setDate(at.getDate() + 1);
-      setScheduled((cur) => [...cur, { id: `sch-${Date.now()}`, text: text.trim(), at: at.getTime() }]);
+      addScheduled({
+        id: `sch-${Date.now()}`,
+        conversationId,
+        text: text.trim(),
+        at: at.getTime(),
+        replyToId: commentFilter?.postId ?? null,
+      });
       setText("");
       setScheduleOpen(false);
       setScheduleTime("");
@@ -1004,6 +998,30 @@ ${x.text}` : x.text));
     setConfirmDelete(message);
   }, []);
 
+  /** Режим выделения: отметить/снять одно сообщение. */
+  const toggleSelect = useCallback((id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  /** Массовое удаление выбранных сообщений. */
+  const bulkDelete = useCallback(async () => {
+    const ids = [...selectedIds];
+    if (ids.length === 0) return;
+    setSelectMode(false);
+    setSelectedIds(new Set());
+    for (const id of ids) {
+      await api(`/api/messages/${id}`, { method: "DELETE" }).catch(() => {});
+    }
+    await load();
+    refreshConversations();
+    notify(`Удалено сообщений: ${ids.length}`);
+  }, [selectedIds, load, refreshConversations, notify]);
+
   /** Недавно загруженные стикеры (гифки) — переживают перезагрузку. */
   const RECENT_STICKERS_KEY = "pulse_recent_stickers_v1";
   const [recentStickers, setRecentStickers] = useState<string[]>(() => {
@@ -1344,7 +1362,13 @@ ${x.text}` : x.text));
 
   const copyMessage = async (m: ChatMessage) => {
     const att = parseAttachment(m.type, m.content);
-    const value = m.type === "text" ? m.content : (att?.caption ?? att?.url ?? "");
+    let value = m.type === "text" ? m.content : (att?.caption ?? att?.url ?? "");
+    // Служебные префиксы (опрос, цитата истории, визитка…) при копировании не нужны
+    const sq = parseStoryQuote(value);
+    if (sq) value = sq.text;
+    else if (value.startsWith("poll:")) value = "";
+    else if (value.startsWith("contact:") || value.startsWith("location:")) value = "";
+    else if (value.startsWith("gifpack:")) value = "";
     if (!value) return;
     const ok = await copyToClipboard(value);
     notify(ok ? "Скопировано" : "Не удалось скопировать");
@@ -1463,6 +1487,9 @@ ${x.text}` : x.text));
   };
 
   const headerSubtitle = () => {
+    if (voiceRecActive) {
+      return { text: "записывает голосовое…", accent: true };
+    }
     if (typingMembers.length > 0) {
       const names = typingMembers.map((m) => m.user.displayName.split(" ")[0]);
       return {
@@ -1969,8 +1996,24 @@ ${x.text}` : x.text));
                 <div
                   key={m.id}
                   data-mid={m.id}
-                  className={mentionMe ? "rounded-xl bg-[#5865f2]/10 ring-1 ring-[#5865f2]/25" : undefined}
+                  className={`relative ${mentionMe ? "rounded-xl bg-[#5865f2]/10 ring-1 ring-[#5865f2]/25" : ""}`}
                 >
+                  {selectMode && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        toggleSelect(m.id);
+                      }}
+                      title={selectedIds.has(m.id) ? "Снять отметку" : "Отметить"}
+                      className={`absolute top-1/2 -left-7 grid h-5 w-5 -translate-y-1/2 place-items-center rounded-md border transition-colors ${
+                        selectedIds.has(m.id)
+                          ? "border-[#5865f2] bg-[#5865f2]"
+                          : "border-white/30 bg-black/20 hover:border-white/60"
+                      }`}
+                    >
+                      {selectedIds.has(m.id) && <Check className="h-3 w-3 text-white" />}
+                    </button>
+                  )}
                   {unreadBefore === m.id && (
                     <div className="flex items-center gap-3 py-2">
                       <span className="h-px flex-1 bg-rose-400/30" />
@@ -2143,6 +2186,30 @@ ${x.text}` : x.text));
           <AnimatePresence>
             {/* (ниже очередь отложенных) */}
           {/* Отложенные сообщения — очередь с возможностью отмены */}
+          {selectMode && (
+            <div className="glass mb-1.5 flex items-center gap-2 rounded-2xl px-3.5 py-2">
+              <p className="flex-1 text-[12px] font-semibold text-white/70">
+                Выбрано: {selectedIds.size}
+              </p>
+              <button
+                onClick={() => void bulkDelete()}
+                disabled={selectedIds.size === 0}
+                className="flex items-center gap-1.5 rounded-xl bg-rose-500/20 px-3 py-1.5 text-[12px] font-semibold text-rose-300 hover:bg-rose-500/30 disabled:opacity-40"
+              >
+                <Trash2 className="h-3.5 w-3.5" /> Удалить
+              </button>
+              <button
+                onClick={() => {
+                  setSelectMode(false);
+                  setSelectedIds(new Set());
+                }}
+                className="rounded-xl px-3 py-1.5 text-[12px] text-white/50 hover:bg-white/10 hover:text-white"
+              >
+                Отмена
+              </button>
+            </div>
+          )}
+
           {scheduled.length > 0 && (
             <div className="glass mb-1.5 rounded-2xl px-3.5 py-2">
               <p className="pb-1 text-[11px] font-semibold tracking-wide text-white/40 uppercase">
@@ -2156,7 +2223,7 @@ ${x.text}` : x.text));
                   </span>
                   <span className="min-w-0 flex-1 truncate text-white/65">{x.text}</span>
                   <button
-                    onClick={() => setScheduled((cur) => cur.filter((y) => y.id !== x.id))}
+                    onClick={() => removeScheduled(x.id)}
                     className="text-white/30 hover:text-rose-300"
                     title="Отменить"
                   >
@@ -2216,6 +2283,19 @@ ${x.text}` : x.text));
               />
               {pollDraft.opts.map((o, i) => (
                 <div key={i} className="mb-1.5 flex items-center gap-1.5">
+                  {pollDraft.quiz != null && (
+                    <button
+                      onClick={() => setPollDraft({ ...pollDraft, quiz: pollDraft.quiz === i ? null : i })}
+                      title={pollDraft.quiz === i ? "Правильный ответ" : "Отметить правильным"}
+                      className={`grid h-6 w-6 shrink-0 place-items-center rounded-lg border ${
+                        pollDraft.quiz === i
+                          ? "border-emerald-400/70 bg-emerald-400/20 text-emerald-300"
+                          : "border-white/15 text-white/25 hover:text-emerald-300"
+                      }`}
+                    >
+                      <Check className="h-3 w-3" />
+                    </button>
+                  )}
                   <input
                     value={o}
                     onChange={(e) => {
@@ -2238,6 +2318,26 @@ ${x.text}` : x.text));
                   )}
                 </div>
               ))}
+              <div className="mt-1 flex flex-wrap items-center gap-3">
+                <label className="flex cursor-pointer items-center gap-1.5 text-[12px] text-white/55">
+                  <input
+                    type="checkbox"
+                    checked={!!pollDraft.multi}
+                    onChange={(e) => setPollDraft({ ...pollDraft, multi: e.target.checked, quiz: e.target.checked ? null : pollDraft.quiz })}
+                    className="accent-[#5865f2]"
+                  />
+                  Несколько ответов
+                </label>
+                <label className="flex cursor-pointer items-center gap-1.5 text-[12px] text-white/55">
+                  <input
+                    type="checkbox"
+                    checked={pollDraft.quiz != null || false}
+                    onChange={(e) => setPollDraft({ ...pollDraft, quiz: e.target.checked ? 0 : null, multi: e.target.checked ? false : pollDraft.multi })}
+                    className="accent-emerald-400"
+                  />
+                  Викторина (один правильный)
+                </label>
+              </div>
               <div className="mt-2 flex items-center gap-2">
                 {pollDraft.opts.length < 10 && (
                   <button
@@ -2256,7 +2356,7 @@ ${x.text}` : x.text));
                       return;
                     }
                     setPollDraft(null);
-                    void send(`poll:${JSON.stringify({ q, opts })}`);
+                    void send(`poll:${JSON.stringify({ q, opts, multi: pollDraft.multi ?? false, quiz: pollDraft.quiz ?? null })}`);
                   }}
                   className="btn-gradient ml-auto rounded-xl px-4 py-1.5 text-[12px] font-semibold"
                 >
@@ -2493,6 +2593,43 @@ ${x.text}` : x.text));
                           className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-left text-[13px] text-white/75 hover:bg-white/10"
                         >
                           <BarChart3 className="h-4 w-4 text-white/45" /> Опрос…
+                        </button>
+                      )}
+                      {canPost && (
+                        <button
+                          onClick={() => {
+                            setSendMenu(false);
+                            void send(`contact:${JSON.stringify({ name: me.displayName, username: me.username, avatar: me.avatarUrl ?? "" })}`);
+                          }}
+                          className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-left text-[13px] text-white/75 hover:bg-white/10"
+                        >
+                          <Contact className="h-4 w-4 text-white/45" /> Моя визитка
+                        </button>
+                      )}
+                      {canPost && (
+                        <button
+                          onClick={() => {
+                            setSendMenu(false);
+                            if (!navigator.geolocation) {
+                              notify("Геолокация недоступна в этом браузере");
+                              return;
+                            }
+                            notify("Определяем местоположение…");
+                            navigator.geolocation.getCurrentPosition(
+                              (pos) =>
+                                void send(
+                                  `location:${JSON.stringify({
+                                    lat: +pos.coords.latitude.toFixed(6),
+                                    lon: +pos.coords.longitude.toFixed(6),
+                                  })}`,
+                                ),
+                              () => notify("Не удалось определить местоположение"),
+                              { timeout: 10000 },
+                            );
+                          }}
+                          className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-left text-[13px] text-white/75 hover:bg-white/10"
+                        >
+                          <MapPin className="h-4 w-4 text-white/45" /> Моё местоположение
                         </button>
                       )}
                       {canPost && (
@@ -2882,6 +3019,11 @@ ${x.text}` : x.text));
               void copyMessage(ctxMenu.message);
               setCtxMenu(null);
             }}
+            onSelectMode={() => {
+              setSelectMode(true);
+              setSelectedIds(new Set([ctxMenu.message.id]));
+              setCtxMenu(null);
+            }}
             onForward={() => {
               setForwarding(ctxMenu.message);
               setCtxMenu(null);
@@ -2973,6 +3115,7 @@ function MessageContextMenu({
   onPin,
   onCopy,
   onForward,
+  onSelectMode,
   onSave,
   onCopyLink,
   onDelete,
@@ -2990,6 +3133,8 @@ function MessageContextMenu({
   onPin: () => void;
   onCopy: () => void;
   onForward: () => void;
+  /** Включить режим выделения сообщений. */
+  onSelectMode?: () => void;
   /** Быстрое сохранение в «Избранное». */
   onSave: () => void;
   /** Скопировать ссылку на сообщение. */
@@ -3065,6 +3210,9 @@ function MessageContextMenu({
         </div>
       )}
       <ContextItem icon={<Reply className="h-4 w-4 text-slate-400" />} label="Ответить" onClick={onReply} />
+      {onSelectMode && (
+        <ContextItem icon={<CheckSquare className="h-4 w-4 text-sky-300" />} label="Выбрать сообщения" onClick={onSelectMode} />
+      )}
       {canPin && (
         <ContextItem
           icon={
@@ -3564,6 +3712,72 @@ function SpoilerImage({
   );
 }
 
+/** Визитка: карточка контакта с аватаром (клик — открыть профиль по @юзернейму). */
+function ContactCard({ name, username, avatar, onOpenUsername }: { name: string; username: string; avatar: string; onOpenUsername?: (name: string) => void }) {
+  return (
+    <button
+      onClick={() => {
+        if (username) onOpenUsername?.(username);
+      }}
+      className="mb-0.5 flex w-full items-center gap-2.5 rounded-xl border border-white/10 bg-black/25 p-2 text-left select-none"
+      title={username ? `Открыть @${username}` : "Контакт"}
+    >
+      <Avatar name={name} src={avatar || null} size={40} />
+      <span className="min-w-0">
+        <span className="block truncate text-[13px] font-semibold text-white/90">{name}</span>
+        {username && <span className="block truncate text-[11px] text-white/45">@{username}</span>}
+      </span>
+    </button>
+  );
+}
+
+/** Местоположение: карточка с координатами и ссылкой на карту. */
+function LocationCard({ lat, lon }: { lat: number; lon: number }) {
+  const url = `https://www.openstreetmap.org/?mlat=${lat}&mlon=${lon}#map=16/${lat}/${lon}`;
+  return (
+    <a
+      href={url}
+      target="_blank"
+      rel="noreferrer"
+      className="mb-0.5 flex w-full items-center gap-2.5 rounded-xl border border-white/10 bg-black/25 p-2 select-none hover:bg-black/35"
+      title="Открыть на карте"
+    >
+      <span className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-emerald-500/20">
+        <MapPin className="h-4.5 w-4.5 text-emerald-300" />
+      </span>
+      <span className="min-w-0">
+        <span className="block text-[13px] font-semibold text-white/90">Местоположение</span>
+        <span className="block truncate text-[11px] text-white/45 tabular-nums">{lat.toFixed(4)}, {lon.toFixed(4)}</span>
+      </span>
+    </a>
+  );
+}
+
+/** Цитата истории в ответе — мини-карточка с кадром и подписью. */
+function StoryQuoteCard({ quote }: { quote: StoryQuoteInfo }) {
+  return (
+    <div className="mb-1.5 flex items-center gap-2.5 overflow-hidden rounded-xl border border-white/10 bg-black/25 p-2 select-none">
+      <div className="relative h-12 w-12 shrink-0 overflow-hidden rounded-lg bg-black/40">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={quote.url} alt="" className="h-full w-full object-cover" loading="lazy" />
+        {quote.video && (
+          <span className="absolute inset-0 grid place-items-center bg-black/30">
+            <span className="text-[10px] text-white/90">▶</span>
+          </span>
+        )}
+      </div>
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-[12px] font-semibold text-white/85">
+          История{quote.author ? ` от ${quote.author}` : ""}
+        </p>
+        <p className="truncate text-[11px] text-white/45">
+          {quote.caption ? quote.caption : quote.video ? "Видео-история" : "Фото-история"}
+        </p>
+      </div>
+    </div>
+  );
+}
+
 /** Длинные сообщения сворачиваются — разворачиваются по кнопке. */
 function LongText({
   content,
@@ -3873,13 +4087,36 @@ function MessageBubble({
             /* «Стикер»: только эмодзи — крупно, без пузыря (как в мессенджерах) */
             <p className="py-0.5 text-[52px] leading-none select-none">{message.content.trim()}</p>
           ) : poll ? (
-            <PollCard msgId={message.id} q={poll.q} opts={poll.opts} />
-          ) : (
-            <>
-              <LongText content={message.content} meUsername={meUsername} onOpenUsername={onOpenUsername} />
-              {message.type === "text" && <LinkPreview text={message.content} />}
-            </>
-          )}
+            <PollCard msgId={message.id} q={poll.q} opts={poll.opts} multi={!!poll.multi} quiz={poll.quiz ?? null} />
+          ) : (() => {
+            if (message.type === "text" && message.content.startsWith("contact:")) {
+              try {
+                const c = JSON.parse(message.content.slice(8)) as { name?: string; username?: string; avatar?: string };
+                return <ContactCard name={c.name ?? "Контакт"} username={c.username ?? ""} avatar={c.avatar ?? ""} onOpenUsername={onOpenUsername} />;
+              } catch { /* мусор — покажем как текст */ }
+            }
+            if (message.type === "text" && message.content.startsWith("location:")) {
+              try {
+                const l = JSON.parse(message.content.slice(9)) as { lat?: number; lon?: number };
+                if (typeof l.lat === "number" && typeof l.lon === "number") return <LocationCard lat={l.lat} lon={l.lon} />;
+              } catch { /* мусор */ }
+            }
+            const sq = message.type === "text" ? parseStoryQuote(message.content) : null;
+            if (!sq) {
+              return (
+                <>
+                  <LongText content={message.content} meUsername={meUsername} onOpenUsername={onOpenUsername} />
+                  {message.type === "text" && <LinkPreview text={message.content} />}
+                </>
+              );
+            }
+            return (
+              <>
+                <StoryQuoteCard quote={sq.quote} />
+                {sq.text && <LongText content={sq.text} meUsername={meUsername} onOpenUsername={onOpenUsername} />}
+              </>
+            );
+          })()}
         </div>
 
         {/* Комментарии канала — пузырь-кнопка как в Telegram */}
@@ -4268,15 +4505,18 @@ function VideoNoteBubble({ url, duration }: { url: string; duration: number }) {
 
 /* ─────────────────────────── карточка файла ─────────────────────────── */
 
-/** Опрос как в ТГ: вопрос, варианты, проценты после голоса. Голоса считаются локально. */
-function PollCard({ msgId, q, opts }: { msgId: string; q: string; opts: string[] }) {
-  const [myVote, setMyVote] = useState<number | null>(() => {
+/** Опрос/викторина как в ТГ: обычный, «несколько ответов» и викторина с правильным ответом. */
+function PollCard({ msgId, q, opts, multi, quiz }: { msgId: string; q: string; opts: string[]; multi: boolean; quiz: number | null }) {
+  const [myVotes, setMyVotes] = useState<number[]>(() => {
     try {
-      const all = JSON.parse(localStorage.getItem("pulse_poll_votes_v1") ?? "{}") as Record<string, number>;
-      return typeof all[msgId] === "number" ? all[msgId] : null;
+      const all = JSON.parse(localStorage.getItem("pulse_poll_votes_v1") ?? "{}") as Record<string, number | number[]>;
+      const v = all[msgId];
+      if (typeof v === "number") return [v];
+      if (Array.isArray(v)) return v.filter((x) => typeof x === "number");
     } catch {
-      return null;
+      /* ignore */
     }
+    return [];
   });
   const [counts, setCounts] = useState<number[]>(() => {
     try {
@@ -4288,80 +4528,127 @@ function PollCard({ msgId, q, opts }: { msgId: string; q: string; opts: string[]
     }
     return opts.map(() => 0);
   });
+  const [pending, setPending] = useState<number[]>([]);
+  const voted = myVotes.length > 0;
   const total = counts.reduce((sum, n) => sum + n, 0);
-  const vote = (i: number) => {
-    if (myVote != null) return;
-    const next = [...counts];
-    next[i] += 1;
-    setCounts(next);
-    setMyVote(i);
+  const persist = (votes: number[], nextCounts: number[]) => {
     try {
-      const votes = JSON.parse(localStorage.getItem("pulse_poll_votes_v1") ?? "{}") as Record<string, number>;
-      votes[msgId] = i;
-      localStorage.setItem("pulse_poll_votes_v1", JSON.stringify(votes));
-      const all = JSON.parse(localStorage.getItem("pulse_poll_counts_v1") ?? "{}") as Record<string, number[]>;
-      all[msgId] = next;
-      localStorage.setItem("pulse_poll_counts_v1", JSON.stringify(all));
+      const all = JSON.parse(localStorage.getItem("pulse_poll_votes_v1") ?? "{}") as Record<string, unknown>;
+      all[msgId] = multi ? votes : votes[0];
+      localStorage.setItem("pulse_poll_votes_v1", JSON.stringify(all));
+      const c = JSON.parse(localStorage.getItem("pulse_poll_counts_v1") ?? "{}") as Record<string, number[]>;
+      c[msgId] = nextCounts;
+      localStorage.setItem("pulse_poll_counts_v1", JSON.stringify(c));
     } catch {
       /* приватный режим */
     }
   };
+  const click = (i: number) => {
+    if (voted) return;
+    if (multi) {
+      setPending((cur) => (cur.includes(i) ? cur.filter((x) => x !== i) : [...cur, i]));
+      return;
+    }
+    const next = [...counts];
+    next[i] += 1;
+    setCounts(next);
+    setMyVotes([i]);
+    persist([i], next);
+  };
+  const commitMulti = () => {
+    if (pending.length === 0) return;
+    const next = [...counts];
+    for (const i of pending) next[i] += 1;
+    setCounts(next);
+    setMyVotes(pending);
+    setPending([]);
+    persist(pending, next);
+  };
   return (
     <div className="w-[min(78vw,340px)] py-0.5">
       <p className="mb-0.5 flex items-center gap-1.5 text-[11px] text-white/40">
-        <BarChart3 className="h-3 w-3" /> Опрос
+        <BarChart3 className="h-3 w-3" /> {quiz != null ? "Викторина" : multi ? "Опрос · несколько ответов" : "Опрос"}
       </p>
       <p className="mb-2 text-[15px] font-semibold break-words">{q}</p>
       <div className="flex flex-col gap-1.5">
         {opts.map((o, i) => {
           const pct = total > 0 ? Math.round((counts[i] / total) * 100) : 0;
-          const chosen = myVote === i;
+          const chosen = myVotes.includes(i) || (!voted && multi && pending.includes(i));
+          const isRight = quiz === i;
+          const chosenWrong = voted && quiz != null && myVotes.includes(i) && !isRight;
           return (
             <button
               key={i}
-              onClick={() => vote(i)}
-              disabled={myVote != null}
+              onClick={() => click(i)}
+              disabled={voted}
               className={`relative overflow-hidden rounded-xl border px-3 py-2 text-left text-[13px] transition-colors ${
                 chosen
-                  ? "border-[#5865f2]/60 text-white"
-                  : "border-white/10 text-white/80 " + (myVote == null ? "hover:bg-white/8" : "")
+                  ? isRight && voted
+                    ? "border-emerald-400/60 text-white"
+                    : chosenWrong
+                    ? "border-rose-400/60 text-white"
+                    : "border-[#5865f2]/60 text-white"
+                  : "border-white/10 text-white/80 " + (!voted ? "hover:bg-white/8" : "")
               }`}
             >
-              {myVote != null && (
+              {voted && (
                 <span
-                  className="absolute inset-y-0 left-0 bg-[#5865f2]/25 transition-all"
+                  className={`absolute inset-y-0 left-0 transition-all ${isRight && quiz != null ? "bg-emerald-400/20" : "bg-[#5865f2]/25"}`}
                   style={{ width: `${pct}%` }}
                 />
               )}
               <span className="relative flex items-center gap-2">
                 <span
-                  className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full border ${
-                    chosen ? "border-[#5865f2] bg-[#5865f2]" : "border-white/30"
+                  className={`flex h-4 w-4 shrink-0 items-center justify-center ${multi || quiz != null ? "rounded-md" : "rounded-full"} border ${
+                    chosen
+                      ? isRight && voted
+                        ? "border-emerald-400 bg-emerald-400"
+                        : chosenWrong
+                        ? "border-rose-400 bg-rose-400"
+                        : "border-[#5865f2] bg-[#5865f2]"
+                      : "border-white/30"
                   }`}
                 >
-                  {chosen && <Check className="h-2.5 w-2.5 text-white" />}
+                  {chosen && (chosenWrong ? <X className="h-2.5 w-2.5 text-white" /> : <Check className="h-2.5 w-2.5 text-white" />)}
+                  {!chosen && voted && quiz != null && isRight && <Check className="h-2.5 w-2.5 text-emerald-300" />}
                 </span>
                 <span className="min-w-0 flex-1 break-words">{o}</span>
-                {myVote != null && <span className="shrink-0 text-[11px] text-white/45 tabular-nums">{pct}%</span>}
+                {voted && <span className="shrink-0 text-[11px] text-white/45 tabular-nums">{pct}%</span>}
               </span>
             </button>
           );
         })}
       </div>
+      {!voted && multi && pending.length > 0 && (
+        <button onClick={commitMulti} className="btn-gradient mt-2 rounded-xl px-4 py-1.5 text-[12px] font-semibold">
+          Проголосовать ({pending.length})
+        </button>
+      )}
       <p className="mt-1.5 text-[11px] text-white/35 tabular-nums">
-        {total > 0 ? `Проголосовало: ${total}` : "Проголосуйте — результаты появятся сразу"}
+        {voted && quiz != null
+          ? myVotes.includes(quiz)
+            ? "Верно! 🎉"
+            : "Неверно — правильный ответ подсвечен"
+          : total > 0
+          ? `Проголосовало: ${total}`
+          : "Проголосуйте — результаты появятся сразу"}
       </p>
     </div>
   );
 }
 
 /** Разобрать сообщение-опрос вида «poll:{json}». */
-function parsePoll(content: string): { q: string; opts: string[] } | null {
+function parsePoll(content: string): { q: string; opts: string[]; multi?: boolean; quiz?: number | null } | null {
   if (!content.startsWith("poll:")) return null;
   try {
-    const p = JSON.parse(content.slice(5)) as { q?: unknown; opts?: unknown };
+    const p = JSON.parse(content.slice(5)) as { q?: unknown; opts?: unknown; multi?: unknown; quiz?: unknown };
     if (typeof p.q === "string" && Array.isArray(p.opts) && p.opts.every((o) => typeof o === "string"))
-      return { q: p.q, opts: p.opts.slice(0, 10) };
+      return {
+        q: p.q,
+        opts: p.opts.slice(0, 10),
+        multi: p.multi === true,
+        quiz: typeof p.quiz === "number" ? p.quiz : null,
+      };
   } catch {
     /* не опрос */
   }

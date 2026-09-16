@@ -11,6 +11,7 @@
  * Безопасность: всё собирается в React-элементы, никакого HTML/innerHTML;
  * ссылки — только http/https и с rel="noopener noreferrer".
  */
+import { replaceCustomEmoji } from "./premiumContent";
 import { useState, type ReactNode } from "react";
 import { Check, Copy } from "lucide-react";
 import { findCustomEmoji } from "./premiumContent";
@@ -226,6 +227,20 @@ export function renderRichText(
 
 /** Убирает разметку — для превью в цитатах и сайдбаре. */
 export function stripMarkdown(text: string): string {
+  if (text.startsWith("contact:")) {
+    try {
+      const c = JSON.parse(text.slice(8)) as { name?: unknown };
+      if (typeof c.name === "string" && c.name) return `Контакт · ${c.name.slice(0, 30)}`;
+    } catch { /* не распарсилось */ }
+    return "Контакт";
+  }
+  if (text.startsWith("location:")) return "Местоположение";
+  // Ответ на историю — показываем текст ответа, а не служебный JSON
+  if (text.startsWith("storyquote:")) {
+    const nl = text.indexOf("\n");
+    const rest = nl === -1 ? "" : text.slice(nl + 1);
+    return rest.trim() ? rest : "Ответ на историю";
+  }
   // Опросы в превью — просто «Опрос», без сырого JSON
   if (text.startsWith("poll:")) {
     try {
@@ -236,8 +251,7 @@ export function stripMarkdown(text: string): string {
     }
     return "Опрос";
   }
-  return text
-    .replace(/:ce_([a-z0-9_]+):/g, "⭐")
+  return replaceCustomEmoji(text)
     .replace(/```([\s\S]*?)```/g, "$1")
     .replace(/`([^`]+)`/g, "$1")
     .replace(/\*\*([^*]+)\*\*/g, "$1")

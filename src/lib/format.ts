@@ -1,5 +1,5 @@
 import type { AttachmentInfo, CallLogInfo } from "@/lib/types";
-import { gifpackId, findGif } from "./premiumContent";
+import { gifpackId, findGif, replaceCustomEmoji } from "./premiumContent";
 
 export function timeHHmm(iso: string | Date) {
   const d = new Date(iso);
@@ -150,6 +150,8 @@ export function legacyAttachmentKind(att: AttachmentInfo | null): "voice" | "vid
 export type PreviewKind = "call" | "image" | "voice" | "video" | "file" | null;
 
 /** Разобрать сообщение на «иконку» и чистый текст превью (без эмодзи). */
+import { parseStoryQuote } from "./storyQuote";
+
 export function previewInfo(type: string, content: string): { kind: PreviewKind; text: string } {
   if (type === "call") {
     const info = parseCallContent(content);
@@ -167,6 +169,25 @@ export function previewInfo(type: string, content: string): { kind: PreviewKind;
     } catch {
       return { kind: null, text: "Опрос" };
     }
+  }
+  // Визитка («contact:{...}») и местоположение («location:{...}»)
+  if (type === "text" && content.startsWith("contact:")) {
+    try {
+      const c = JSON.parse(content.slice(8)) as { name?: unknown };
+      const name = typeof c.name === "string" && c.name ? ` · ${c.name.slice(0, 30)}` : "";
+      return { kind: null, text: `Контакт${name}` };
+    } catch {
+      return { kind: null, text: "Контакт" };
+    }
+  }
+  if (type === "text" && content.startsWith("location:")) {
+    return { kind: null, text: "Местоположение" };
+  }
+  // Ответ на историю («storyquote:{...}»): показываем сам текст ответа
+  if (type === "text" && content.startsWith("storyquote:")) {
+    const sq = parseStoryQuote(content);
+    if (sq) return { kind: null, text: sq.text.replace(/\n/g, " ").slice(0, 60) || "Ответ на историю" };
+    return { kind: null, text: "Ответ на историю" };
   }
   const att = parseAttachment(type, content);
   if (att) {
@@ -192,7 +213,12 @@ export function previewInfo(type: string, content: string): { kind: PreviewKind;
       return { kind: "file", text: `${att.name ?? "Файл"}${caption}` };
     }
   }
-  return { kind: null, text: content.replace(/\n/g, " ").slice(0, 80) };
+  return {
+    kind: null,
+    // Токены кастомных эмодзи («:ce_x:») в превью заменяем на сами эмодзи —
+    // та же проблема, что была с опросами: служебный текст не должен светиться.
+    text: replaceCustomEmoji(content).replace(/\n/g, " ").slice(0, 80),
+  };
 }
 
 /** Короткая строка-превью сообщения (уведомления, title — только текст, без эмодзи). */
@@ -224,4 +250,27 @@ export function formatBytes(bytes: number | undefined): string {
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} КБ`;
   if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1).replace(".", ",")} МБ`;
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(2).replace(".", ",")} ГБ`;
+}
+
+
+/** Сниппет из поиска: прячем служебные префиксы и токены кастомных эмодзи. */
+export function cleanSnippet(snippet: string): string {
+  if (snippet.startsWith("poll:")) {
+    try {
+      const p = JSON.parse(snippet.slice(5)) as { q?: unknown };
+      const q = typeof p.q === "string" ? p.q : "";
+      return q ? `Опрос · ${q}` : "Опрос";
+    } catch {
+      return "Опрос";
+    }
+  }
+  if (snippet.startsWith("contact:")) return "Контакт";
+  if (snippet.startsWith("location:")) return "Местоположение";
+  if (snippet.startsWith("storyquote:")) {
+    const nl = snippet.indexOf("\n");
+    const rest = nl === -1 ? "" : snippet.slice(nl + 1);
+    return rest.trim() || "Ответ на историю";
+  }
+  if (snippet.startsWith("gifpack:")) return "ГИФ-анимация";
+  return replaceCustomEmoji(snippet);
 }

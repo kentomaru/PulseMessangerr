@@ -296,8 +296,8 @@ export default function GroupInfoModal({
 
   return (
     <ModalShell onClose={onClose} wide>
-      {/* Шапка */}
-      <div className="relative">
+      {/* Шапка — прилипает сверху, чтобы кнопка «Ссылка» (приглашение) была видна всегда */}
+      <div className="sticky top-0 z-20 rounded-t-[1.8rem] [background:var(--glass-strong)]">
         <div className="flex items-start gap-4 px-6 pt-6">
           <div className="relative">
             <Avatar name={info.title} src={avatarUrl} size={72} />

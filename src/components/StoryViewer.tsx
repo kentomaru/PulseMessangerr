@@ -2,9 +2,10 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { ChevronLeft, ChevronRight, Eye, ImageOff, Loader2, Trash2, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Eye, ImageOff, Loader2, Reply, Send, Trash2, X } from "lucide-react";
 import Avatar from "./Avatar";
 import { api } from "@/lib/api";
+import { encodeStoryQuote } from "@/lib/storyQuote";
 import { timeAgo } from "@/lib/format";
 import type { PublicUser, StoryGroup, StoryItem } from "@/lib/types";
 
@@ -17,6 +18,8 @@ type Props = {
   onDeleted: (storyId: string) => void;
   /** Открыть карточку пользователя (автор истории или зритель). */
   onViewUser?: (user: PublicUser) => void;
+  /** Ответ на историю отправлен — обновить список чатов. */
+  onReplied?: () => void;
 };
 
 type Viewer = { user: PublicUser; viewedAt: string };
@@ -32,6 +35,7 @@ export default function StoryViewer({
   onWatched,
   onDeleted,
   onViewUser,
+  onReplied,
 }: Props) {
   const [gi, setGi] = useState(startGroupIndex);
   const [si, setSi] = useState(0);
@@ -43,15 +47,22 @@ export default function StoryViewer({
   /** Повторная попытка загрузки медиа (кэш/сеть моргнули). */
   const [mediaRetried, setMediaRetried] = useState(false);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** Ответ на историю (только для чужих историй). */
+  const [replyText, setReplyText] = useState("");
+  const [replyBusy, setReplyBusy] = useState(false);
+  const [replySent, setReplySent] = useState(false);
+  const replyRef = useRef<HTMLInputElement | null>(null);
 
   const group = groups[gi];
   const story: StoryItem | undefined = group?.stories[si];
   const isMine = group?.user.id === me.id;
 
-  // Новая история — сбрасываем флаг «файл побит»
+  // Новая история — сбрасываем флаг «файл побит» и состояние ответа
   useEffect(() => {
     setMediaBroken(false);
     setMediaRetried(false);
+    setReplyText("");
+    setReplySent(false);
   }, [story?.id]);
 
   // URL с «анти-кэш» суффиксом для второй попытки загрузки
@@ -101,7 +112,9 @@ export default function StoryViewer({
   // клавиатура
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      const typing = document.activeElement === replyRef.current;
       if (e.key === "Escape") onClose();
+      if (typing) return;
       if (e.key === "ArrowRight") next();
       if (e.key === "ArrowLeft") prev();
     };
@@ -118,6 +131,40 @@ export default function StoryViewer({
       setViewers(d.views);
     } catch {
       setViewers([]);
+    }
+  };
+
+  /** Ответить на историю: создаём/находим личку с автором и шлём цитату + текст. */
+  const sendReply = async () => {
+    if (!group || !story || replyBusy || !replyText.trim()) return;
+    setReplyBusy(true);
+    try {
+      const conv = await api<{ conversation: { id: string } }>("/api/conversations", {
+        method: "POST",
+        body: JSON.stringify({ userId: group.user.id }),
+      });
+      const quote = {
+        url: story.mediaUrl,
+        video: storyIsVideo,
+        caption: story.caption || undefined,
+        author: group.user.displayName,
+        at: story.createdAt,
+      };
+      await api("/api/messages", {
+        method: "POST",
+        body: JSON.stringify({
+          conversationId: conv.conversation.id,
+          type: "text",
+          content: encodeStoryQuote(quote, replyText.trim()),
+        }),
+      });
+      setReplyText("");
+      setReplySent(true);
+      onReplied?.();
+    } catch {
+      /* сеть/блок — молча, попробуют ещё раз */
+    } finally {
+      setReplyBusy(false);
     }
   };
 
@@ -228,8 +275,19 @@ export default function StoryViewer({
         {/* Изображение или видео */}
         <div className="relative min-h-0 flex-1 px-3 pb-4">
           {/* key по истории: при переходе к чужой истории медиа пересоздаётся,
-              иначе браузер мог на мгновение показать КАДР И АВАТАР предыдущей. */}
-          <div key={story.id} className="relative h-full overflow-hidden rounded-3xl bg-black/40">
+              иначе браузер мог на мгновение показать КАДР И АВАТАР предыдущей.
+              Зажал пальцем/мышью — история на паузе (как в ТГ/Инстаграме). */}
+          <div
+            key={story.id}
+            className="relative h-full overflow-hidden rounded-3xl bg-black/40"
+            onPointerDown={() => setPaused(true)}
+            onPointerUp={() => {
+              if (document.activeElement !== replyRef.current) setPaused(false);
+            }}
+            onPointerLeave={() => {
+              if (document.activeElement !== replyRef.current) setPaused(false);
+            }}
+          >
             {/* Подложка: то же фото, растянутое и размытое — кадр заполняет
                 экран целиком и не выглядит «маленькой картинкой в пустоте». */}
             {!storyIsVideo && !mediaBroken && (
@@ -329,6 +387,43 @@ export default function StoryViewer({
             <ChevronRight className="h-5 w-5" />
           </button>
         </div>
+
+        {/* Ответ на историю — как в ТГ: строка ввода под кадром */}
+        {!isMine && (
+          <div className="flex items-center gap-2 px-4 pt-1 pb-4">
+            <button
+              onClick={() => replyRef.current?.focus()}
+              title="Ответить на историю"
+              className="glass-strong grid h-10 w-10 shrink-0 place-items-center rounded-full text-white/70 hover:text-white"
+            >
+              <Reply className="h-4 w-4" />
+            </button>
+            <input
+              ref={replyRef}
+              value={replyText}
+              onChange={(e) => setReplyText(e.target.value)}
+              onFocus={() => setPaused(true)}
+              onBlur={() => {
+                if (!replyText.trim()) setPaused(false);
+              }}
+              onKeyDown={(e) => {
+                e.stopPropagation();
+                if (e.key === "Enter") void sendReply();
+              }}
+              maxLength={4096}
+              placeholder={replySent ? "Ответ отправлен ✓" : "Ответить на историю…"}
+              className="glass-strong ring-focus min-w-0 flex-1 rounded-full px-4 py-2.5 text-sm text-white placeholder:text-white/40"
+            />
+            <button
+              onClick={() => void sendReply()}
+              disabled={replyBusy || !replyText.trim()}
+              title="Отправить ответ"
+              className="btn-gradient grid h-10 w-10 shrink-0 place-items-center rounded-full text-white disabled:opacity-40"
+            >
+              {replyBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Список просмотров */}

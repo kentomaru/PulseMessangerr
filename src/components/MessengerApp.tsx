@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { CheckCircle2, PanelLeftOpen, Keyboard, MessageSquareText } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
+import { readScheduled, removeScheduled } from "@/lib/scheduledStore";
 import { messagePreview } from "@/lib/format";
 import { playNotifySound } from "@/lib/notify";
 import type { ConversationListItem, PublicUser, StoryGroup } from "@/lib/types";
@@ -166,6 +167,33 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
       clearInterval(ts);
     };
   }, [loadConversations, loadStories]);
+
+  // Отложенные сообщения: каждую секунду отправляем подошедшие по времени —
+  // работает независимо от того, какой чат открыт.
+  useEffect(() => {
+    const t = setInterval(() => {
+      const due = readScheduled().filter((x) => x.at <= Date.now());
+      if (due.length === 0) return;
+      for (const x of due) {
+        removeScheduled(x.id);
+        api("/api/messages", {
+          method: "POST",
+          body: JSON.stringify({
+            conversationId: x.conversationId,
+            type: "text",
+            content: x.text,
+            replyToId: x.replyToId ?? null,
+          }),
+        })
+          .then(() => {
+            void loadConversations();
+            notify("Отложенное сообщение отправлено");
+          })
+          .catch(() => notify("Не удалось отправить отложенное сообщение"));
+      }
+    }, 1000);
+    return () => clearInterval(t);
+  }, [notify, loadConversations]);
 
   /** Переход по ссылке на сообщение: #msg=<id> (как в мессенджерах). */
   const [jumpMsgId, setJumpMsgId] = useState<string | null>(null);
@@ -1037,6 +1065,7 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
             onWatched={markWatched}
             onDeleted={removeStory}
             onViewUser={(u) => setViewUser(u)}
+            onReplied={() => void loadConversations()}
           />
         )}
       </AnimatePresence>

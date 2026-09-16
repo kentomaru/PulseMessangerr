@@ -57,16 +57,23 @@ const ICE_SERVERS: RTCIceServer[] = [
     ],
   },
   // TURN — из переменных окружения (см. .env: NEXT_PUBLIC_TURN_URL и т.д.).
-  // Старый открытый релей больше не используется.
-  ...(process.env.NEXT_PUBLIC_TURN_URL
+  // Без TURN за строгим NAT медиа не доходит — слышно/видно только себя.
+  ...((process.env.NEXT_PUBLIC_TURN_URL || process.env.TURN_URL)
     ? [
         {
-          urls: process.env.NEXT_PUBLIC_TURN_URL.split(",").map((u) => u.trim()),
-          username: process.env.NEXT_PUBLIC_TURN_USERNAME || undefined,
-          credential: process.env.NEXT_PUBLIC_TURN_CREDENTIAL || undefined,
+          urls: (process.env.NEXT_PUBLIC_TURN_URL || process.env.TURN_URL)!.split(",").map((u) => u.trim()),
+          username: process.env.NEXT_PUBLIC_TURN_USERNAME || process.env.TURN_USER || undefined,
+          credential: process.env.NEXT_PUBLIC_TURN_CREDENTIAL || process.env.TURN_CRED || undefined,
         },
       ]
     : []),
+  // Запасной открытый TURN (Open Relay Project) — если свой недоступен,
+  // медиа всё равно пройдёт через релей, а не умрёт за NAT.
+  {
+    urls: ["turn:openrelay.metered.ca:80", "turn:openrelay.metered.ca:443"],
+    username: "openrelayproject",
+    credential: "openrelayproject",
+  },
 ];
 
 const INCOMING_POLL_MS = 3_000;
