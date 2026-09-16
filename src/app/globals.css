@@ -597,3 +597,11 @@ html[data-anims="0"] *::after {
   font-weight: 400;
   letter-spacing: 0;
 }
+
+/* Горизонтальные ленты без видимого скроллбара */
+.no-scrollbar {
+  scrollbar-width: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}

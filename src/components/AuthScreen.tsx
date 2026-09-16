@@ -184,12 +184,17 @@ export default function AuthScreen() {
                 <input
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
-                  placeholder="Имя пользователя"
+                  placeholder={mode === "register" ? "Имя пользователя (необязательно)" : "Имя пользователя"}
                   autoComplete="username"
-                  required
+                  required={mode !== "register"}
                   className="w-full bg-transparent text-[15px] placeholder:text-white/30"
                 />
               </label>
+              {mode === "register" && (
+                <p className="-mt-1 text-[11px] text-white/35">
+                  Без юзернейма мы сгенерируем временный — задать свой можно потом в профиле.
+                </p>
+              )}
 
               <label className="ring-focus flex items-center gap-3 rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3.5 transition-all">
                 <Lock className="h-4.5 w-4.5 shrink-0 text-white/35" />

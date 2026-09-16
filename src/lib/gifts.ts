@@ -17,6 +17,12 @@ export type Gift = {
   price: number;
   /** Градиент фона витрины. */
   bg: string;
+  /** NFT-подарок: коллекционный, с лимитом и особой рамкой. */
+  nft?: boolean;
+  /** Текстура (картинка) вместо вектора — для NFT. */
+  img?: string;
+  /** Тираж лимитированной серии. */
+  edition?: number;
 };
 
 /** Блик-звёздочка для «дорогих» подарков. */
@@ -234,6 +240,72 @@ export const GIFTS: Gift[] = [
     ),
   },
   {
+    key: "nft_cat",
+    emoji: "🐱",
+    name: "Космокот",
+    price: 1500,
+    bg: "from-violet-500/30 to-indigo-400/10",
+    nft: true,
+    img: "/gifts/nft-cat.png",
+    edition: 1000,
+    icon: "",
+  },
+  {
+    key: "nft_heart",
+    emoji: "💗",
+    name: "Кристальное сердце",
+    price: 2000,
+    bg: "from-pink-500/30 to-fuchsia-400/10",
+    nft: true,
+    img: "/gifts/nft-heart.png",
+    edition: 750,
+    icon: "",
+  },
+  {
+    key: "nft_rocket",
+    emoji: "🚀",
+    name: "Ретро-ракета",
+    price: 2500,
+    bg: "from-sky-500/30 to-cyan-400/10",
+    nft: true,
+    img: "/gifts/nft-rocket.png",
+    edition: 500,
+    icon: "",
+  },
+  {
+    key: "nft_bear",
+    emoji: "🧸",
+    name: "Медовый мишка",
+    price: 3000,
+    bg: "from-amber-500/30 to-orange-400/10",
+    nft: true,
+    img: "/gifts/nft-bear.png",
+    edition: 350,
+    icon: "",
+  },
+  {
+    key: "nft_crown",
+    emoji: "👑",
+    name: "Корона Рубинов",
+    price: 4000,
+    bg: "from-rose-500/30 to-amber-400/10",
+    nft: true,
+    img: "/gifts/nft-crown.png",
+    edition: 200,
+    icon: "",
+  },
+  {
+    key: "nft_dragon",
+    emoji: "🐉",
+    name: "Золотой дракон",
+    price: 5000,
+    bg: "from-emerald-500/30 to-yellow-400/10",
+    nft: true,
+    img: "/gifts/nft-dragon.png",
+    edition: 100,
+    icon: "",
+  },
+  {
     key: "diamond",
     emoji: "💎",
     name: "Алмаз",
@@ -268,5 +340,7 @@ export type GiftItem = {
   createdAt: string;
   /** «Скрыть моё имя» — отправитель не показывается. */
   anonymous?: boolean;
+  /** Закреплён в витрине — показывается первым. */
+  pinned?: boolean;
   sender: { id: string | null; displayName: string; username: string; avatarUrl: string | null } | null;
 };

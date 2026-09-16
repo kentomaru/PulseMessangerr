@@ -17,7 +17,7 @@ export const GET = withApi("gifts:list", async ({ req, me }) => {
     .select()
     .from(gifts)
     .where(eq(gifts.recipientId, userId))
-    .orderBy(desc(gifts.createdAt))
+    .orderBy(desc(gifts.pinned), desc(gifts.createdAt))
     .limit(50);
   const senderIds = Array.from(new Set(rows.map((r) => r.senderId).filter((v): v is string => !!v)));
   const senders = new Map<string, (typeof users.$inferSelect)>();
@@ -36,6 +36,7 @@ export const GET = withApi("gifts:list", async ({ req, me }) => {
         giftKey: r.giftKey,
         message: r.message,
         createdAt: new Date(r.createdAt).toISOString(),
+        pinned: !!(r as { pinned?: boolean }).pinned,
         anonymous: hidden,
         sender: visible
           ? { id: visible.id, displayName: visible.displayName, username: visible.username, avatarUrl: visible.avatarUrl }
@@ -56,8 +57,7 @@ export const POST = withApi("gifts:send", async ({ req, me }) => {
   const message = typeof body.message === "string" ? body.message.trim().slice(0, 140) : "";
   const hideSender = body.hideSender === true;
   if (!isUuid(recipientId)) return NextResponse.json({ error: "Пользователь не найден" }, { status: 404 });
-  if (recipientId === me.id)
-    return NextResponse.json({ error: "Себе подарки дарить нельзя" }, { status: 400 });
+  /* Себе дарить можно — подарок попадёт в собственную витрину. */
   const gift = GIFTS.find((g) => g.key === giftKey);
   if (!gift) return NextResponse.json({ error: "Такого подарка нет" }, { status: 400 });
 
@@ -78,7 +78,10 @@ export const POST = withApi("gifts:send", async ({ req, me }) => {
   // Как в ТГ: подарок приходит сообщением в личный чат с получателем.
   // Ищем существующий диалог; нет — создаём.
   try {
-    const rows = await db
+    const rows =
+      me.id === recipientId
+        ? []
+        : await db
       .select({
         convId: conversationMembers.conversationId,
         userId: conversationMembers.userId,

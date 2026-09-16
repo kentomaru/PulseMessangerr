@@ -2,12 +2,15 @@
 
 /**
  * Детали подарка — единый экран для чата, карточки пользователя и своего
- * профиля: большая иконка, кто подарил (аватарка + ник), время и подпись.
- * Открывается мгновенно — все данные уже на руках, никаких запросов.
+ * профиля: большая иконка/текстура, кто подарил (аватарка + ник), время и подпись.
+ * Для NFT — особая рамка и бейдж «NFT · Limited». Владелец может закрепить
+ * подарок в витрине профиля.
  */
-import { Gift, Star, UserRound, X } from "lucide-react";
+import { useState } from "react";
+import { Gift, Loader2, Pin, Star, UserRound, X } from "lucide-react";
 import Avatar from "./Avatar";
 import { findGift } from "@/lib/gifts";
+import { api } from "@/lib/api";
 
 export default function GiftDetailModal({
   giftKey,
@@ -17,6 +20,11 @@ export default function GiftDetailModal({
   /** true — отправитель скрыл имя (для всех, кроме получателя). */
   anonymous = false,
   createdAt,
+  giftId,
+  pinned = false,
+  /** Владелец витрины (может закреплять). */
+  canPin = false,
+  onPinned,
   onClose,
 }: {
   giftKey: string;
@@ -25,8 +33,14 @@ export default function GiftDetailModal({
   senderAvatarUrl?: string | null;
   anonymous?: boolean;
   createdAt?: string | null;
+  giftId?: string;
+  pinned?: boolean;
+  canPin?: boolean;
+  onPinned?: (v: boolean) => void;
   onClose: () => void;
 }) {
+  const [busy, setBusy] = useState(false);
+  const [isPinned, setIsPinned] = useState(pinned);
   const gift = findGift(giftKey);
   if (!gift) return null;
   const when = createdAt
@@ -37,23 +51,59 @@ export default function GiftDetailModal({
         minute: "2-digit",
       })
     : null;
+
+  const togglePin = async () => {
+    if (!giftId || busy) return;
+    setBusy(true);
+    try {
+      const d = await api<{ pinned: boolean }>(`/api/gifts/${giftId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ pinned: !isPinned }),
+      });
+      setIsPinned(d.pinned);
+      onPinned?.(d.pinned);
+    } catch {
+      /* сервер поправит при следующем открытии */
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <div className="fixed inset-0 z-[96] grid place-items-center bg-black/70 p-4 backdrop-blur-sm" onClick={onClose}>
       <div
         onClick={(e) => e.stopPropagation()}
-        className="glass-strong w-full max-w-xs rounded-[1.6rem] p-5 shadow-2xl"
+        className={`glass-strong w-full max-w-xs rounded-[1.6rem] p-5 shadow-2xl ${
+          gift.nft ? "ring-1 ring-amber-300/50" : ""
+        }`}
       >
         <div className="flex items-center justify-between pb-2">
-          <p className="font-display text-[15px] font-bold">Подарок</p>
+          <p className="font-display text-[15px] font-bold">
+            {gift.nft ? "NFT-подарок" : "Подарок"}
+          </p>
           <button onClick={onClose} className="rounded-full bg-white/10 p-1.5 text-white/70 transition-colors hover:bg-white/15">
             <X className="h-4 w-4" />
           </button>
         </div>
-        <div className={`gift-shine relative mx-auto grid aspect-square w-44 place-items-center overflow-hidden rounded-3xl border border-white/10 bg-gradient-to-br ${gift.bg}`}>
-          <span
-            className="gift-anim h-28 w-28 [&>svg]:h-full [&>svg]:w-full"
-            dangerouslySetInnerHTML={{ __html: gift.icon }}
-          />
+        <div
+          className={`gift-shine relative mx-auto grid aspect-square w-44 place-items-center overflow-hidden rounded-3xl border bg-gradient-to-br ${gift.bg} ${
+            gift.nft ? "border-amber-300/50" : "border-white/10"
+          }`}
+        >
+          {gift.img ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={gift.img} alt={gift.name} className="gift-anim h-full w-full object-cover" />
+          ) : (
+            <span
+              className="gift-anim h-28 w-28 [&>svg]:h-full [&>svg]:w-full"
+              dangerouslySetInnerHTML={{ __html: gift.icon }}
+            />
+          )}
+          {gift.nft && (
+            <span className="absolute top-2 left-2 rounded-full bg-black/60 px-2 py-0.5 text-[9px] font-bold tracking-wider text-amber-300 uppercase backdrop-blur">
+              NFT · {gift.edition} шт
+            </span>
+          )}
         </div>
         <p className="pt-3 text-center text-[16px] font-bold">{gift.name}</p>
         <p className="flex items-center justify-center gap-1 pt-0.5 text-[12px] font-bold text-amber-300">
@@ -82,6 +132,21 @@ export default function GiftDetailModal({
           <p className="mt-2 rounded-xl border border-white/8 bg-white/[0.04] px-3 py-2 text-[12px] leading-relaxed text-white/75">
             «{note}»
           </p>
+        )}
+
+        {canPin && giftId && (
+          <button
+            onClick={() => void togglePin()}
+            disabled={busy}
+            className={`mt-3 flex w-full items-center justify-center gap-2 rounded-2xl py-2.5 text-[13px] font-semibold transition-colors disabled:opacity-50 ${
+              isPinned
+                ? "bg-amber-300/20 text-amber-200 hover:bg-amber-300/30"
+                : "bg-white/10 text-white/80 hover:bg-white/15"
+            }`}
+          >
+            {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Pin className="h-4 w-4" />}
+            {isPinned ? "Открепить из витрины" : "Закрепить в витрине"}
+          </button>
         )}
       </div>
     </div>

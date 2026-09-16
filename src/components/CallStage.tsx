@@ -626,7 +626,6 @@ function CallBody({
           участник. Позовите кого-нибудь кнопкой «Пригласить» внизу.
         </div>
       )}
-      <MicSilenceWarning micLevelRef={micLevelRef} />
       <MicStateBadge localStreamRef={localStreamRef} />
       {screenSharers.map((p) => (
         <div key={`screen-${p.userId}`} className="mb-2.5 last:mb-0">
@@ -982,30 +981,6 @@ function MicMeter({ micLevelRef }: { micLevelRef: React.RefObject<number> }) {
       </span>
       <span className="text-[8px] leading-none text-white/30">микрофон</span>
     </span>
-  );
-}
-
-/** Предупреждение: микрофон молчит дольше 6 секунд — почти наверняка нет
-    доступа к микрофону (браузер/рамка предпросмотра его не отдаёт). */
-function MicSilenceWarning({ micLevelRef }: { micLevelRef: React.RefObject<number> }) {
-  const [silent, setSilent] = useState(false);
-  useEffect(() => {
-    let silentSince = 0;
-    const t = setInterval(() => {
-      const lvl = micLevelRef.current ?? 0;
-      if (lvl > 2) silentSince = 0;
-      else if (silentSince === 0) silentSince = Date.now();
-      setSilent(silentSince > 0 && Date.now() - silentSince > 6_000);
-    }, 1_000);
-    return () => clearInterval(t);
-  }, [micLevelRef]);
-  if (!silent) return null;
-  return (
-    <div className="pointer-events-none absolute inset-x-0 bottom-3 z-20 mx-auto w-fit max-w-[94%] rounded-xl border border-amber-300/30 bg-amber-500/15 px-3 py-2 text-center text-[11px] text-amber-200 backdrop-blur">
-      Микрофон не улавливает звук. Проверьте значок микрофона в адресной
-      строке. Если приложение открыто внутри предпросмотра — откройте его в
-      отдельной вкладке браузера (рамка может блокировать микрофон).
-    </div>
   );
 }
 

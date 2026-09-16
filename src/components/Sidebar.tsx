@@ -666,8 +666,8 @@ export default function Sidebar({
         </AnimatePresence>
       </div>
 
-      {/* Папки чатов — быстрый фильтр по типу, во всю ширину без переполнения */}
-      <div className="flex w-full gap-1.5 px-3 pb-2">
+      {/* Папки чатов — быстрый фильтр по типу; не влезают — горизонтальная прокрутка */}
+      <div className="no-scrollbar flex w-full gap-1.5 overflow-x-auto px-3 pb-2">
         {(
           [
             ["all", "Все"],
@@ -688,7 +688,7 @@ export default function Sidebar({
             <button
               key={f}
               onClick={() => pickFolder(f)}
-              className={`flex min-w-0 flex-1 items-center justify-center gap-1 whitespace-nowrap rounded-full px-2 py-1 text-[11px] font-medium transition-colors ${
+              className={`flex shrink-0 items-center justify-center gap-1 whitespace-nowrap rounded-full px-2.5 py-1 text-[11px] font-medium transition-colors ${
                 folder === f
                   ? "bg-[#5865f2]/25 text-white ring-1 ring-[#5865f2]/60"
                   : "bg-white/[0.05] text-white/45 hover:bg-white/10 hover:text-white/70"

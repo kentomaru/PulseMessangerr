@@ -428,6 +428,8 @@ export const gifts = pgTable(
     message: text("message"),
     /** «Скрыть моё имя» как в ТГ — получатель видит «Аноним». */
     hideSender: boolean("hide_sender").notNull().default(false),
+    /** Закреплён в витрине профиля — показывается первым. */
+    pinned: boolean("pinned").notNull().default(false),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
 );

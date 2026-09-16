@@ -10,6 +10,7 @@ import {
   Gift,
   Loader2,
   Link2,
+  Pin,
   MessageSquareLock,
   MessageSquareText,
   PhoneOff,
@@ -281,12 +282,24 @@ export default function UserCardModal({ user, onClose, onMessage, myId }: Props)
                     key={g.id}
                     onClick={() => setGiftDetail(g)}
                     title={`${gd.name} — нажмите: кто подарил, когда и с каким текстом`}
-                    className={`gift-pop gift-shine relative flex aspect-square items-center justify-center overflow-hidden rounded-2xl border border-white/10 bg-gradient-to-br transition-transform hover:scale-105 ${gd.bg}`}
+                    className={`gift-pop gift-shine relative flex aspect-square items-center justify-center overflow-hidden rounded-2xl border bg-gradient-to-br transition-transform hover:scale-105 ${
+                      gd.nft ? "border-amber-300/40" : "border-white/10"
+                    } ${gd.bg}`}
                   >
-                    <span
-                      className="gift-anim h-9 w-9 [&>svg]:h-full [&>svg]:w-full"
-                      dangerouslySetInnerHTML={{ __html: gd.icon }}
-                    />
+                    {gd.img ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={gd.img} alt={gd.name} className="gift-anim h-full w-full object-cover" />
+                    ) : (
+                      <span
+                        className="gift-anim h-9 w-9 [&>svg]:h-full [&>svg]:w-full"
+                        dangerouslySetInnerHTML={{ __html: gd.icon }}
+                      />
+                    )}
+                    {g.pinned && (
+                      <span className="absolute top-1 right-1 grid h-4 w-4 place-items-center rounded-full bg-black/60 text-amber-300 backdrop-blur">
+                        <Pin className="h-2.5 w-2.5" />
+                      </span>
+                    )}
                   </button>
                 );
               })}
@@ -356,8 +369,8 @@ export default function UserCardModal({ user, onClose, onMessage, myId }: Props)
           </div>
         )}
 
-        {!isSelf && (
-          <div className="mt-4 flex gap-2">
+        <div className="mt-4 flex gap-2">
+          {!isSelf && (
             <button
               onClick={onMessage}
               className="btn-gradient flex min-w-0 flex-1 items-center justify-center gap-2 rounded-2xl py-3.5 text-[15px] font-semibold text-white"
@@ -365,19 +378,22 @@ export default function UserCardModal({ user, onClose, onMessage, myId }: Props)
               <MessageSquareText className="h-4.5 w-4.5" />
               Написать сообщение
             </button>
-            <button
-              onClick={() => setGiftPicker(true)}
-              title={giftSent ? "Подарок отправлен ✓" : "Подарить подарок"}
-              className={`grid w-14 shrink-0 place-items-center rounded-2xl transition-colors ${
-                giftSent
-                  ? "bg-emerald-500/20 text-emerald-300"
-                  : "bg-white/10 text-white/80 hover:bg-white/15"
-              }`}
-            >
+          )}
+          <button
+            onClick={() => setGiftPicker(true)}
+            title={giftSent ? "Подарок отправлен ✓" : isSelf ? "Подарить себе" : "Подарить подарок"}
+            className={`${isSelf ? "flex-1" : "grid w-14 shrink-0 place-items-center"} rounded-2xl transition-colors ${
+              giftSent
+                ? "bg-emerald-500/20 text-emerald-300"
+                : "bg-white/10 text-white/80 hover:bg-white/15"
+            }`}
+          >
+            <span className={`${isSelf ? "flex items-center justify-center gap-2" : ""}`}>
               <Gift className="h-5 w-5" />
-            </button>
-          </div>
-        )}
+              {isSelf ? <span className="text-[13px] font-semibold">Подарить себе</span> : null}
+            </span>
+          </button>
+        </div>
       </div>
 
       {giftDetail && (
@@ -388,6 +404,15 @@ export default function UserCardModal({ user, onClose, onMessage, myId }: Props)
           senderAvatarUrl={giftDetail.sender?.avatarUrl ?? null}
           anonymous={!!giftDetail.anonymous && !giftDetail.sender}
           createdAt={giftDetail.createdAt}
+          giftId={giftDetail.id}
+          pinned={!!giftDetail.pinned}
+          canPin={isSelf}
+          onPinned={(v) => {
+            setUserGifts((cur) =>
+              cur ? cur.map((x) => (x.id === giftDetail.id ? { ...x, pinned: v } : x)) : cur,
+            );
+            setGiftDetail((cur) => (cur && cur.id === giftDetail.id ? { ...cur, pinned: v } : cur));
+          }}
           onClose={() => setGiftDetail(null)}
         />
       )}
@@ -477,11 +502,16 @@ function GiftPicker({
                 <X className="h-4 w-4" />
               </button>
             </div>
-            <div className={`gift-shine relative mx-auto grid aspect-square w-44 place-items-center overflow-hidden rounded-3xl border border-white/10 bg-gradient-to-br ${gift.bg}`}>
-              <span
-                className="gift-anim h-24 w-24 [&>svg]:h-full [&>svg]:w-full"
-                dangerouslySetInnerHTML={{ __html: gift.icon }}
-              />
+            <div className={`gift-shine relative mx-auto grid aspect-square w-44 place-items-center overflow-hidden rounded-3xl border ${gift.nft ? "border-amber-300/50" : "border-white/10"} bg-gradient-to-br ${gift.bg}`}>
+              {gift.img ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={gift.img} alt={gift.name} className="gift-anim h-full w-full object-cover" />
+              ) : (
+                <span
+                  className="gift-anim h-24 w-24 [&>svg]:h-full [&>svg]:w-full"
+                  dangerouslySetInnerHTML={{ __html: gift.icon }}
+                />
+              )}
             </div>
             <p className="pt-3 text-center text-[15px] font-semibold">{gift.name}</p>
             <p className="flex items-center justify-center gap-1 pt-0.5 text-[12px] font-bold text-amber-300">
@@ -549,14 +579,26 @@ function GiftPicker({
                 <button
                   key={g.key}
                   onClick={() => setPicked(g.key)}
-                  title={`${g.name} · ${g.price} звёзд`}
-                  className="flex flex-col items-center gap-1 rounded-2xl border border-white/10 bg-white/[0.03] p-2.5 transition-all hover:border-amber-300/50 hover:bg-white/8"
+                  title={`${g.name} · ${g.price} звёзд${g.nft ? " · NFT" : ""}`}
+                  className={`relative flex flex-col items-center gap-1 rounded-2xl border p-2.5 transition-all hover:bg-white/8 ${
+                    g.nft ? "border-amber-300/40 hover:border-amber-300/70" : "border-white/10 hover:border-amber-300/50"
+                  } bg-white/[0.03]`}
                 >
-                  <span className={`grid h-12 w-12 place-items-center rounded-xl bg-gradient-to-br ${g.bg}`}>
-                    <span
-                      className="gift-anim h-9 w-9 [&>svg]:h-full [&>svg]:w-full"
-                      dangerouslySetInnerHTML={{ __html: g.icon }}
-                    />
+                  {g.nft && (
+                    <span className="absolute top-1 right-1 rounded-full bg-black/60 px-1.5 py-px text-[8px] font-bold tracking-wider text-amber-300 uppercase backdrop-blur">
+                      NFT
+                    </span>
+                  )}
+                  <span className={`grid h-12 w-12 place-items-center overflow-hidden rounded-xl bg-gradient-to-br ${g.bg}`}>
+                    {g.img ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={g.img} alt={g.name} className="gift-anim h-full w-full rounded-xl object-cover" />
+                    ) : (
+                      <span
+                        className="gift-anim h-9 w-9 [&>svg]:h-full [&>svg]:w-full"
+                        dangerouslySetInnerHTML={{ __html: g.icon }}
+                      />
+                    )}
                   </span>
                   <span className="text-[10px] text-white/55">{g.name}</span>
                   <span className="flex items-center gap-0.5 text-[10px] font-bold text-amber-300 tabular-nums">

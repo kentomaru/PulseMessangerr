@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import {
   ArrowLeft,
+  Pin,
   Ban,
   Camera,
   CircleDot,
@@ -524,12 +525,24 @@ export default function ProfileModal({
                     key={g.id}
                     onClick={() => setGiftDetail(g)}
                     title={`${gd.name} — нажмите: кто подарил, когда и с каким текстом`}
-                    className={`gift-pop gift-shine relative flex aspect-square items-center justify-center overflow-hidden rounded-2xl border border-white/10 bg-gradient-to-br transition-transform hover:scale-105 ${gd.bg}`}
+                    className={`gift-pop gift-shine relative flex aspect-square items-center justify-center overflow-hidden rounded-2xl border bg-gradient-to-br transition-transform hover:scale-105 ${
+                      gd.nft ? "border-amber-300/40" : "border-white/10"
+                    } ${gd.bg}`}
                   >
-                    <span
-                      className="gift-anim h-8 w-8 [&>svg]:h-full [&>svg]:w-full"
-                      dangerouslySetInnerHTML={{ __html: gd.icon }}
-                    />
+                    {gd.img ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={gd.img} alt={gd.name} className="gift-anim h-full w-full object-cover" />
+                    ) : (
+                      <span
+                        className="gift-anim h-8 w-8 [&>svg]:h-full [&>svg]:w-full"
+                        dangerouslySetInnerHTML={{ __html: gd.icon }}
+                      />
+                    )}
+                    {g.pinned && (
+                      <span className="absolute top-1 right-1 grid h-4 w-4 place-items-center rounded-full bg-black/60 text-amber-300 backdrop-blur">
+                        <Pin className="h-2.5 w-2.5" />
+                      </span>
+                    )}
                   </button>
                 );
               })}
@@ -790,6 +803,15 @@ export default function ProfileModal({
           senderAvatarUrl={giftDetail.sender?.avatarUrl ?? null}
           anonymous={!!giftDetail.anonymous && !giftDetail.sender}
           createdAt={giftDetail.createdAt}
+          giftId={giftDetail.id}
+          pinned={!!giftDetail.pinned}
+          canPin
+          onPinned={(v) => {
+            setMyGifts((cur) =>
+              cur ? cur.map((x) => (x.id === giftDetail.id ? { ...x, pinned: v } : x)) : cur,
+            );
+            setGiftDetail((cur) => (cur && cur.id === giftDetail.id ? { ...cur, pinned: v } : cur));
+          }}
           onClose={() => setGiftDetail(null)}
         />
       )}

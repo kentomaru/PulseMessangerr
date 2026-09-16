@@ -4412,12 +4412,24 @@ function GiftCard({
       <button
         onClick={() => setOpen(true)}
         title={`${gift.name} · нажмите, чтобы посмотреть детали`}
-        className={`gift-shine relative flex w-72 flex-col items-center gap-1.5 overflow-hidden rounded-3xl border border-white/10 bg-gradient-to-br px-5 py-6 transition-transform hover:scale-[1.02] ${gift.bg}`}
+        className={`gift-shine relative flex w-72 flex-col items-center gap-1.5 overflow-hidden rounded-3xl border bg-gradient-to-br px-5 py-6 transition-transform hover:scale-[1.02] ${
+          gift.nft ? "border-amber-300/40" : "border-white/10"
+        } ${gift.bg}`}
       >
-        <span
-          className="gift-anim h-20 w-20 [&>svg]:h-full [&>svg]:w-full"
-          dangerouslySetInnerHTML={{ __html: gift.icon }}
-        />
+        {gift.img ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={gift.img} alt={gift.name} className="gift-anim h-20 w-20 rounded-2xl object-cover" />
+        ) : (
+          <span
+            className="gift-anim h-20 w-20 [&>svg]:h-full [&>svg]:w-full"
+            dangerouslySetInnerHTML={{ __html: gift.icon }}
+          />
+        )}
+        {gift.nft && (
+          <span className="absolute top-2 left-2 rounded-full bg-black/60 px-1.5 py-px text-[8px] font-bold tracking-wider text-amber-300 uppercase backdrop-blur">
+            NFT
+          </span>
+        )}
         <span className="text-[15px] font-bold">{gift.name}</span>
         <span className="flex items-center gap-1 text-[12px] font-bold text-amber-200">
           <Star className="h-3.5 w-3.5" /> {gift.price}
