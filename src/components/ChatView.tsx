@@ -25,7 +25,6 @@ import {
   Gift,
   BarChart3,
   Contact,
-  CheckSquare,
   MapPin,
   Flame,
   Star,
@@ -435,9 +434,7 @@ export default function ChatView({
   });
   const [dragOver, setDragOver] = useState(false);
   const [ctxMenu, setCtxMenu] = useState<ContextMenuState | null>(null);
-  /** Режим выделения: галочки у сообщений и массовое удаление. */
-  const [selectMode, setSelectMode] = useState(false);
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+
   const [forwarding, setForwarding] = useState<ChatMessage | null>(null);
   /** Сообщение, ожидающее подтверждения удаления (защита от случайных кликов). */
   const [confirmDelete, setConfirmDelete] = useState<ChatMessage | null>(null);
@@ -1103,30 +1100,6 @@ export default function ChatView({
     setConfirmDelete(message);
   }, []);
 
-  /** Режим выделения: отметить/снять одно сообщение. */
-  const toggleSelect = useCallback((id: string) => {
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  }, []);
-
-  /** Массовое удаление выбранных сообщений. */
-  const bulkDelete = useCallback(async () => {
-    const ids = [...selectedIds];
-    if (ids.length === 0) return;
-    setSelectMode(false);
-    setSelectedIds(new Set());
-    for (const id of ids) {
-      await api(`/api/messages/${id}`, { method: "DELETE" }).catch(() => {});
-    }
-    await load();
-    refreshConversations();
-    notify(`Удалено сообщений: ${ids.length}`);
-  }, [selectedIds, load, refreshConversations, notify]);
-
   /** Недавно загруженные стикеры (гифки) — переживают перезагрузку. */
   const RECENT_STICKERS_KEY = "pulse_recent_stickers_v1";
   const [recentStickers, setRecentStickers] = useState<string[]>(() => {
@@ -1440,10 +1413,24 @@ export default function ChatView({
       if (searchOpen) setSearchOpen(false);
       else if (replyTo) setReplyTo(null);
       else if (editing) setEditing(null);
+      // Больше ничего не открыто — выходим из чата в список (как в ТГ)
+      else if (
+        !lightbox &&
+        !emojiOpen &&
+        !sendMenu &&
+        !pollDraft &&
+        !forwarding &&
+        !confirmDelete &&
+        !confirmDeleteChat &&
+        !deleteChatForAll &&
+        !text
+      ) {
+        onBack();
+      }
     };
     window.addEventListener("keydown", h);
     return () => window.removeEventListener("keydown", h);
-  }, [searchOpen, replyTo, editing]);
+  }, [searchOpen, replyTo, editing, lightbox, emojiOpen, sendMenu, pollDraft, forwarding, confirmDelete, confirmDeleteChat, deleteChatForAll, text, onBack]);
 
   // Сколько комментариев в обсуждении канала — цифра под постами
   const loadPostCounts = useCallback(() => {
@@ -2147,22 +2134,6 @@ export default function ChatView({
                   data-mid={m.id}
                   className={`relative ${mentionMe ? "rounded-xl bg-[#5865f2]/10 ring-1 ring-[#5865f2]/25" : ""}`}
                 >
-                  {selectMode && (
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        toggleSelect(m.id);
-                      }}
-                      title={selectedIds.has(m.id) ? "Снять отметку" : "Отметить"}
-                      className={`absolute top-1/2 -left-7 grid h-5 w-5 -translate-y-1/2 place-items-center rounded-md border transition-colors ${
-                        selectedIds.has(m.id)
-                          ? "border-[#5865f2] bg-[#5865f2]"
-                          : "border-white/30 bg-black/20 hover:border-white/60"
-                      }`}
-                    >
-                      {selectedIds.has(m.id) && <Check className="h-3 w-3 text-white" />}
-                    </button>
-                  )}
                   {unreadBefore === m.id && (
                     <div className="flex items-center gap-3 py-2">
                       <span className="h-px flex-1 bg-rose-400/30" />
@@ -2337,29 +2308,6 @@ export default function ChatView({
           <AnimatePresence>
             {/* (ниже очередь отложенных) */}
           {/* Отложенные сообщения — очередь с возможностью отмены */}
-          {selectMode && (
-            <div className="glass mb-1.5 flex items-center gap-2 rounded-2xl px-3.5 py-2">
-              <p className="flex-1 text-[12px] font-semibold text-white/70">
-                Выбрано: {selectedIds.size}
-              </p>
-              <button
-                onClick={() => void bulkDelete()}
-                disabled={selectedIds.size === 0}
-                className="flex items-center gap-1.5 rounded-xl bg-rose-500/20 px-3 py-1.5 text-[12px] font-semibold text-rose-300 hover:bg-rose-500/30 disabled:opacity-40"
-              >
-                <Trash2 className="h-3.5 w-3.5" /> Удалить
-              </button>
-              <button
-                onClick={() => {
-                  setSelectMode(false);
-                  setSelectedIds(new Set());
-                }}
-                className="rounded-xl px-3 py-1.5 text-[12px] text-white/50 hover:bg-white/10 hover:text-white"
-              >
-                Отмена
-              </button>
-            </div>
-          )}
 
           {scheduled.length > 0 && (
             <div className="glass mb-1.5 rounded-2xl px-3.5 py-2">
@@ -3177,11 +3125,6 @@ export default function ChatView({
               void copyMessage(ctxMenu.message);
               setCtxMenu(null);
             }}
-            onSelectMode={() => {
-              setSelectMode(true);
-              setSelectedIds(new Set([ctxMenu.message.id]));
-              setCtxMenu(null);
-            }}
             onForward={() => {
               setForwarding(ctxMenu.message);
               setCtxMenu(null);
@@ -3273,7 +3216,6 @@ function MessageContextMenu({
   onPin,
   onCopy,
   onForward,
-  onSelectMode,
   onSave,
   onCopyLink,
   onDelete,
@@ -3291,8 +3233,6 @@ function MessageContextMenu({
   onPin: () => void;
   onCopy: () => void;
   onForward: () => void;
-  /** Включить режим выделения сообщений. */
-  onSelectMode?: () => void;
   /** Быстрое сохранение в «Избранное». */
   onSave: () => void;
   /** Скопировать ссылку на сообщение. */
@@ -3368,9 +3308,6 @@ function MessageContextMenu({
         </div>
       )}
       <ContextItem icon={<Reply className="h-4 w-4 text-slate-400" />} label="Ответить" onClick={onReply} />
-      {onSelectMode && (
-        <ContextItem icon={<CheckSquare className="h-4 w-4 text-sky-300" />} label="Выбрать сообщения" onClick={onSelectMode} />
-      )}
       {canPin && (
         <ContextItem
           icon={
@@ -3491,6 +3428,7 @@ function ForwardModal({
             message.forwardedFrom ?? message.sender?.displayName ?? message.sender?.username ?? null,
           forwardedAvatar:
             message.forwardedAvatar ?? message.sender?.avatarUrl ?? null,
+          forwardedUserId: message.forwardedUserId ?? message.senderId ?? null,
         }),
       });
       notify(`Переслано в «${conv.title}»`);
@@ -4188,12 +4126,21 @@ function MessageBubble({
                 } px-4 py-2.5`
           } ${highlighted ? "ring-2 ring-[#5865f2]/60" : ""}`}
         >
-          {/* «Переслано от …» — как в ТГ: аватарка + автор оригинала */}
+          {/* «Переслано от …» — как в ТГ: аватарка + автор оригинала; тап открывает профиль */}
           {message.forwardedFrom && (
-            <p className="mb-1.5 flex items-center gap-1.5 text-[11px] font-semibold text-sky-300">
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                if (message.forwardedUser) onViewUser(message.forwardedUser);
+              }}
+              title={message.forwardedUser ? `Открыть профиль: ${message.forwardedFrom}` : undefined}
+              className={`mb-1.5 flex items-center gap-1.5 text-[11px] font-semibold text-sky-300 ${
+                message.forwardedUser ? "cursor-pointer hover:text-sky-200" : "cursor-default"
+              }`}
+            >
               <Avatar name={message.forwardedFrom} src={message.forwardedAvatar ?? null} size={18} />
               Переслано от {message.forwardedFrom}
-            </p>
+            </button>
           )}
 
           {/* Цитата (ответ на сообщение) */}

@@ -379,6 +379,7 @@ export async function ensureSchema(): Promise<void> {
     alter table messages add column if not exists transcript text;
     alter table messages add column if not exists forwarded_from text;
     alter table messages add column if not exists forwarded_avatar text;
+    alter table messages add column if not exists forwarded_user_id uuid;
   `);
   log.info("Схема базы данных проверена (ensureSchema: ok)");
 }

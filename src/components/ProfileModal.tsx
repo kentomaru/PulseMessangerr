@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import {
+  ArrowLeft,
   Ban,
   Camera,
   CircleDot,
@@ -89,6 +90,18 @@ export default function ProfileModal({
   const [myGifts, setMyGifts] = useState<GiftItem[] | null>(null);
   /** Тап по своему подарку — детали открываются мгновенно, без запросов. */
   const [giftDetail, setGiftDetail] = useState<GiftItem | null>(null);
+
+  /** Esc: в подразделе возвращает в профиль, из профиля — закрывает окно. */
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      if (giftDetail) setGiftDetail(null);
+      else if (tab !== "profile") setTab("profile");
+      else onClose();
+    };
+    window.addEventListener("keydown", h);
+    return () => window.removeEventListener("keydown", h);
+  }, [tab, giftDetail, onClose]);
   useEffect(() => {
     let alive = true;
     api<{ gifts: GiftItem[] }>(`/api/gifts?userId=${me.id}`)
@@ -361,6 +374,22 @@ export default function ProfileModal({
 
       {/* Переключатель вкладок убран: те же разделы открываются строками ниже
           (Приватность / Оформление / Друзья / Моя карточка) */}
+      {/* В подразделе — шапка со стрелкой «назад», как в настройках ТГ */}
+      {tab !== "profile" && (
+        <div className="flex items-center gap-2 border-b border-white/8 px-7 py-3">
+          <button
+            onClick={() => setTab("profile")}
+            title="Назад в профиль (Esc)"
+            className="grid h-8 w-8 place-items-center rounded-full bg-white/[0.06] text-white/80 transition-colors hover:bg-white/12"
+          >
+            <ArrowLeft className="h-4 w-4" />
+          </button>
+          <p className="font-display text-[15px] font-bold">
+            {tab === "privacy" ? "Приватность" : tab === "appearance" ? "Оформление" : "Друзья"}
+          </p>
+        </div>
+      )}
+
       <div className="nice-scroll max-h-[60vh] space-y-5 overflow-y-auto px-7 pt-4 pb-7">
         {tab === "appearance" ? (
           <AppearanceTab

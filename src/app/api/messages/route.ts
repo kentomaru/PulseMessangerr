@@ -68,7 +68,12 @@ function aggregateReactions(
 }
 
 async function serializeMessages(list: MessageRow[], meId: string): Promise<ChatMessage[]> {
-  const senderIds = Array.from(new Set(list.map((m) => m.senderId)));
+  const senderIds = Array.from(
+    new Set([
+      ...list.map((m) => m.senderId),
+      ...list.map((m) => (m as { forwardedUserId?: string | null }).forwardedUserId).filter((v): v is string => !!v),
+    ]),
+  );
   const replyIds = Array.from(new Set(list.map((m) => m.replyToId).filter((v): v is string => !!v)));
   const messageIds = list.map((m) => m.id);
 
@@ -127,6 +132,12 @@ async function serializeMessages(list: MessageRow[], meId: string): Promise<Chat
       transcript: (m as { transcript?: string | null }).transcript ?? null,
       forwardedFrom: (m as { forwardedFrom?: string | null }).forwardedFrom ?? null,
       forwardedAvatar: (m as { forwardedAvatar?: string | null }).forwardedAvatar ?? null,
+      forwardedUserId: (m as { forwardedUserId?: string | null }).forwardedUserId ?? null,
+      forwardedUser: (() => {
+        const fid = (m as { forwardedUserId?: string | null }).forwardedUserId;
+        const fu = fid ? senders.get(fid) : undefined;
+        return fu ? publicUser(fu) : null;
+      })(),
       sender: sender ? publicUser(sender) : undefined,
       replyTo: reply ? replyPreview(reply, senders) : null,
       reactions: aggregateReactions(reactionsByMessage.get(m.id) ?? [], meId),
@@ -245,9 +256,32 @@ export const GET = withApi("messages", async ({ req, me }) => {
     .orderBy(desc(messages.pinnedAt))
     .limit(10);
 
+  const serialized = await serializeMessages(list, me.id);
+
+  // Группа-обсуждение канала: посты, зеркаленные из канала (тихие),
+  // показываются от имени КАНАЛА, а не человека — как в ТГ.
+  if (kind === "group" && (conv.about ?? "").startsWith(DISCUSSION_MARKER)) {
+    const channelId = (conv.about ?? "").slice(DISCUSSION_MARKER.length);
+    if (isUuid(channelId)) {
+      const [channel] = await db
+        .select({ name: conversations.name })
+        .from(conversations)
+        .where(eq(conversations.id, channelId))
+        .limit(1);
+      if (channel?.name) {
+        for (const m of serialized) {
+          // Копируем объект: оригинал разделяется с обычными сообщениями автора
+          if (m.silent && m.sender) {
+            m.sender = { ...m.sender, displayName: channel.name, avatarUrl: null };
+          }
+        }
+      }
+    }
+  }
+
   return NextResponse.json({
     postCount,
-    messages: await serializeMessages(list, me.id),
+    messages: serialized,
     pinned: await serializeMessages(pinnedRows, me.id),
     conversation: {
       id: conv.id,
@@ -342,6 +376,10 @@ export const POST = withApi("messages:send", async ({ req, me, log }) => {
   const forwardedAvatar =
     typeof body.forwardedAvatar === "string" && body.forwardedAvatar.trim()
       ? body.forwardedAvatar.trim().slice(0, 512)
+      : null;
+  const forwardedUserId =
+    typeof body.forwardedUserId === "string" && isUuid(body.forwardedUserId)
+      ? body.forwardedUserId
       : null;
   if (conversationId && !isUuid(conversationId))
     return NextResponse.json({ error: "Чат не найден" }, { status: 404 });
@@ -481,6 +519,7 @@ export const POST = withApi("messages:send", async ({ req, me, log }) => {
       transcript: type === "voice" ? transcript : null,
       forwardedFrom,
       forwardedAvatar,
+      forwardedUserId,
     })
     .returning();
   if (clientKey) rememberKey(clientKey, msg.id);

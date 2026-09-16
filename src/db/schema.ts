@@ -276,6 +276,8 @@ export const messages = pgTable(
     forwardedFrom: text("forwarded_from"),
     /** Аватарка автора оригинала при пересылке. */
     forwardedAvatar: text("forwarded_avatar"),
+    /** Id автора оригинала — чтобы по «Переслано от» открывался профиль. */
+    forwardedUserId: uuid("forwarded_user_id"),
   },
   (t) => [
     index("messages_conversation_idx").on(t.conversationId, t.createdAt),

@@ -170,6 +170,10 @@ export type ChatMessage = {
   forwardedFrom?: string | null;
   /** Аватарка автора оригинала при пересылке. */
   forwardedAvatar?: string | null;
+  /** Автор оригинала при пересылке (чтобы открыть его профиль). */
+  forwardedUser?: PublicUser | null;
+  /** Id автора оригинала (передаётся дальше по цепочке пересылок). */
+  forwardedUserId?: string | null;
 };
 
 export type CallMedia = "audio" | "video";
