@@ -82,6 +82,7 @@ import { EMOJI_CATEGORIES, STICKERS } from "@/lib/emojis";
 import { renderRichText } from "@/lib/richText";
 import { addScheduled, readScheduled, removeScheduled, type ScheduledMsg } from "@/lib/scheduledStore";
 import { parseStoryQuote, type StoryQuoteInfo } from "@/lib/storyQuote";
+import { setCachedTranscript } from "@/lib/transcribe";
 import { GIF_PACK, CUSTOM_EMOJI, findGif, gifpackId } from "@/lib/premiumContent";
 import {
   callLogLabel,
@@ -95,6 +96,7 @@ import {
   parseAttachment,
   sameDay,
   timeHHmm,
+  cleanSnippet,
 } from "@/lib/format";
 import { wallpaperStyle } from "@/lib/wallpapers";
 import type {
@@ -853,7 +855,7 @@ export default function ChatView({
       const url = await uploadFileWithProgress(file, (loaded, total) => {
         setPendingUploads((ps) => ps.map((x) => (x.lid === lid ? { ...x, loaded, total } : x)));
       });
-      await api("/api/messages", {
+      const resp = await api<{ message?: { id?: string } }>("/api/messages", {
         method: "POST",
         body: JSON.stringify({
           conversationId,
@@ -868,6 +870,12 @@ export default function ChatView({
           replyToId: replyTo?.id ?? null,
         }),
       });
+      // Живая расшифровка, накопленная во время записи, привязывается к сообщению —
+      // кнопка «В текст» отдаст её мгновенно, без скачивания модели.
+      if (type === "voice" && pendingTranscriptRef.current && resp?.message?.id) {
+        setCachedTranscript(resp.message.id, pendingTranscriptRef.current);
+      }
+      pendingTranscriptRef.current = null;
       setReplyTo(null);
       await load();
       refreshConversations();
@@ -916,6 +924,12 @@ export default function ChatView({
 
   /* ─────────────────────────── голосовая запись ─────────────────────────── */
 
+  /** Живая расшифровка речи прямо во время записи (браузерный движок, без внешних моделей). */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const speechRecRef = useRef<any>(null);
+  const liveTranscriptRef = useRef("");
+  const pendingTranscriptRef = useRef<string | null>(null);
+
   const startVoiceRecording = async () => {
     if (!canPost || voiceRecActive || noteRecorder) return;
     if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
@@ -935,6 +949,32 @@ export default function ChatView({
       voiceRef.current = { recorder, stream, chunks, startedAt: Date.now() };
       setRecSecs(0);
       setVoiceRecActive(true);
+      // Параллельно с записью слушаем микрофон штатным движком браузера (ru-RU).
+      // После отправки привяжем текст к сообщению — «В текст» сработает мгновенно.
+      liveTranscriptRef.current = "";
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const SRC = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+      if (SRC) {
+        try {
+          const recognition = new SRC();
+          recognition.lang = "ru-RU";
+          recognition.continuous = true;
+          recognition.interimResults = false;
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          recognition.onresult = (e: any) => {
+            for (let i = e.resultIndex; i < e.results.length; i++) {
+              if (e.results[i].isFinal) liveTranscriptRef.current += `${e.results[i][0].transcript} `;
+            }
+          };
+          recognition.onerror = () => {
+            try { recognition.stop(); } catch { /* уже остановлен */ }
+          };
+          recognition.start();
+          speechRecRef.current = recognition;
+        } catch {
+          /* живая расшифровка недоступна — сработает кнопка «В текст» */
+        }
+      }
     } catch {
       notify("Не удалось получить доступ к микрофону");
     }
@@ -944,6 +984,14 @@ export default function ChatView({
     const rec = voiceRef.current;
     if (!rec) return;
     voiceRef.current = null;
+    if (speechRecRef.current) {
+      try { speechRecRef.current.stop(); } catch { /* уже остановлен */ }
+      speechRecRef.current = null;
+      const t = liveTranscriptRef.current.trim();
+      pendingTranscriptRef.current = t || null;
+    } else {
+      pendingTranscriptRef.current = null;
+    }
     const duration = (Date.now() - rec.startedAt) / 1000;
     rec.recorder.onstop = () => {
       rec.stream.getTracks().forEach((t) => t.stop());
@@ -1488,7 +1536,7 @@ export default function ChatView({
 
   const headerSubtitle = () => {
     if (voiceRecActive) {
-      return { text: "записывает голосовое…", accent: true };
+      return { text: "Идёт запись голосового…", accent: true };
     }
     if (typingMembers.length > 0) {
       const names = typingMembers.map((m) => m.user.displayName.split(" ")[0]);
@@ -1869,7 +1917,7 @@ export default function ChatView({
                     >
                       <Avatar name={h.senderName} src={h.sender?.avatarUrl ?? null} size={28} />
                       <span className="min-w-0 flex-1">
-                        <span className="block truncate text-[13px] text-white/85">{h.preview}</span>
+                        <span className="block truncate text-[13px] text-white/85">{cleanSnippet(h.preview)}</span>
                         <span className="block text-[11px] text-white/35">
                           {h.senderName} · {dayLabel(h.createdAt)} {timeHHmm(h.createdAt)}
                         </span>
