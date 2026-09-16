@@ -21,7 +21,9 @@ import {
   File as FileIcon,
   FileText,
   Film,
-  Forward,  BarChart3,
+  Forward,
+  Gift,
+  BarChart3,
   Contact,
   CheckSquare,
   MapPin,
@@ -4120,7 +4122,7 @@ function MessageBubble({
     <div
       className={`group no-callout relative flex items-start gap-2 ${media ? "py-1.5" : "py-0.5"} ${
         grouped ? "" : "mt-1.5"
-      } ${alignRight ? "justify-end" : "justify-start"} ${highlighted ? "animate-pulse-dot" : ""}`}
+      } ${isGift ? "justify-center" : alignRight ? "justify-end" : "justify-start"} ${highlighted ? "animate-pulse-dot" : ""}`}
       onContextMenu={(e) => {
         e.preventDefault();
         onMenu(e.clientX, e.clientY, message);
@@ -4174,9 +4176,9 @@ function MessageBubble({
 
         <div
           className={`relative overflow-hidden ${restricted ? "select-none" : ""} ${
-            isNote || sticker || gif ? "" : own && !space ? "bubble-own text-white" : "bubble-peer text-white/90"
+            isNote || sticker || gif || isGift ? "" : own && !space ? "bubble-own text-white" : "bubble-peer text-white/90"
           } ${
-            isNote || sticker || gif
+            isNote || sticker || gif || isGift
               ? ""
               : `${own && !space ? "bubble-own-radius" : "bubble-peer-radius"} ${
                   grouped ? (lastOfGroup ? "g-last" : "g-mid") : lastOfGroup ? "" : "g-first"
@@ -4214,7 +4216,13 @@ function MessageBubble({
           )}
 
           {isGift ? (
-            <GiftCard content={message.content} senderName={message.sender?.displayName ?? ""} />
+            <GiftCard
+              content={message.content}
+              senderName={message.sender?.displayName ?? ""}
+              senderAvatarUrl={message.sender?.avatarUrl ?? null}
+              createdAt={message.createdAt}
+              own={message.senderId === meId}
+            />
           ) : isVoice && att ? (
             <VoiceBubble
               url={att.url}
@@ -4419,8 +4427,21 @@ const WAVE_BARS = [
   8, 14, 20, 11, 26, 18, 9, 22, 30, 14, 10, 24, 16, 28, 12, 19, 25, 9, 15, 27, 11, 21, 17, 29, 13, 23, 10, 18,
 ];
 
-/** Сообщение-подарок в чате: большая иконка, подпись, тап — детали как в ТГ. */
-function GiftCard({ content, senderName }: { content: string; senderName: string }) {
+/** Сообщение-подарок в чате: карточка по центру, тап — детали как в ТГ
+    (аватарка и ник отправителя, время отправки, текст подарка). */
+function GiftCard({
+  content,
+  senderName,
+  senderAvatarUrl,
+  createdAt,
+  own,
+}: {
+  content: string;
+  senderName: string;
+  senderAvatarUrl: string | null;
+  createdAt: string;
+  own: boolean;
+}) {
   const [open, setOpen] = useState(false);
   let giftKey = "";
   let note = "";
@@ -4435,12 +4456,21 @@ function GiftCard({ content, senderName }: { content: string; senderName: string
   }
   const gift = findGift(giftKey);
   if (!gift) return null;
+  // Анонимность — для всех, кроме получателя (отправитель всегда видит себя)
+  const showAnon = anonymous && !own;
+  const when = new Date(createdAt);
+  const time = when.toLocaleString("ru-RU", {
+    day: "numeric",
+    month: "long",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
   return (
     <>
       <button
         onClick={() => setOpen(true)}
         title={`${gift.name} · нажмите, чтобы посмотреть детали`}
-        className={`gift-shine relative flex w-52 flex-col items-center gap-1 overflow-hidden rounded-2xl border border-white/10 bg-gradient-to-br px-4 py-4 transition-transform hover:scale-[1.02] ${gift.bg}`}
+        className={`gift-shine relative flex w-56 flex-col items-center gap-1 overflow-hidden rounded-2xl border border-white/10 bg-gradient-to-br px-4 py-4 transition-transform hover:scale-[1.02] ${gift.bg}`}
       >
         <span
           className="gift-anim h-16 w-16 [&>svg]:h-full [&>svg]:w-full"
@@ -4451,13 +4481,15 @@ function GiftCard({ content, senderName }: { content: string; senderName: string
           <Star className="h-3 w-3" /> {gift.price}
         </span>
         {note && <span className="max-w-full truncate text-[11px] text-white/60">«{note}»</span>}
-        <span className="pt-0.5 text-[10px] text-white/35">{anonymous ? "Подарок от Анонима" : `Подарок от ${senderName || "…"}`}</span>
+        <span className="pt-0.5 text-[10px] text-white/35">
+          {showAnon ? "Подарок от Анонима" : `Подарок от ${senderName || "…"}`}
+        </span>
       </button>
       {open && (
         <div className="fixed inset-0 z-[95] grid place-items-center bg-black/70 p-4 backdrop-blur-sm" onClick={() => setOpen(false)}>
           <div
             onClick={(e) => e.stopPropagation()}
-            className="glass-strong w-full max-w-xs rounded-[1.6rem] p-5 text-center shadow-2xl"
+            className="glass-strong w-full max-w-xs rounded-[1.6rem] p-5 shadow-2xl"
           >
             <div className={`gift-shine relative mx-auto grid aspect-square w-40 place-items-center overflow-hidden rounded-3xl border border-white/10 bg-gradient-to-br ${gift.bg}`}>
               <span
@@ -4465,13 +4497,29 @@ function GiftCard({ content, senderName }: { content: string; senderName: string
                 dangerouslySetInnerHTML={{ __html: gift.icon }}
               />
             </div>
-            <p className="pt-3 text-[16px] font-bold">{gift.name}</p>
+            <p className="pt-3 text-center text-[16px] font-bold">{gift.name}</p>
             <p className="flex items-center justify-center gap-1 pt-0.5 text-[12px] font-bold text-amber-300">
               <Star className="h-3 w-3" /> {gift.price} звёзд
             </p>
-            <p className="pt-2 text-[12px] text-white/50">
-              {anonymous ? "Отправитель скрыл своё имя" : `Отправил(а): ${senderName || "—"}`}
-            </p>
+
+            {/* Кто подарил: аватарка + ник + время — как в ТГ */}
+            <div className="mt-3 flex items-center gap-3 rounded-2xl border border-white/8 bg-white/[0.04] px-3 py-2.5">
+              {showAnon ? (
+                <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-white/10 text-white/50">
+                  <UserRound className="h-5 w-5" />
+                </span>
+              ) : (
+                <Avatar name={senderName || "?"} src={senderAvatarUrl} size={40} />
+              )}
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-[13px] font-semibold">
+                  {showAnon ? "Аноним" : senderName || "—"}
+                </span>
+                <span className="block text-[11px] text-white/40">{time}</span>
+              </span>
+              <Gift className="h-4 w-4 shrink-0 text-amber-200/70" />
+            </div>
+
             {note && (
               <p className="mt-2 rounded-xl border border-white/8 bg-white/[0.04] px-3 py-2 text-[12px] leading-relaxed text-white/75">
                 «{note}»
@@ -4514,9 +4562,8 @@ function VoiceBubble({
   const speeds = [1, 1.5, 2];
   /** Pulse Premium: голос → текст (модель работает прямо в браузере). */
   const [sttBusy, setSttBusy] = useState(false);
+  // Текст НЕ показывается сам — только после нажатия «В текст» (как в ТГ)
   const [sttText, setSttText] = useState<string | null>(() => {
-    // Серверная расшифровка — в приоритете у всех участников чата
-    if (serverTranscript) return serverTranscript;
     if (!messageId) return null;
     try {
       const all = JSON.parse(localStorage.getItem("pulse_stt_v1") ?? "{}") as Record<string, string>;

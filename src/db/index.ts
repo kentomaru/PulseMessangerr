@@ -103,10 +103,7 @@ export async function ensureSchema(): Promise<void> {
     alter table users add column if not exists allow_group_invites boolean not null default true;
     alter table users add column if not exists status_emoji text not null default '';
     alter table users add column if not exists premium boolean not null default false;
-    alter table messages add column if not exists views integer not null default 0;
-    alter table conversations add column if not exists restricted boolean not null default false;
     alter table users add column if not exists name_color text;
-    alter table conversations add column if not exists slow_mode integer not null default 0;
 
     create table if not exists sessions (
       token text primary key,
@@ -134,6 +131,8 @@ export async function ensureSchema(): Promise<void> {
     alter table conversations add column if not exists is_private boolean not null default true;
     alter table conversations add column if not exists invite_token text unique;
     alter table conversations add column if not exists owner_id uuid references users(id) on delete set null;
+    alter table conversations add column if not exists restricted boolean not null default false;
+    alter table conversations add column if not exists slow_mode integer not null default 0;
     /* Одноразовый перенос со старой модели (is_group) на kind: срабатывает только
        если колонки kind раньше не было, иначе перезапись на каждом старте
        превратила бы каналы обратно в группы. */
@@ -275,6 +274,7 @@ export async function ensureSchema(): Promise<void> {
     );
     alter table messages add column if not exists call_id uuid references calls(id) on delete cascade;
     alter table messages add column if not exists reply_to_id uuid;
+    alter table messages add column if not exists views integer not null default 0;
     /* Если старая таблица calls сносилась каскадом — внешний ключ messages.call_id
        пропадал вместе с ней, возвращаем его обратно. */
     do $$
