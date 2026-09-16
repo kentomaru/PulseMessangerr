@@ -513,10 +513,13 @@ export default function ProfileModal({
                 return (
                   <div
                     key={g.id}
-                    title={`${gd.name}${g.sender ? ` — от ${g.sender.displayName}` : ""}${g.message ? ` · «${g.message}»` : ""}`}
+                    title={`${gd.name}${g.anonymous ? " — от Анонима" : g.sender ? ` — от ${g.sender.displayName}` : ""}${g.message ? ` · «${g.message}»` : ""}`}
                     className={`gift-pop gift-shine relative flex aspect-square items-center justify-center overflow-hidden rounded-2xl border border-white/10 bg-gradient-to-br ${gd.bg}`}
                   >
-                    <span className="gift-anim text-2xl">{gd.emoji}</span>
+                    <span
+                      className="gift-anim h-8 w-8 [&>svg]:h-full [&>svg]:w-full"
+                      dangerouslySetInnerHTML={{ __html: gd.icon }}
+                    />
                   </div>
                 );
               })}
@@ -663,7 +666,7 @@ export default function ProfileModal({
                     onClick={() => {
                       setStatusEmoji((cur) => (cur === e ? "" : e));
                     }}
-                    className={`grid h-9 place-items-center rounded-lg text-lg transition-all hover:scale-110 hover:bg-white/10 ${
+                    className={`emoji-ios grid h-9 place-items-center rounded-lg text-xl transition-all hover:scale-110 hover:bg-white/10 ${
                       statusEmoji === e ? "bg-[#5865f2]/25 ring-1 ring-[#5865f2]" : ""
                     }`}
                   >

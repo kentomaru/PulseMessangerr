@@ -372,8 +372,10 @@ export async function ensureSchema(): Promise<void> {
       recipient_id uuid not null references users(id) on delete cascade,
       gift_key text not null,
       message text,
+      hide_sender boolean not null default false,
       created_at timestamptz not null default now()
     );
+    alter table gifts add column if not exists hide_sender boolean not null default false;
   `);
   log.info("Схема базы данных проверена (ensureSchema: ok)");
 }

@@ -9,7 +9,7 @@ import { GIFTS } from "@/lib/gifts";
 /**
  * GET /api/gifts?userId=<id> — подарки пользователя (для его профиля).
  */
-export const GET = withApi("gifts:list", async ({ req }) => {
+export const GET = withApi("gifts:list", async ({ req, me }) => {
   const userId = req.nextUrl.searchParams.get("userId") ?? "";
   if (!isUuid(userId)) return NextResponse.json({ error: "Пользователь не найден" }, { status: 404 });
   const rows = await db
@@ -27,13 +27,17 @@ export const GET = withApi("gifts:list", async ({ req }) => {
   return NextResponse.json({
     gifts: rows.map((r) => {
       const s = r.senderId ? senders.get(r.senderId) : undefined;
+      // Как в ТГ: имя скрыто для всех, КРОМЕ самого получателя
+      const hidden = !!(r as { hideSender?: boolean }).hideSender;
+      const visible = hidden && me.id !== userId ? undefined : s;
       return {
         id: r.id,
         giftKey: r.giftKey,
         message: r.message,
         createdAt: new Date(r.createdAt).toISOString(),
-        sender: s
-          ? { id: s.id, displayName: s.displayName, username: s.username, avatarUrl: s.avatarUrl }
+        anonymous: hidden,
+        sender: visible
+          ? { id: visible.id, displayName: visible.displayName, username: visible.username, avatarUrl: visible.avatarUrl }
           : null,
       };
     }),
@@ -49,6 +53,7 @@ export const POST = withApi("gifts:send", async ({ req, me }) => {
   const recipientId = String(body.recipientId ?? "");
   const giftKey = String(body.giftKey ?? "");
   const message = typeof body.message === "string" ? body.message.trim().slice(0, 140) : "";
+  const hideSender = body.hideSender === true;
   if (!isUuid(recipientId)) return NextResponse.json({ error: "Пользователь не найден" }, { status: 404 });
   if (recipientId === me.id)
     return NextResponse.json({ error: "Себе подарки дарить нельзя" }, { status: 400 });
@@ -66,6 +71,7 @@ export const POST = withApi("gifts:send", async ({ req, me }) => {
     recipientId,
     giftKey,
     message: message || null,
+    hideSender,
   });
   return NextResponse.json({ ok: true, gift: gift.key, recipient: publicUser(recipient) });
 });

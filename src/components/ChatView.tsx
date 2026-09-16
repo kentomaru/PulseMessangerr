@@ -933,8 +933,12 @@ export default function ChatView({
   const speechRecRef = useRef<any>(null);
   const liveTranscriptRef = useRef("");
   const pendingTranscriptRef = useRef<string | null>(null);
+  /** Последний промежуточный (ещё не финальный) кусок речи. */
+  const interimTranscriptRef = useRef("");
   /** Идёт ли живой разбор речи (чтобы движок перезапускался после пауз). */
   const speechActiveRef = useRef(false);
+  /** Живой текст во время записи — видно прямо в панели записи. */
+  const [livePreview, setLivePreview] = useState("");
 
   const startVoiceRecording = async () => {
     if (!canPost || voiceRecActive || noteRecorder) return;
@@ -959,6 +963,8 @@ export default function ChatView({
       // Параллельно с записью слушаем микрофон штатным движком браузера (ru-RU).
       // После отправки привяжем текст к сообщению — «В текст» сработает мгновенно.
       liveTranscriptRef.current = "";
+      interimTranscriptRef.current = "";
+      setLivePreview("");
       speechActiveRef.current = true;
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const SRC = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
@@ -967,16 +973,20 @@ export default function ChatView({
           const recognition = new SRC();
           recognition.lang = "ru-RU";
           recognition.continuous = true;
-          recognition.interimResults = false;
+          recognition.interimResults = true;
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           recognition.onresult = (e: any) => {
+            interimTranscriptRef.current = "";
             for (let i = e.resultIndex; i < e.results.length; i++) {
               if (e.results[i].isFinal) {
                 const chunk = `${e.results[i][0].transcript} `;
                 liveTranscriptRef.current += chunk;
                 console.info("[pulse-stt] фрагмент:", chunk.trim(), "| всего:", liveTranscriptRef.current.trim());
+              } else {
+                interimTranscriptRef.current = e.results[i][0].transcript ?? "";
               }
             }
+            setLivePreview(`${liveTranscriptRef.current}${interimTranscriptRef.current}`.replace(/\s+/g, " ").trim());
           };
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           recognition.onerror = (e: any) => {
@@ -1018,8 +1028,10 @@ export default function ChatView({
     if (speechRecRef.current) {
       try { speechRecRef.current.stop(); } catch { /* уже остановлен */ }
       speechRecRef.current = null;
-      const t = liveTranscriptRef.current.trim();
+      // Финальные куски + последний промежуточный (движок мог не успеть его финализировать)
+      const t = `${liveTranscriptRef.current} ${interimTranscriptRef.current}`.replace(/\s+/g, " ").trim();
       pendingTranscriptRef.current = t || null;
+      console.info(t ? `[pulse-stt] текст прикреплён к голосовому: «${t}»` : "[pulse-stt] живого текста нет (движок ничего не вернул)");
     } else {
       pendingTranscriptRef.current = null;
     }
@@ -2557,7 +2569,14 @@ export default function ChatView({
               </span>
               <div className="min-w-0 flex-1">
                 <p className="text-sm font-semibold text-rose-200 tabular-nums">{formatDuration(recSecs)}</p>
-                <p className="text-[11px] text-white/40">Запись голосового сообщения…</p>
+                {livePreview ? (
+                  <p className="flex items-center gap-1 truncate text-[11px] text-emerald-200/80" title={livePreview}>
+                    <Mic className="h-3 w-3 shrink-0" />
+                    <span className="truncate">{livePreview}</span>
+                  </p>
+                ) : (
+                  <p className="text-[11px] text-white/40">Говорите — текст появится прямо здесь…</p>
+                )}
               </div>
               <button
                 onClick={() => stopVoiceRecording(false)}
@@ -3310,7 +3329,7 @@ function MessageContextMenu({
           <button
             key={e}
             onClick={onReact.bind(null, e)}
-            className="rounded-lg py-1.5 text-lg transition-transform hover:scale-125 active:scale-95"
+            className="emoji-ios rounded-lg py-1.5 text-xl transition-transform hover:scale-125 active:scale-95"
             title={`Реакция ${e}`}
           >
             {e}
@@ -4416,12 +4435,29 @@ function VoiceBubble({
     setSttBusy(true);
     setSttError("");
     try {
-      const { transcribeAudio, setCachedTranscript } = await import("@/lib/transcribe");
+      const { transcribeAudio, getCachedTranscript, setCachedTranscript } = await import("@/lib/transcribe");
+      // 1) Живая расшифровка, записанная в момент отправки, — мгновенно
+      const cached = getCachedTranscript(messageId);
+      if (cached) {
+        console.info("[pulse-stt] беру готовую расшифровку из кэша");
+        setSttText(cached);
+        setSttBusy(false);
+        return;
+      }
+      // 2) Иначе — локальная модель (если доступна)
+      console.info("[pulse-stt] кэша нет, пробую локальную модель…");
       const text = await transcribeAudio(url);
       setSttText(text || "(речь не распознана)");
       setCachedTranscript(messageId, text || "(речь не распознана)");
     } catch (e) {
-      setSttError(e instanceof Error ? e.message : "Не удалось распознать речь");
+      console.warn("[pulse-stt] не удалось распознать:", e);
+      setSttError(
+        e instanceof Error && /модель|загруз|сеть|fetch|network/i.test(e.message)
+          ? "Не получилось: модель распознавания недоступна в этой сети. Запишите голосовое заново — текст соберётся прямо во время записи."
+          : e instanceof Error
+          ? e.message
+          : "Не удалось распознать речь",
+      );
     } finally {
       setSttBusy(false);
     }
@@ -5485,7 +5521,7 @@ function EmojiPicker({
               <button
                 key={e}
                 onClick={() => onPick(e)}
-                className="flex h-9 items-center justify-center rounded-xl text-xl transition-transform hover:scale-125 hover:bg-white/8 active:scale-95"
+                className="emoji-ios flex h-10 items-center justify-center rounded-2xl text-[22px] transition-all hover:scale-125 hover:bg-white/10 active:scale-95"
               >
                 {e}
               </button>

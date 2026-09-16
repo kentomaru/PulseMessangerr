@@ -2,8 +2,10 @@
 
 import { useEffect, useState } from "react";
 import {
+  ArrowLeft,
   Ban,
   CalendarDays,
+  Check,
   Copy,
   Gift,
   Loader2,
@@ -274,10 +276,13 @@ export default function UserCardModal({ user, onClose, onMessage, myId }: Props)
                 return (
                   <div
                     key={g.id}
-                    title={`${gd.name}${g.sender ? ` — от ${g.sender.displayName}` : ""}${g.message ? ` · «${g.message}»` : ""}`}
+                    title={`${gd.name}${g.anonymous ? " — от Анонима" : g.sender ? ` — от ${g.sender.displayName}` : ""}${g.message ? ` · «${g.message}»` : ""}`}
                     className={`gift-pop gift-shine relative flex aspect-square items-center justify-center overflow-hidden rounded-2xl border border-white/10 bg-gradient-to-br ${gd.bg}`}
                   >
-                    <span className="gift-anim text-3xl">{gd.emoji}</span>
+                    <span
+                      className="gift-anim h-9 w-9 [&>svg]:h-full [&>svg]:w-full"
+                      dangerouslySetInnerHTML={{ __html: gd.icon }}
+                    />
                   </div>
                 );
               })}
@@ -401,6 +406,8 @@ function GiftPicker({
   const [mePremium, setMePremium] = useState<boolean | null>(null);
   const [picked, setPicked] = useState<string | null>(null);
   const [message, setMessage] = useState("");
+  /** «Скрыть моё имя» — как в ТГ, получатель увидит «Аноним». */
+  const [hideName, setHideName] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
@@ -412,7 +419,7 @@ function GiftPicker({
       alive = false;
     };
   }, []);
-  const gift = picked ? GIFTS.find((g) => g.key === picked) : null;
+  const gift = picked ? GIFTS.find((g) => g.key === picked) ?? null : null;
 
   const send = async () => {
     if (!gift || busy) return;
@@ -421,7 +428,7 @@ function GiftPicker({
     try {
       await api("/api/gifts", {
         method: "POST",
-        body: JSON.stringify({ recipientId: userId, giftKey: gift.key, message }),
+        body: JSON.stringify({ recipientId: userId, giftKey: gift.key, message, hideSender: hideName }),
       });
       onSent();
       onClose();
@@ -438,63 +445,115 @@ function GiftPicker({
         onClick={(e) => e.stopPropagation()}
         className="glass-strong nice-scroll max-h-[85vh] w-full max-w-md overflow-y-auto rounded-[1.6rem] p-5 shadow-2xl"
       >
-        <div className="mb-3 flex items-center justify-between">
-          <p className="font-display text-lg font-bold">Подарок для {name}</p>
-          <button onClick={onClose} className="rounded-full bg-white/10 p-1.5 text-white/70">
-            <X className="h-4 w-4" />
-          </button>
-        </div>
-        <div className="mb-2 flex items-center justify-between text-[12px]">
-          <span className="flex items-center gap-1 text-white/45">
-            <Star className="h-3 w-3 text-amber-300" />
-            Баланс звёзд
-          </span>
-          <span className="font-bold text-amber-300">{mePremium ? "∞ · Premium" : "0 · нужен Premium"}</span>
-        </div>
-        <div className="grid grid-cols-4 gap-2">
-          {GIFTS.map((g) => (
+        {/* ── Шаг 2: подтверждение подарка (как в ТГ — большой подарок, подпись, имя) ── */}
+        {gift ? (
+          <>
+            <div className="mb-3 flex items-center gap-2">
+              <button
+                onClick={() => setPicked(null)}
+                title="Назад к каталогу"
+                className="rounded-full bg-white/10 p-1.5 text-white/70 transition-colors hover:bg-white/15"
+              >
+                <ArrowLeft className="h-4 w-4" />
+              </button>
+              <p className="font-display flex-1 text-lg font-bold">Подарить «{gift.name}»</p>
+              <button onClick={onClose} className="rounded-full bg-white/10 p-1.5 text-white/70">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className={`gift-shine relative mx-auto grid aspect-square w-44 place-items-center overflow-hidden rounded-3xl border border-white/10 bg-gradient-to-br ${gift.bg}`}>
+              <span
+                className="gift-anim h-24 w-24 [&>svg]:h-full [&>svg]:w-full"
+                dangerouslySetInnerHTML={{ __html: gift.icon }}
+              />
+            </div>
+            <p className="pt-3 text-center text-[15px] font-semibold">{gift.name}</p>
+            <p className="flex items-center justify-center gap-1 pt-0.5 text-[12px] font-bold text-amber-300">
+              <Star className="h-3 w-3" /> {gift.price} звёзд
+            </p>
+            <textarea
+              value={message}
+              onChange={(e) => setMessage(e.target.value)}
+              maxLength={140}
+              rows={2}
+              placeholder="Сообщение к подарку (необязательно)…"
+              className="ring-focus mt-3 w-full resize-none rounded-xl border border-white/10 bg-white/[0.05] px-3 py-2.5 text-sm"
+            />
             <button
-              key={g.key}
-              onClick={() => setPicked(g.key)}
-              title={`${g.name} · ${g.price} звёзд`}
-              className={`flex flex-col items-center gap-1 rounded-2xl border p-2.5 transition-all ${
-                picked === g.key
-                  ? "border-amber-300/70 bg-amber-300/10"
-                  : "border-white/10 bg-white/[0.03] hover:bg-white/8"
-              }`}
+              onClick={() => setHideName((v) => !v)}
+              className="mt-2 flex w-full items-center gap-3 rounded-2xl border border-white/8 bg-white/[0.03] px-4 py-3 text-left transition-colors hover:bg-white/8"
+              title="Получатель не увидит, кто подарил"
             >
-              <span className={`grid h-12 w-12 place-items-center rounded-xl bg-gradient-to-br text-3xl ${g.bg}`}>
-                {g.emoji}
+              <span
+                className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-md border transition-colors ${
+                  hideName ? "border-amber-300 bg-amber-300" : "border-white/25"
+                }`}
+              >
+                {hideName && <Check className="h-3.5 w-3.5 text-black" />}
               </span>
-              <span className="text-[10px] text-white/55">{g.name}</span>
-              <span className="flex items-center gap-0.5 text-[10px] font-bold text-amber-300 tabular-nums">
-                <Star className="h-2.5 w-2.5" /> {g.price}
+              <span className="min-w-0 flex-1">
+                <span className="block text-[13px] font-medium">Скрыть моё имя</span>
+                <span className="block text-[11px] text-white/35">{name} увидит подарок от «Анонима»</span>
               </span>
             </button>
-          ))}
-        </div>
-        <input
-          value={message}
-          onChange={(e) => setMessage(e.target.value)}
-          maxLength={140}
-          placeholder="Сообщение к подарку (необязательно)…"
-          className="ring-focus mt-3 w-full rounded-xl border border-white/10 bg-white/[0.05] px-3 py-2.5 text-sm"
-        />
-        {error && <p className="pt-2 text-[12px] text-rose-300">{error}</p>}
-        {!mePremium && (
-          <p className="pt-2 text-[11px] leading-snug text-white/40">
-            Дарить подарки могут только участники с Pulse Premium — у них бесконечные звёзды.
-            Включается бесплатно в профиле.
-          </p>
+            {error && <p className="pt-2 text-[12px] text-rose-300">{error}</p>}
+            {!mePremium && (
+              <p className="pt-2 text-[11px] leading-snug text-white/40">
+                Дарить подарки могут только участники с Pulse Premium — у них бесконечные звёзды.
+                Включается бесплатно в профиле.
+              </p>
+            )}
+            <button
+              onClick={() => void send()}
+              disabled={busy || mePremium !== true}
+              className="btn-gradient mt-3 flex w-full items-center justify-center gap-2 rounded-2xl py-3 text-sm font-semibold text-white disabled:opacity-40"
+            >
+              {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Gift className="h-4 w-4" />}
+              Подарить за {gift.price} звёзд
+            </button>
+          </>
+        ) : (
+          /* ── Шаг 1: каталог подарков ── */
+          <>
+            <div className="mb-3 flex items-center justify-between">
+              <p className="font-display text-lg font-bold">Подарок для {name}</p>
+              <button onClick={onClose} className="rounded-full bg-white/10 p-1.5 text-white/70">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="mb-3 flex items-center justify-between text-[12px]">
+              <span className="flex items-center gap-1 text-white/45">
+                <Star className="h-3 w-3 text-amber-300" />
+                Баланс звёзд
+              </span>
+              <span className="font-bold text-amber-300">{mePremium ? "∞ · Premium" : "0 · нужен Premium"}</span>
+            </div>
+            <div className="grid grid-cols-4 gap-2">
+              {GIFTS.map((g) => (
+                <button
+                  key={g.key}
+                  onClick={() => setPicked(g.key)}
+                  title={`${g.name} · ${g.price} звёзд`}
+                  className="flex flex-col items-center gap-1 rounded-2xl border border-white/10 bg-white/[0.03] p-2.5 transition-all hover:border-amber-300/50 hover:bg-white/8"
+                >
+                  <span className={`grid h-12 w-12 place-items-center rounded-xl bg-gradient-to-br ${g.bg}`}>
+                    <span
+                      className="gift-anim h-9 w-9 [&>svg]:h-full [&>svg]:w-full"
+                      dangerouslySetInnerHTML={{ __html: g.icon }}
+                    />
+                  </span>
+                  <span className="text-[10px] text-white/55">{g.name}</span>
+                  <span className="flex items-center gap-0.5 text-[10px] font-bold text-amber-300 tabular-nums">
+                    <Star className="h-2.5 w-2.5" /> {g.price}
+                  </span>
+                </button>
+              ))}
+            </div>
+            <p className="pt-3 text-[11px] leading-snug text-white/35">
+              Выберите подарок — дальше можно добавить подпись и решить, показывать ли ваше имя.
+            </p>
+          </>
         )}
-        <button
-          onClick={() => void send()}
-          disabled={!gift || busy || mePremium !== true}
-          className="btn-gradient mt-3 flex w-full items-center justify-center gap-2 rounded-2xl py-3 text-sm font-semibold text-white disabled:opacity-40"
-        >
-          {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Gift className="h-4 w-4" />}
-          {gift ? `Подарить за ${gift.price} звёзд` : "Выберите подарок"}
-        </button>
       </div>
     </div>
   );

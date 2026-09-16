@@ -418,6 +418,8 @@ export const gifts = pgTable(
       .references(() => users.id, { onDelete: "cascade" }),
     giftKey: text("gift_key").notNull(),
     message: text("message"),
+    /** «Скрыть моё имя» как в ТГ — получатель видит «Аноним». */
+    hideSender: boolean("hide_sender").notNull().default(false),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
 );
