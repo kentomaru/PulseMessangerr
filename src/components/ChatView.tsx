@@ -1930,6 +1930,16 @@ ${x.text}` : x.text));
                 new Date(m.createdAt).getTime() - new Date(prev.createdAt).getTime() < 5 * 60_000;
               const own = m.senderId === me.id;
               const canDelete = own || (isSpace && (meta?.myRole === "owner" || meta?.myRole === "admin"));
+              // Конец ли группы сообщений: для радиусов «как в ТГ»
+              const next = listMessages[i + 1];
+              const lastOfGroup = !(
+                next &&
+                sameDay(m.createdAt, next.createdAt) &&
+                next.senderId === m.senderId &&
+                m.type !== "call" &&
+                next.type !== "call" &&
+                new Date(next.createdAt).getTime() - new Date(m.createdAt).getTime() < 5 * 60_000
+              );
               // Упоминание меня: строка подсвечивается, как в больших мессенджерах
               const mentionMe =
                 !own && m.type === "text" && m.content.toLowerCase().includes(`@${me.username.toLowerCase()}`);
@@ -1965,6 +1975,7 @@ ${x.text}` : x.text));
                       own={own}
                       space={isSpace}
                       grouped={grouped}
+                      lastOfGroup={lastOfGroup}
                       read={own && new Date(m.createdAt).getTime() <= readUpTo}
                       canDelete={canDelete}
                       canPin={canPinMessage(m)}
@@ -3554,6 +3565,7 @@ function MessageBubble({
   own,
   space,
   grouped,
+  lastOfGroup = true,
   read,
   canDelete,
   canPin,
@@ -3580,6 +3592,8 @@ function MessageBubble({
   own: boolean;
   space: boolean;
   grouped: boolean;
+  /** Последнее сообщение в своей группе — влияет на «хвостик» пузыря. */
+  lastOfGroup?: boolean;
   read: boolean;
   canDelete: boolean;
   canPin: boolean;
@@ -3676,8 +3690,8 @@ function MessageBubble({
   return (
     <div
       className={`group no-callout relative flex items-start gap-2 ${media ? "py-1.5" : "py-0.5"} ${
-        alignRight ? "justify-end" : "justify-start"
-      } ${highlighted ? "animate-pulse-dot" : ""}`}
+        grouped ? "" : "mt-1.5"
+      } ${alignRight ? "justify-end" : "justify-start"} ${highlighted ? "animate-pulse-dot" : ""}`}
       onContextMenu={(e) => {
         e.preventDefault();
         onMenu(e.clientX, e.clientY, message);
@@ -3731,10 +3745,14 @@ function MessageBubble({
 
         <div
           className={`relative overflow-hidden ${
-            media || sticker || gif || legacyVideo || poll ? "" : own && !space ? "bubble-own text-white" : "bubble-peer text-white/90"
-          } ${media || sticker || gif || legacyVideo || poll ? "" : `${own && !space ? "bubble-own-radius" : "bubble-peer-radius"} px-4 py-2.5`} ${
-            highlighted ? "ring-2 ring-[#5865f2]/60" : ""
-          }`}
+            media || sticker || gif || legacyVideo ? "" : own && !space ? "bubble-own text-white" : "bubble-peer text-white/90"
+          } ${
+            media || sticker || gif || legacyVideo
+              ? ""
+              : `${own && !space ? "bubble-own-radius" : "bubble-peer-radius"} ${
+                  grouped ? (lastOfGroup ? "g-last" : "g-mid") : lastOfGroup ? "" : "g-first"
+                } px-4 py-2.5`
+          } ${highlighted ? "ring-2 ring-[#5865f2]/60" : ""}`}
         >
           {/* Цитата (ответ на сообщение) */}
           {message.replyTo && (
@@ -3844,7 +3862,7 @@ function MessageBubble({
           </div>
         )}
 
-        <div className={`mt-1 flex items-center gap-1 text-[10px] text-white/30 ${alignRight ? "justify-end" : ""}`}>
+        <div className={`mt-1 flex items-center gap-1 text-[11px] text-white/35 tabular-nums ${alignRight ? "justify-end" : ""}`}>
           {message.silent && (
             <span title="Отправлено без звука">
               <VolumeX className="h-3 w-3 text-white/35" />
