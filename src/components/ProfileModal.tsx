@@ -359,32 +359,8 @@ export default function ProfileModal({
         />
       </div>
 
-      {/* Вкладки: Профиль / Приватность */}
-      <div className="flex gap-1 border-b border-white/8 px-7 pt-3">
-        {(
-          [
-            ["profile", "Профиль", null],
-            ["privacy", "Приватность", <Shield key="i" className="h-3.5 w-3.5" />],
-            ["appearance", "Оформление", <Palette key="p" className="h-3.5 w-3.5" />],
-            ["friends", "Друзья", <UsersRound key="f" className="h-3.5 w-3.5" />],
-          ] as const
-        ).map(([t, label, icon]) => (
-          <button
-            key={t}
-            onClick={() => setTab(t)}
-            className={`relative flex items-center gap-2 px-4 py-2.5 text-sm font-medium transition-colors ${
-              tab === t ? "text-white" : "text-white/40 hover:text-white/70"
-            }`}
-          >
-            {icon}
-            {label}
-            {tab === t && (
-              <span className="absolute inset-x-3 -bottom-px h-0.5 rounded-full bg-gradient-to-r from-[#5865f2] to-[#7289da]" />
-            )}
-          </button>
-        ))}
-      </div>
-
+      {/* Переключатель вкладок убран: те же разделы открываются строками ниже
+          (Приватность / Оформление / Друзья / Моя карточка) */}
       <div className="nice-scroll max-h-[60vh] space-y-5 overflow-y-auto px-7 pt-4 pb-7">
         {tab === "appearance" ? (
           <AppearanceTab
