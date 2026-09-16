@@ -20,6 +20,7 @@ import {
   Archive,
   Mail,
   ArrowLeft,
+  X,
   MonitorSmartphone,
   Phone,
   Pin,
@@ -526,6 +527,15 @@ export default function Sidebar({
             className="w-full bg-transparent text-sm placeholder:text-white/30"
           />
           {searching && <Loader2 className="h-3.5 w-3.5 animate-spin text-white/40" />}
+          {!searching && query && (
+            <button
+              onClick={() => setQuery("")}
+              title="Очистить поиск"
+              className="rounded-full p-0.5 text-white/35 transition-colors hover:text-white"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          )}
         </label>
 
         <AnimatePresence>
@@ -710,6 +720,12 @@ export default function Sidebar({
               className="mb-1 flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-[13px] text-white/50 transition-colors hover:bg-white/5 hover:text-white/80"
             >
               <Archive className="h-4 w-4" /> Архив · {archivedIds.size}
+              {(() => {
+                const un = conversations.filter((c) => archivedIds.has(c.id)).reduce((s2, c) => s2 + (c.unreadCount || 0), 0);
+                return un > 0 ? (
+                  <span className="ml-auto rounded-full bg-[#5865f2] px-1.5 py-0.5 text-[10px] font-bold tabular-nums">{un}</span>
+                ) : null;
+              })()}
             </button>
           )
         )}

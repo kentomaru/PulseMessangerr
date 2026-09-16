@@ -8,6 +8,7 @@ import {
   CircleDot,
   ImageIcon,
   Loader2,
+  Link2,
   LogOut,
   MessageSquareLock,
   Palette,
@@ -76,6 +77,8 @@ export default function ProfileModal({
   const [displayName, setDisplayName] = useState(me.displayName);
   const [username, setUsername] = useState(me.username);
   const [copiedName, setCopiedName] = useState(false);
+  /** «Моя ссылка»: глубокая ссылка на профиль (#user=…). */
+  const [copiedLink, setCopiedLink] = useState(false);
   const [bio, setBio] = useState(me.bio);
   const [birthday, setBirthday] = useState(me.birthday ?? "");
   const [avatarUrl, setAvatarUrl] = useState<string | null>(me.avatarUrl);
@@ -401,23 +404,47 @@ export default function ProfileModal({
             <span className="font-display text-lg font-bold">{displayName || me.username}</span>
             <StatusEmoji value={statusEmoji} size={32} />
           </p>
-          <button
-            onClick={() => {
-              const url = `${window.location.origin}${window.location.pathname}#user=${username}`;
-              void copyToClipboard(`@${username}`).then((ok) => {
-                if (ok) {
-                  setCopiedName(true);
-                  setTimeout(() => setCopiedName(false), 1500);
-                } else {
-                  window.prompt("Скопируйте юзернейм:", `@${username}`);
-                }
-              });
-            }}
-            title="Скопировать юзернейм"
-            className="text-xs text-white/35 underline-offset-2 hover:underline"
-          >
-            {copiedName ? "Скопировано ✓" : `@${username}`}
-          </button>
+          <div className="flex items-center justify-center gap-2">
+            <button
+              onClick={() => {
+                void copyToClipboard(`@${username}`).then((ok) => {
+                  if (ok) {
+                    setCopiedName(true);
+                    setTimeout(() => setCopiedName(false), 1500);
+                  } else {
+                    window.prompt("Скопируйте юзернейм:", `@${username}`);
+                  }
+                });
+              }}
+              title="Скопировать юзернейм"
+              className="text-xs text-white/35 underline-offset-2 hover:underline"
+            >
+              {copiedName ? "Скопировано ✓" : `@${username}`}
+            </button>
+            {/* Инвайт-ссылка на мой профиль — как «ссылка на профиль» в ТГ */}
+            <button
+              onClick={() => {
+                const url = `${window.location.origin}${window.location.pathname}#user=${username}`;
+                void copyToClipboard(url).then((ok) => {
+                  if (ok) {
+                    setCopiedLink(true);
+                    setTimeout(() => setCopiedLink(false), 1500);
+                  } else {
+                    window.prompt("Скопируйте ссылку:", url);
+                  }
+                });
+              }}
+              title="Скопировать ссылку на мой профиль — по ней любой откроет вашу карточку"
+              className={`flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium transition-colors ${
+                copiedLink
+                  ? "border-emerald-300/40 text-emerald-300"
+                  : "border-white/10 bg-white/5 text-white/45 hover:bg-white/10 hover:text-white/80"
+              }`}
+            >
+              <Link2 className="h-2.5 w-2.5" />
+              {copiedLink ? "Ссылка скопирована ✓" : "Моя ссылка"}
+            </button>
+          </div>
         </div>
 
         <label className="block">

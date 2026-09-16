@@ -6,6 +6,7 @@ import {
   CalendarDays,
   Copy,
   Loader2,
+  Link2,
   MessageSquareLock,
   MessageSquareText,
   PhoneOff,
@@ -32,6 +33,7 @@ export default function UserCardModal({ user, onClose, onMessage }: Props) {
   // временный сбой/кэш.
   // Отношения с этим пользователем: друзья/заявки + блокировка
   const [copiedName, setCopiedName] = useState(false);
+  const [copiedLink, setCopiedLink] = useState(false);
   const [rel, setRel] = useState<"none" | "friend" | "incoming" | "outgoing" | null>(null);
   const [blocked, setBlocked] = useState(false);
   const [relBusy, setRelBusy] = useState(false);
@@ -145,23 +147,44 @@ export default function UserCardModal({ user, onClose, onMessage }: Props) {
           {/* Кастомный статус-эмодзи: эмодзи или анимированная гифка */}
           <StatusEmoji value={user.statusEmoji} size={36} />
         </h3>
-        <button
-          onClick={() => {
-            const ok = navigator.clipboard?.writeText(`@${user.username}`);
-            void ok;
-            setCopiedName(true);
-            setTimeout(() => setCopiedName(false), 1500);
-          }}
-          title="Скопировать юзернейм"
-          className="mt-0.5 inline-flex items-center gap-1 text-sm text-white/40 transition-colors hover:text-white/75"
-        >
-          @{user.username}
-          {copiedName ? (
-            <span className="text-[10px] text-emerald-300">скопировано</span>
-          ) : (
-            <Copy className="h-3 w-3 opacity-50" />
-          )}
-        </button>
+        <div className="mt-0.5 flex items-center justify-center gap-2">
+          <button
+            onClick={() => {
+              const ok = navigator.clipboard?.writeText(`@${user.username}`);
+              void ok;
+              setCopiedName(true);
+              setTimeout(() => setCopiedName(false), 1500);
+            }}
+            title="Скопировать юзернейм"
+            className="inline-flex items-center gap-1 text-sm text-white/40 transition-colors hover:text-white/75"
+          >
+            @{user.username}
+            {copiedName ? (
+              <span className="text-[10px] text-emerald-300">скопировано</span>
+            ) : (
+              <Copy className="h-3 w-3 opacity-50" />
+            )}
+          </button>
+          {/* Инвайт-ссылка на профиль человека */}
+          <button
+            onClick={() => {
+              const url = `${window.location.origin}${window.location.pathname}#user=${user.username}`;
+              void navigator.clipboard?.writeText(url).then(() => {
+                setCopiedLink(true);
+                setTimeout(() => setCopiedLink(false), 1500);
+              });
+            }}
+            title="Скопировать ссылку на профиль"
+            className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium transition-colors ${
+              copiedLink
+                ? "border-emerald-300/40 text-emerald-300"
+                : "border-white/10 bg-white/5 text-white/45 hover:bg-white/10 hover:text-white/80"
+            }`}
+          >
+            <Link2 className="h-2.5 w-2.5" />
+            {copiedLink ? "Ссылка скопирована ✓" : "Ссылка"}
+          </button>
+        </div>
         <p className={`mt-1.5 text-xs font-medium ${user.online ? "text-emerald-400" : "text-white/35"}`}>
           {lastSeenLabel(user.lastSeenAt, user.online)}
         </p>
@@ -192,6 +215,19 @@ export default function UserCardModal({ user, onClose, onMessage }: Props) {
           <p className="mt-2 flex items-center justify-center gap-1.5 text-xs text-white/45">
             <CalendarDays className="h-3 w-3" />
             День рождения: {user.birthday}
+            {(() => {
+              // Возраст считаем автоматически (ДД.ММ.ГГГГ)
+              const m = /^(\d{1,2})\.(\d{1,2})\.(\d{4})$/.exec(user.birthday.trim());
+              if (!m) return null;
+              const bd = new Date(Number(m[3]), Number(m[2]) - 1, Number(m[1]));
+              if (Number.isNaN(bd.getTime())) return null;
+              const now = new Date();
+              let age = now.getFullYear() - bd.getFullYear();
+              if (now.getMonth() < bd.getMonth() || (now.getMonth() === bd.getMonth() && now.getDate() < bd.getDate()))
+                age--;
+              if (age < 0 || age > 120) return null;
+              return <span className="text-white/60">· {age} лет</span>;
+            })()}
           </p>
         )}
 

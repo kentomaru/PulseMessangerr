@@ -176,167 +176,34 @@ export const GIF_PACK: GifItem[] = [
 const CE = (inner: string) =>
   `<svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 24 24" style="vertical-align:-0.15em">${inner}</svg>`;
 
+/** SVG-обёртка: настоящий эмодзи-глиф + лёгкая анимация. */
+const CE_EMOJI = (emoji: string, anim: string) =>
+  `<svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 24 24" style="vertical-align:-0.15em"><text x="12" y="18" text-anchor="middle" font-size="19">${emoji}${anim}</text></svg>`;
+/** Пульс размера. */
+const PULSE = `<animate attributeName="font-size" values="19;21.5;19" dur="0.9s" repeatCount="indefinite"/>`;
+/** Мягкое мигание. */
+const BLINK = `<animate attributeName="opacity" values="1;0.55;1" dur="1.2s" repeatCount="indefinite"/>`;
+
 export const CUSTOM_EMOJI: CustomEmoji[] = [
-  {
-    id: "fire",
-    token: ":ce_fire:",
-    title: "Огонь",
-    svg: CE(
-      `<path fill="url(#f1)" d="M12 2 c1 4 -3 6 -3 10 a3 3 0 0 0 6 0 c0 -2 -1 -3 -1.5 -5 1.5 1 3 3 3 5.5 a4.5 4.5 0 1 1 -9 0 c0 -5 3 -7 4.5 -10.5z"/>
-      <defs><linearGradient id="f1" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffd000"/><stop offset="1" stop-color="#ff5c00"/></linearGradient></defs>
-      <animateTransform attributeName="transform" type="scale" values="1;1.08;0.96;1" dur="0.7s" repeatCount="indefinite" additive="sum"/>`,
-    ),
-  },
-  {
-    id: "heart",
-    token: ":ce_heart:",
-    title: "Сердце",
-    svg: CE(
-      `<path fill="#ff4d6d" d="M12 21 C5 16 2 12 2 8.5 A4.5 4.5 0 0 1 10.5 6 A4.5 4.5 0 0 1 19 8.5 c0 3.5 -3 7.5 -7 12.5z">
-      <animateTransform attributeName="transform" type="scale" values="1;1.15;1" dur="0.8s" repeatCount="indefinite" additive="sum"/></path>`,
-    ),
-  },
-  {
-    id: "star",
-    token: ":ce_star:",
-    title: "Звезда",
-    svg: CE(
-      `<path fill="#ffd000" d="M12 2 l2.6 6.6 7 .5 -5.4 4.5 1.8 6.8 -6 -3.8 -6 3.8 1.8 -6.8 -5.4 -4.5 7 -.5z">
-      <animateTransform attributeName="transform" type="rotate" values="0 12 12;12 12 12;0 12 12;-12 12 12;0 12 12" dur="1.6s" repeatCount="indefinite"/></path>`,
-    ),
-  },
-  {
-    id: "party",
-    token: ":ce_party:",
-    title: "Праздник",
-    svg: CE(
-      `<path fill="#7c5cff" d="M6 9 L15 18 L4 20z"/><circle cx="15" cy="6" r="2" fill="#ffd000"/><circle cx="19" cy="10" r="1.6" fill="#ff6b6b"/><circle cx="18" cy="15" r="1.4" fill="#4ecdc4"/>
-      <animateTransform attributeName="transform" type="rotate" values="-6 12 12;6 12 12;-6 12 12" dur="0.7s" repeatCount="indefinite"/>`,
-    ),
-  },
-  {
-    id: "hundred",
-    token: ":ce_100:",
-    title: "Сотка",
-    svg: CE(
-      `<text x="12" y="16" text-anchor="middle" font-family="Arial Black,Arial" font-size="12" font-weight="900" fill="#ff3b30">100
-      <animate attributeName="opacity" values="1;0.6;1" dur="0.9s" repeatCount="indefinite"/></text>
-      <path d="M3 19 h18" stroke="#ff3b30" stroke-width="2" stroke-linecap="round"/>`,
-    ),
-  },
-  {
-    id: "skull",
-    token: ":ce_skull:",
-    title: "Череп",
-    svg: CE(
-      `<path fill="#e8e8f0" d="M12 2 a8 8 0 0 0 -8 8 c0 3 1.5 5 3.5 6.2 L7.5 20 h9 l0 -3.8 C18.5 15 20 13 20 10 a8 8 0 0 0 -8 -8z"/>
-      <circle cx="9" cy="10" r="2.2" fill="#20242c"/><circle cx="15" cy="10" r="2.2" fill="#20242c"/>
-      <path d="M10 20 v2 M14 20 v2" stroke="#e8e8f0" stroke-width="2"/>
-      <animate attributeName="opacity" values="1;0.75;1" dur="1.8s" repeatCount="indefinite"/>`,
-    ),
-  },
-  {
-    id: "crown",
-    token: ":ce_crown:",
-    title: "Корона",
-    svg: CE(
-      `<path fill="#ffd000" d="M3 18 L2 8 l5 4 5 -8 5 8 5 -4 -1 10z">
-      <animateTransform attributeName="transform" type="translate" values="0 0;0 -1.2;0 0" dur="1.2s" repeatCount="indefinite"/></path>
-      <circle cx="12" cy="4" r="1.2" fill="#ff6b6b"/>`,
-    ),
-  },
-  {
-    id: "gem",
-    token: ":ce_gem:",
-    title: "Алмаз",
-    svg: CE(
-      `<path fill="#5ad1ff" d="M6 3 h12 l4 6 -10 12 L2 9z"/><path fill="#bfeaff" d="M6 3 l6 6 6 -6z" opacity="0.7"/>
-      <animate attributeName="opacity" values="1;0.7;1" dur="1.5s" repeatCount="indefinite"/>`,
-    ),
-  },
-  {
-    id: "rocket",
-    token: ":ce_rocket:",
-    title: "Ракета",
-    svg: CE(
-      `<g><path fill="#dfe7ff" d="M12 2 c3 3 3.5 8 2 12 h-4 c-1.5 -4 -1 -9 2 -12z"/>
-      <circle cx="12" cy="9" r="1.6" fill="#7c5cff"/>
-      <path fill="#ffb300" d="M10.5 14 q1.5 5 1.5 7 q0 -2 1.5 -7z">
-      <animate attributeName="opacity" values="1;0.4;1" dur="0.4s" repeatCount="indefinite"/></path>
-      <animateTransform attributeName="transform" type="translate" values="0 1;0 -1;0 1" dur="1s" repeatCount="indefinite"/></g>`,
-    ),
-  },
-  {
-    id: "rainbow",
-    token: ":ce_rainbow:",
-    title: "Радуга",
-    svg: CE(
-      `<g fill="none" stroke-width="2" stroke-linecap="round">
-      <path d="M2 18 a10 10 0 0 1 20 0" stroke="#ff3b30"/>
-      <path d="M5 18 a7 7 0 0 1 14 0" stroke="#ffd000"/>
-      <path d="M8 18 a4 4 0 0 1 8 0" stroke="#5ad1ff"/>
-      <animate attributeName="opacity" values="1;0.65;1" dur="1.4s" repeatCount="indefinite"/></g>`,
-    ),
-  },
-  {
-    id: "ghost",
-    token: ":ce_ghost:",
-    title: "Привидение",
-    svg: CE(
-      `<path fill="#e8e8f0" d="M12 3 a7 7 0 0 0 -7 7 v10 l2.3 -2 2.35 2 2.35 -2 2.35 2 2.35 -2 2.3 2 V10 a7 7 0 0 0 -7 -7z">
-      <animateTransform attributeName="transform" type="translate" values="0 0;0 -1.5;0 0" dur="1.4s" repeatCount="indefinite"/></path>
-      <circle cx="9.5" cy="10" r="1.4" fill="#20242c"/><circle cx="14.5" cy="10" r="1.4" fill="#20242c"/>`,
-    ),
-  },
-  {
-    id: "bolt",
-    token: ":ce_bolt:",
-    title: "Молния",
-    svg: CE(
-      `<path fill="#ffd000" d="M13 2 L4 14 h6 l-1 8 9 -12 h-6z">
-      <animate attributeName="opacity" values="1;0.5;1;1;0.6;1" dur="1.2s" repeatCount="indefinite"/></path>`,
-    ),
-  },
-  {
-    id: "clover",
-    token: ":ce_clover:",
-    title: "Клевер",
-    svg: CE(
-      `<g fill="#3fb950"><circle cx="9" cy="9" r="4"/><circle cx="15" cy="9" r="4"/><circle cx="9" cy="15" r="4"/><circle cx="15" cy="15" r="4"/>
-      <path d="M12 14 q1 5 3 7" stroke="#2c7a36" stroke-width="1.6" fill="none"/>
-      <animateTransform attributeName="transform" type="rotate" values="-5 12 12;5 12 12;-5 12 12" dur="1.8s" repeatCount="indefinite"/></g>`,
-    ),
-  },
-  {
-    id: "moon",
-    token: ":ce_moon:",
-    title: "Луна",
-    svg: CE(
-      `<path fill="#ffd98c" d="M20 14 A9 9 0 1 1 10 3 a7 7 0 0 0 10 11z">
-      <animateTransform attributeName="transform" type="rotate" values="-8 12 12;8 12 12;-8 12 12" dur="2.4s" repeatCount="indefinite"/></path>
-      <circle cx="19" cy="5" r="1" fill="#fff"><animate attributeName="opacity" values="0;1;0" dur="2s" repeatCount="indefinite"/></circle>`,
-    ),
-  },
-  {
-    id: "cool",
-    token: ":ce_cool:",
-    title: "Крутой",
-    svg: CE(
-      `<circle cx="12" cy="12" r="10" fill="#ffd93d"/>
-      <path d="M4 10 h6.5 c.5 0 .8 .2 1 .7 l.5 1 .5 -1 c.2 -.5 .5 -.7 1 -.7 H20 v1.6 h-1.6 c-.3 2 -1.6 3 -3.1 3 -1.2 0 -2.2 -.6 -2.8 -1.8 c-.6 1.2 -1.6 1.8 -2.8 1.8 c-1.5 0 -2.8 -1 -3.1 -3 H4z" fill="#20242c"/>
-      <path d="M8 17 q4 3 8 0" stroke="#8a5a00" stroke-width="1.6" fill="none" stroke-linecap="round"/>`,
-    ),
-  },
-  {
-    id: "gg",
-    token: ":ce_gg:",
-    title: "ГГ",
-    svg: CE(
-      `<rect x="3" y="6" width="18" height="12" rx="3" fill="#7c5cff"/>
-      <text x="12" y="15.5" text-anchor="middle" font-family="Arial Black,Arial" font-size="8" font-weight="900" fill="#fff">GG
-      <animate attributeName="opacity" values="1;0.6;1" dur="1s" repeatCount="indefinite"/></text>`,
-    ),
-  },
+  // Теперь внутри SVG — настоящие эмодзи (как просили): рисованные пути заменены
+  // на глифы, анимация осталась. Токены и названия не менялись.
+  { id: "fire", token: ":ce_fire:", title: "Огонь", svg: CE_EMOJI("🔥", PULSE) },
+  { id: "heart", token: ":ce_heart:", title: "Сердце", svg: CE_EMOJI("❤️", PULSE) },
+  { id: "star", token: ":ce_star:", title: "Звезда", svg: CE_EMOJI("⭐", BLINK) },
+  { id: "party", token: ":ce_party:", title: "Праздник", svg: CE_EMOJI("🎉", PULSE) },
+  { id: "hundred", token: ":ce_100:", title: "Сотка", svg: CE_EMOJI("💯", BLINK) },
+  { id: "skull", token: ":ce_skull:", title: "Череп", svg: CE_EMOJI("💀", BLINK) },
+  { id: "crown", token: ":ce_crown:", title: "Корона", svg: CE_EMOJI("👑", PULSE) },
+  { id: "gem", token: ":ce_gem:", title: "Алмаз", svg: CE_EMOJI("💎", BLINK) },
+  { id: "rocket", token: ":ce_rocket:", title: "Ракета", svg: CE_EMOJI("🚀", PULSE) },
+  { id: "rainbow", token: ":ce_rainbow:", title: "Радуга", svg: CE_EMOJI("🌈", BLINK) },
+  { id: "ghost", token: ":ce_ghost:", title: "Привидение", svg: CE_EMOJI("👻", PULSE) },
+  { id: "bolt", token: ":ce_bolt:", title: "Молния", svg: CE_EMOJI("⚡", BLINK) },
+  { id: "cat", token: ":ce_cat:", title: "Кот", svg: CE_EMOJI("🐱", PULSE) },
+  { id: "clover", token: ":ce_clover:", title: "Клевер", svg: CE_EMOJI("🍀", BLINK) },
+  { id: "moon", token: ":ce_moon:", title: "Луна", svg: CE_EMOJI("🌙", BLINK) },
+  { id: "cool", token: ":ce_cool:", title: "Крутой", svg: CE_EMOJI("😎", PULSE) },
+  { id: "gg", token: ":ce_gg:", title: "ГГ", svg: CE_EMOJI("🏆", PULSE) },
 ];
 
 /** Найти гифку по id. */

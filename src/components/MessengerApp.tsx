@@ -23,11 +23,12 @@ import IframeNotice from "./IframeNotice";
 
 type Toast = { id: number; msg: string };
 
-/** Что лежит в hash-ссылке: `#join=<token>` (звонок) или `#group=<token>` (инвайт). */
-function parseHash(): { join: string | null; group: string | null } {
-  if (typeof window === "undefined") return { join: null, group: null };
+/** Что лежит в hash-ссылке: `#join=<token>` (звонок), `#group=<token>` (инвайт),
+ *  `#user=<username>` (профиль человека). */
+function parseHash(): { join: string | null; group: string | null; user: string | null } {
+  if (typeof window === "undefined") return { join: null, group: null, user: null };
   const params = new URLSearchParams(window.location.hash.replace(/^#/, ""));
-  return { join: params.get("join"), group: params.get("group") };
+  return { join: params.get("join"), group: params.get("group"), user: params.get("user") };
 }
 
 export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
@@ -653,8 +654,8 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
    */
   useEffect(() => {
     const handle = async () => {
-      const { join, group } = parseHash();
-      const key = join ? `join:${join}` : group ? `group:${group}` : null;
+      const { join, group, user } = parseHash();
+      const key = join ? `join:${join}` : group ? `group:${group}` : user ? `user:${user}` : null;
       if (!key || handledHashRef.current === key) return;
       handledHashRef.current = key;
 
@@ -662,6 +663,17 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
         await callCtl.joinByToken(join);
       } else if (group) {
         await joinByTokenRef.current(group);
+      } else if (user) {
+        // Ссылка на профиль: ищем человека и открываем его карточку
+        try {
+          const d = await api<{ users: PublicUser[] }>(`/api/users/search?q=${encodeURIComponent(user)}`);
+          const found =
+            d.users.find((u) => u.username.toLowerCase() === user.toLowerCase()) ?? d.users[0];
+          if (found) setViewUser(found);
+          else notify("Пользователь по ссылке не найден");
+        } catch {
+          notify("Не удалось открыть профиль по ссылке");
+        }
       }
       // Убираем hash из адресной строки, чтобы не срабатывал повторно
       try {

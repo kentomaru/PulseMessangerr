@@ -158,6 +158,16 @@ export function previewInfo(type: string, content: string): { kind: PreviewKind;
   // Анимированная гифка (сообщение «gifpack:<id>»)
   const gif = type === "text" ? gifpackId(content) : null;
   if (gif) return { kind: "video", text: `ГИФ${findGif(gif) ? ` · ${findGif(gif)!.title}` : ""}` };
+  // Опрос («poll:{...}»): в превью показываем «Опрос» + вопрос, а не сырой JSON
+  if (type === "text" && content.startsWith("poll:")) {
+    try {
+      const p = JSON.parse(content.slice(5)) as { q?: unknown };
+      const q = typeof p.q === "string" ? p.q.replace(/\n/g, " ").slice(0, 40) : "";
+      return { kind: null, text: q ? `Опрос · ${q}` : "Опрос" };
+    } catch {
+      return { kind: null, text: "Опрос" };
+    }
+  }
   const att = parseAttachment(type, content);
   if (att) {
     const caption = att.caption ? ` ${att.caption.replace(/\n/g, " ").slice(0, 40)}` : "";

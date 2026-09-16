@@ -226,6 +226,16 @@ export function renderRichText(
 
 /** Убирает разметку — для превью в цитатах и сайдбаре. */
 export function stripMarkdown(text: string): string {
+  // Опросы в превью — просто «Опрос», без сырого JSON
+  if (text.startsWith("poll:")) {
+    try {
+      const p = JSON.parse(text.slice(5)) as { q?: unknown };
+      if (typeof p.q === "string" && p.q) return `Опрос · ${p.q.slice(0, 40)}`;
+    } catch {
+      /* не распарсилось */
+    }
+    return "Опрос";
+  }
   return text
     .replace(/:ce_([a-z0-9_]+):/g, "⭐")
     .replace(/```([\s\S]*?)```/g, "$1")

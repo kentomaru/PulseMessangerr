@@ -311,6 +311,27 @@ export default function ChatView({
   /** Зум фото в лайтбоксе колесом мыши. */
   const [lbZoom, setLbZoom] = useState(1);
   useEffect(() => setLbZoom(1), [lightbox]);
+  /** Лайтбокс: листание фото стрелками клавиатуры (как в ТГ). */
+  useEffect(() => {
+    if (!lightbox) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "ArrowRight" && e.key !== "ArrowLeft" && e.key !== "Escape") return;
+      e.preventDefault();
+      if (e.key === "Escape") {
+        setLightbox(null);
+        return;
+      }
+      const imgs = messages
+        .map((m) => parseAttachment(m.type, m.content))
+        .filter((a): a is import("@/lib/types").AttachmentInfo => !!a && m2img(a) !== null)
+        .map((a) => m2img(a) as string);
+      const idx = imgs.indexOf(lightbox);
+      if (idx >= 0 && imgs.length > 1)
+        setLightbox(imgs[(idx + (e.key === "ArrowRight" ? 1 : -1) + imgs.length) % imgs.length]);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [lightbox, messages]);
   /** Меню способов отправки: тихо, отложить, быстрые ответы. */
   const [sendMenu, setSendMenu] = useState(false);
   /** Черновик опроса (как в ТГ): вопрос + варианты. */
@@ -1988,6 +2009,7 @@ ${x.text}` : x.text));
                       }
                       commentCount={postCounts?.[m.id] ?? 0}
                       restricted={!!meta?.restricted}
+                      premium={isPremium}
                       meUsername={me.username}
                       onOpenUsername={onOpenUsername}
                       onEdit={() => startEdit(m)}
@@ -2774,6 +2796,20 @@ ${x.text}` : x.text));
               <Download className="h-4 w-4" />
               Скачать
             </a>
+            {/* Счётчик «3 из 12» */}
+            {(() => {
+              const imgs = messages
+                .map((m) => parseAttachment(m.type, m.content))
+                .filter((a): a is import("@/lib/types").AttachmentInfo => !!a && m2img(a) !== null)
+                .map((a) => m2img(a) as string);
+              const idx = lightbox ? imgs.indexOf(lightbox) : -1;
+              if (idx < 0 || imgs.length < 2) return null;
+              return (
+                <span className="glass absolute bottom-5 left-1/2 -translate-x-1/2 rounded-full px-3 py-1 text-[12px] text-white/70 tabular-nums">
+                  {idx + 1} из {imgs.length}
+                </span>
+              );
+            })()}
             <button
               onClick={() => setLightbox(null)}
               className="absolute top-5 right-5 rounded-full bg-white/10 p-2.5 text-white/80 transition-colors hover:bg-white/20"
@@ -3050,6 +3086,19 @@ function MessageContextMenu({
         label="Ссылка на сообщение"
         onClick={onCopyLink}
       />
+      {/* Ссылка на сам медиафайл (фото/видео/файл) — как в ТГ */}
+      {att?.url && !restricted && (
+        <ContextItem
+          icon={<Paperclip className="h-4 w-4 text-sky-300" />}
+          label="Ссылка на медиа"
+          onClick={() => {
+            const u = att.url ?? "";
+            const abs = u.startsWith("http") ? u : `${window.location.origin}${u}`;
+            void navigator.clipboard?.writeText(abs).catch(() => {});
+            onClose();
+          }}
+        />
+      )}
       {isEditable && (
         <ContextItem icon={<Pencil className="h-4 w-4 text-amber-300" />} label="Изменить" onClick={onEdit} />
       )}
@@ -3580,6 +3629,7 @@ function MessageBubble({
   onDiscuss,
   commentCount,
   restricted,
+  premium,
   meUsername,
   onOpenUsername,
   onJump,
@@ -3609,6 +3659,8 @@ function MessageBubble({
   commentCount?: number | null;
   /** Ограниченный чат (как в ТГ): без копирования/сохранения. */
   restricted?: boolean;
+  /** Pulse Premium включён — доступны голос→текст и т. п. */
+  premium?: boolean;
   meUsername?: string;
   onOpenUsername?: (name: string) => void;
   onJump: (id: string) => void;
@@ -3744,10 +3796,10 @@ function MessageBubble({
         )}
 
         <div
-          className={`relative overflow-hidden ${
-            media || sticker || gif || legacyVideo ? "" : own && !space ? "bubble-own text-white" : "bubble-peer text-white/90"
+          className={`relative overflow-hidden ${restricted ? "select-none" : ""} ${
+            isNote || sticker || gif ? "" : own && !space ? "bubble-own text-white" : "bubble-peer text-white/90"
           } ${
-            media || sticker || gif || legacyVideo
+            isNote || sticker || gif
               ? ""
               : `${own && !space ? "bubble-own-radius" : "bubble-peer-radius"} ${
                   grouped ? (lastOfGroup ? "g-last" : "g-mid") : lastOfGroup ? "" : "g-first"
@@ -3777,7 +3829,13 @@ function MessageBubble({
           )}
 
           {isVoice && att ? (
-            <VoiceBubble url={att.url} duration={att.duration ?? 0} own={own && !space} />
+            <VoiceBubble
+              url={att.url}
+              duration={att.duration ?? 0}
+              own={own && !space}
+              messageId={message.id}
+              premium={premium}
+            />
           ) : isNote && att ? (
             <VideoNoteBubble url={att.url} duration={att.duration ?? 0} />
           ) : isImage && att?.sticker ? (
@@ -3947,13 +4005,52 @@ const WAVE_BARS = [
   8, 14, 20, 11, 26, 18, 9, 22, 30, 14, 10, 24, 16, 28, 12, 19, 25, 9, 15, 27, 11, 21, 17, 29, 13, 23, 10, 18,
 ];
 
-function VoiceBubble({ url, duration, own }: { url: string; duration: number; own: boolean }) {
+function VoiceBubble({
+  url,
+  duration,
+  own,
+  messageId,
+  premium,
+}: {
+  url: string;
+  duration: number;
+  own: boolean;
+  messageId?: string;
+  premium?: boolean;
+}) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const [playing, setPlaying] = useState(false);
   const [progress, setProgress] = useState(0);
   const [speedIdx, setSpeedIdx] = useState(0);
   const [total, setTotal] = useState(duration || 0);
   const speeds = [1, 1.5, 2];
+  /** Pulse Premium: голос → текст (модель работает прямо в браузере). */
+  const [sttBusy, setSttBusy] = useState(false);
+  const [sttText, setSttText] = useState<string | null>(() => {
+    if (!messageId) return null;
+    try {
+      const all = JSON.parse(localStorage.getItem("pulse_stt_v1") ?? "{}") as Record<string, string>;
+      return typeof all[messageId] === "string" ? all[messageId] : null;
+    } catch {
+      return null;
+    }
+  });
+  const [sttError, setSttError] = useState("");
+  const toText = async () => {
+    if (!messageId || sttBusy) return;
+    setSttBusy(true);
+    setSttError("");
+    try {
+      const { transcribeAudio, setCachedTranscript } = await import("@/lib/transcribe");
+      const text = await transcribeAudio(url);
+      setSttText(text || "(речь не распознана)");
+      setCachedTranscript(messageId, text || "(речь не распознана)");
+    } catch (e) {
+      setSttError(e instanceof Error ? e.message : "Не удалось распознать речь");
+    } finally {
+      setSttBusy(false);
+    }
+  };
   /** Уникальный ключ плеера для эксклюзивного воспроизведения. */
   const pbId = useRef(`voice-${Math.random().toString(36).slice(2)}`).current;
 
@@ -3976,7 +4073,8 @@ function VoiceBubble({ url, duration, own }: { url: string; duration: number; ow
   useEffect(() => () => releasePlayback(pbId), [pbId]);
 
   return (
-    <div className="flex w-64 min-w-52 items-center gap-3 py-0.5">
+    <div className="flex w-64 min-w-52 flex-col gap-1.5 py-0.5">
+    <div className="flex items-center gap-3">
       <audio
         ref={audioRef}
         src={url}
@@ -4046,8 +4144,35 @@ function VoiceBubble({ url, duration, own }: { url: string; duration: number; ow
           >
             {speeds[speedIdx]}x
           </button>
+          {/* Premium: голос в текст */}
+          {premium && messageId && (
+            <button
+              onClick={() => void toText()}
+              disabled={sttBusy}
+              title="Pulse Premium: распознать речь в текст"
+              className={`flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold transition-colors disabled:opacity-60 ${
+                sttText
+                  ? "bg-white/8 text-white/55 hover:bg-white/15"
+                  : "bg-amber-300/20 text-amber-200 hover:bg-amber-300/30"
+              }`}
+            >
+              {sttBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
+              {sttBusy ? "Распознаём…" : sttText ? "Текст" : "В текст"}
+            </button>
+          )}
         </div>
       </div>
+    </div>
+    {premium && messageId && sttText && (
+      <p className="rounded-xl border border-white/8 bg-black/20 px-3 py-2 text-[12px] leading-relaxed text-white/80">
+        {sttText}
+      </p>
+    )}
+    {premium && messageId && sttError && (
+      <p className="rounded-xl border border-rose-400/20 bg-rose-500/10 px-3 py-2 text-[12px] text-rose-300">
+        {sttError}
+      </p>
+    )}
     </div>
   );
 }
