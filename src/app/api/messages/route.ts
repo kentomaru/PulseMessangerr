@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { db } from "@/db";
-import { conversationMembers, conversations, messageReactions, messages, userBlocks, users } from "@/db/schema";
+import { conversationMembers, conversations, messageReactions, messages, pollVotes, userBlocks, users } from "@/db/schema";
 import { and, desc, eq, inArray, isNotNull, isNull, or } from "drizzle-orm";
 import { publicUser } from "@/lib/auth";
 import { isUuid, withApi } from "@/lib/api-helpers";
@@ -90,6 +90,21 @@ async function serializeMessages(list: MessageRow[], meId: string): Promise<Chat
     reactionsByMessage.set(r.messageId, arr);
   }
 
+  // Голоса в опросах — серверные, все участники видят одинаково
+  const pollIds = list
+    .filter((m) => m.type === "text" && String(m.content ?? "").startsWith("poll:"))
+    .map((m) => m.id);
+  const voteRows =
+    pollIds.length > 0
+      ? await db.select().from(pollVotes).where(inArray(pollVotes.messageId, pollIds))
+      : [];
+  const votesByMessage = new Map<string, { option: number; userId: string }[]>();
+  for (const v of voteRows) {
+    const arr = votesByMessage.get(v.messageId) ?? [];
+    arr.push({ option: v.option, userId: v.userId });
+    votesByMessage.set(v.messageId, arr);
+  }
+
   const senders = userMap([...senderRows, ...replySenderRows]);
   const replies = new Map(replyRows.map((m) => [m.id, m]));
 
@@ -112,8 +127,32 @@ async function serializeMessages(list: MessageRow[], meId: string): Promise<Chat
       sender: sender ? publicUser(sender) : undefined,
       replyTo: reply ? replyPreview(reply, senders) : null,
       reactions: aggregateReactions(reactionsByMessage.get(m.id) ?? [], meId),
+      ...pollFields(m, votesByMessage.get(m.id), meId),
     };
   });
+}
+
+/** Счётчики голосов опроса + свои голоса — для синхронного отображения всем. */
+function pollFields(
+  m: MessageRow,
+  votes: { option: number; userId: string }[] | undefined,
+  meId: string,
+): { pollVotes?: number[]; myPollVotes?: number[] } {
+  if (!votes) return {};
+  let len = 10;
+  try {
+    const p = JSON.parse(String(m.content).slice(5)) as { opts?: unknown[] };
+    if (Array.isArray(p.opts)) len = Math.min(10, Math.max(2, p.opts.length));
+  } catch {
+    /* не распарсилось */
+  }
+  const counts = new Array(len).fill(0) as number[];
+  const mine: number[] = [];
+  for (const v of votes) {
+    if (v.option >= 0 && v.option < len) counts[v.option] += 1;
+    if (v.userId === meId) mine.push(v.option);
+  }
+  return { pollVotes: counts, myPollVotes: mine.sort((a, b) => a - b) };
 }
 
 /**

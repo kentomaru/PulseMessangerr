@@ -106,6 +106,9 @@ export const GET = withApi("conversations", async ({ me }) => {
             ? new Date(peerRow.member.lastReadAt).toISOString()
             : null,
           typingAt: peerRow.member.typingAt ? new Date(peerRow.member.typingAt).toISOString() : null,
+          recordingAt: peerRow.member.recordingAt
+            ? new Date(peerRow.member.recordingAt).toISOString()
+            : null,
         }
       : isSaved
         ? {
@@ -114,6 +117,7 @@ export const GET = withApi("conversations", async ({ me }) => {
               ? new Date(rows[0].member.lastReadAt).toISOString()
               : null,
             typingAt: null,
+            recordingAt: null,
           }
         : null;
     const lastMessage = lastMessageByConv.get(conv.id) ?? null;

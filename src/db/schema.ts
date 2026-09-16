@@ -113,6 +113,8 @@ export const conversationMembers = pgTable(
     role: text("role").notNull().default("member"), // owner | admin | member
     lastReadAt: timestamp("last_read_at", { withTimezone: true }).notNull().defaultNow(),
     typingAt: timestamp("typing_at", { withTimezone: true }),
+    /** Последняя активность записи голосового (для индикатора у собеседника). */
+    recordingAt: timestamp("recording_at", { withTimezone: true }),
     wallpaper: text("wallpaper"),
     joinedAt: timestamp("joined_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -387,4 +389,35 @@ export const userBlocks = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [primaryKey({ columns: [t.blockerId, t.blockedId] })],
+);
+
+/** Голоса в опросах: по одной строке на выбранный вариант. */
+export const pollVotes = pgTable(
+  "poll_votes",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    messageId: uuid("message_id")
+      .notNull()
+      .references(() => messages.id, { onDelete: "cascade" }),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    option: integer("option").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+);
+
+/** Подарки как в ТГ: премиум дарит друзьям, подарки видны в профиле. */
+export const gifts = pgTable(
+  "gifts",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    senderId: uuid("sender_id").references(() => users.id, { onDelete: "set null" }),
+    recipientId: uuid("recipient_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    giftKey: text("gift_key").notNull(),
+    message: text("message"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
 );

@@ -354,6 +354,26 @@ export async function ensureSchema(): Promise<void> {
       created_at timestamptz not null default now(),
       primary key (blocker_id, blocked_id)
     );
+    /* Индикатор «записывает голосовое» у собеседника. */
+    alter table conversation_members add column if not exists recording_at timestamptz;
+    /* Голоса в опросах — серверные, видны всем одинаково. */
+    create table if not exists poll_votes (
+      id uuid primary key default gen_random_uuid(),
+      message_id uuid not null references messages(id) on delete cascade,
+      user_id uuid not null references users(id) on delete cascade,
+      option int not null,
+      created_at timestamptz not null default now(),
+      unique (message_id, user_id, option)
+    );
+    /* Подарки как в ТГ. */
+    create table if not exists gifts (
+      id uuid primary key default gen_random_uuid(),
+      sender_id uuid references users(id) on delete set null,
+      recipient_id uuid not null references users(id) on delete cascade,
+      gift_key text not null,
+      message text,
+      created_at timestamptz not null default now()
+    );
   `);
   log.info("Схема базы данных проверена (ensureSchema: ok)");
 }

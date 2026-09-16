@@ -104,6 +104,9 @@ export function memberItem(m: ConversationMember, u: User): ConversationMemberIt
     role: normalizeRole(m.role),
     lastReadAt: m.lastReadAt ? new Date(m.lastReadAt).toISOString() : null,
     typingAt: m.typingAt ? new Date(m.typingAt).toISOString() : null,
+    recordingAt: (m as { recordingAt?: Date | null }).recordingAt
+      ? new Date((m as { recordingAt?: Date | null }).recordingAt as Date).toISOString()
+      : null,
     joinedAt: new Date(m.joinedAt).toISOString(),
   };
 }

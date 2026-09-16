@@ -447,6 +447,27 @@ export default function ProfileModal({
           </div>
         </div>
 
+        {/* Быстрые кнопки разделов — прямо рядом с именем, без скролла */}
+        <div className="flex flex-wrap gap-1.5">
+          {(
+            [
+              ["privacy", "Приватность", Shield],
+              ["appearance", "Оформление", Palette],
+              ["friends", "Друзья", UsersRound],
+            ] as const
+          ).map(([t, label, Icon]) => (
+            <button
+              key={t}
+              onClick={() => setTab(t)}
+              className="flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.05] px-3 py-1.5 text-[11px] font-medium text-white/60 transition-colors hover:bg-white/10 hover:text-white"
+              title={`Открыть раздел «${label}»`}
+            >
+              <Icon className="h-3 w-3" />
+              {label}
+            </button>
+          ))}
+        </div>
+
         <label className="block">
           <span className="mb-1.5 block text-xs font-medium tracking-wide text-white/45 uppercase">
             Отображаемое имя

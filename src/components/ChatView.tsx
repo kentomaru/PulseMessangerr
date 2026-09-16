@@ -83,7 +83,7 @@ import { renderRichText } from "@/lib/richText";
 import { addScheduled, readScheduled, removeScheduled, type ScheduledMsg } from "@/lib/scheduledStore";
 import { parseStoryQuote, type StoryQuoteInfo } from "@/lib/storyQuote";
 import { setCachedTranscript } from "@/lib/transcribe";
-import { GIF_PACK, CUSTOM_EMOJI, findGif, gifpackId } from "@/lib/premiumContent";
+import { GIF_PACK, CUSTOM_EMOJI, findCustomEmoji, findGif, gifpackId } from "@/lib/premiumContent";
 import {
   callLogLabel,
   dayLabel,
@@ -949,6 +949,7 @@ export default function ChatView({
       voiceRef.current = { recorder, stream, chunks, startedAt: Date.now() };
       setRecSecs(0);
       setVoiceRecActive(true);
+      sendTyping(true);
       // Параллельно с записью слушаем микрофон штатным движком браузера (ru-RU).
       // После отправки привяжем текст к сообщению — «В текст» сработает мгновенно.
       liveTranscriptRef.current = "";
@@ -984,6 +985,7 @@ export default function ChatView({
     const rec = voiceRef.current;
     if (!rec) return;
     voiceRef.current = null;
+    sendTyping(false);
     if (speechRecRef.current) {
       try { speechRecRef.current.stop(); } catch { /* уже остановлен */ }
       speechRecRef.current = null;
@@ -1014,6 +1016,13 @@ export default function ChatView({
     if (!voiceRecActive) return;
     const t = setInterval(() => setRecSecs((s) => s + 1), 1000);
     return () => clearInterval(t);
+  }, [voiceRecActive]);
+  // Собеседник видит «записывает голосовое», пока запись идёт (пинг раз в 5 с)
+  useEffect(() => {
+    if (!voiceRecActive) return;
+    const t = setInterval(() => sendTyping(true), 5000);
+    return () => clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [voiceRecActive]);
   useEffect(() => {
     if (voiceRecActive && recSecs >= 300) stopVoiceRecording(true);
@@ -1286,11 +1295,15 @@ export default function ChatView({
     return () => window.removeEventListener("pointerdown", onDown);
   }, [emojiOpen]);
 
-  const sendTyping = () => {
+  const sendTyping = (recording?: boolean) => {
     const now = Date.now();
-    if (now - lastTypingSent.current < 2_500) return;
+    // Сигналы записи не троттлим: важно и «начал», и «закончил»
+    if (recording === undefined && now - lastTypingSent.current < 2_500) return;
     lastTypingSent.current = now;
-    void api(`/api/conversations/${conversationId}/typing`, { method: "POST" }).catch(() => {});
+    void api(`/api/conversations/${conversationId}/typing`, {
+      method: "POST",
+      body: JSON.stringify(recording === undefined ? {} : { recording }),
+    }).catch(() => {});
   };
 
   // Открытие по ссылке «#msg=<id>»: прыгаем, как только история загрузилась.
@@ -1535,8 +1548,31 @@ export default function ChatView({
   };
 
   const headerSubtitle = () => {
-    if (voiceRecActive) {
-      return { text: "Идёт запись голосового…", accent: true };
+    // Собеседник записывает голосовое — видно по свежему recordingAt
+    const now = Date.now();
+    void nowTick;
+    const recPeers =
+      kind === "direct"
+        ? peerState?.recordingAt && now - new Date(peerState.recordingAt).getTime() < 10_000
+          ? [peerState]
+          : []
+        : members
+            .filter(
+              (m) =>
+                m.user.id !== me.id &&
+                m.recordingAt &&
+                now - new Date(m.recordingAt).getTime() < 10_000,
+            )
+            .map((m) => m.user);
+    if (recPeers.length > 0) {
+      const names = recPeers.map((u) => u.displayName.split(" ")[0]);
+      return {
+        text:
+          names.length === 1
+            ? `${names[0]} записывает голосовое…`
+            : `${names.slice(0, 2).join(", ")} записывают голосовое…`,
+        accent: true,
+      };
     }
     if (typingMembers.length > 0) {
       const names = typingMembers.map((m) => m.user.displayName.split(" ")[0]);
@@ -2014,8 +2050,13 @@ export default function ChatView({
           </div>
         ) : (
           <div className="mx-auto flex max-w-2xl flex-col gap-0.5">
-            {listMessages.map((m, i) => {
+            {(() => {
+              const seq = { n: 0 };
+              return listMessages.map((m, i) => {
               const prev = listMessages[i - 1];
+              // Посты канала нумеруются (#1, #2…) — удобно ссылаться
+              const postNum =
+                kind === "channel" && m.type !== "call" && !m.deletedAt ? ++seq.n : null;
               const showDay = !prev || !sameDay(prev.createdAt, m.createdAt);
               const grouped =
                 !!prev &&
@@ -2099,6 +2140,7 @@ export default function ChatView({
                         kind === "channel" && onOpenDiscussion ? onOpenDiscussion : undefined
                       }
                       commentCount={postCounts?.[m.id] ?? 0}
+                      postNum={postNum}
                       restricted={!!meta?.restricted}
                       premium={isPremium}
                       meUsername={me.username}
@@ -2114,7 +2156,8 @@ export default function ChatView({
                   )}
                 </div>
               );
-            })}
+              });
+            })()}
           </div>
         )}
         {pendingUploads.length > 0 && (
@@ -3890,6 +3933,7 @@ function MessageBubble({
   onMenu,
   onDiscuss,
   commentCount,
+  postNum,
   restricted,
   premium,
   meUsername,
@@ -3919,6 +3963,8 @@ function MessageBubble({
   onMenu: (x: number, y: number, message: ChatMessage) => void;
   onDiscuss?: (postId: string) => void;
   commentCount?: number | null;
+  /** Номер поста в канале (#1, #2…) — как счётчик публикаций. */
+  postNum?: number | null;
   /** Ограниченный чат (как в ТГ): без копирования/сохранения. */
   restricted?: boolean;
   /** Pulse Premium включён — доступны голос→текст и т. п. */
@@ -4135,7 +4181,7 @@ function MessageBubble({
             /* «Стикер»: только эмодзи — крупно, без пузыря (как в мессенджерах) */
             <p className="py-0.5 text-[52px] leading-none select-none">{message.content.trim()}</p>
           ) : poll ? (
-            <PollCard msgId={message.id} q={poll.q} opts={poll.opts} multi={!!poll.multi} quiz={poll.quiz ?? null} />
+            <PollCard msgId={message.id} q={poll.q} opts={poll.opts} multi={!!poll.multi} quiz={poll.quiz ?? null} serverCounts={message.pollVotes} myServerVotes={message.myPollVotes} />
           ) : (() => {
             if (message.type === "text" && message.content.startsWith("contact:")) {
               try {
@@ -4210,6 +4256,9 @@ function MessageBubble({
             <span title="Отправлено без звука">
               <VolumeX className="h-3 w-3 text-white/35" />
             </span>
+          )}
+          {postNum != null && (
+            <span title="Номер поста в канале" className="text-white/45">#{postNum}</span>
           )}
           <span>{timeHHmm(message.createdAt)}</span>
           {message.pinned && (
@@ -4553,65 +4602,87 @@ function VideoNoteBubble({ url, duration }: { url: string; duration: number }) {
 
 /* ─────────────────────────── карточка файла ─────────────────────────── */
 
-/** Опрос/викторина как в ТГ: обычный, «несколько ответов» и викторина с правильным ответом. */
-function PollCard({ msgId, q, opts, multi, quiz }: { msgId: string; q: string; opts: string[]; multi: boolean; quiz: number | null }) {
-  const [myVotes, setMyVotes] = useState<number[]>(() => {
-    try {
-      const all = JSON.parse(localStorage.getItem("pulse_poll_votes_v1") ?? "{}") as Record<string, number | number[]>;
-      const v = all[msgId];
-      if (typeof v === "number") return [v];
-      if (Array.isArray(v)) return v.filter((x) => typeof x === "number");
-    } catch {
-      /* ignore */
-    }
-    return [];
-  });
-  const [counts, setCounts] = useState<number[]>(() => {
-    try {
-      const all = JSON.parse(localStorage.getItem("pulse_poll_counts_v1") ?? "{}") as Record<string, number[]>;
-      const c = all[msgId];
-      if (Array.isArray(c) && c.length === opts.length) return c;
-    } catch {
-      /* ignore */
-    }
-    return opts.map(() => 0);
-  });
+/** Опрос/викторина как в ТГ. Голоса — серверные: все видят одинаковые результаты. */
+function PollCard({
+  msgId,
+  q,
+  opts,
+  multi,
+  quiz,
+  serverCounts,
+  myServerVotes,
+}: {
+  msgId: string;
+  q: string;
+  opts: string[];
+  multi: boolean;
+  quiz: number | null;
+  serverCounts?: number[];
+  myServerVotes?: number[];
+}) {
+  const [counts, setCounts] = useState<number[]>(() =>
+    serverCounts && serverCounts.length === opts.length ? serverCounts : opts.map(() => 0),
+  );
+  const [myVotes, setMyVotes] = useState<number[]>(() => myServerVotes ?? []);
   const [pending, setPending] = useState<number[]>([]);
+  const [busy, setBusy] = useState(false);
+  // Сервер прислал новые итоги (кто-то проголосовал) — синхронизируем
+  useEffect(() => {
+    if (serverCounts && serverCounts.length === opts.length) setCounts(serverCounts);
+  }, [serverCounts, opts.length]);
+  useEffect(() => {
+    setMyVotes(myServerVotes ?? []);
+  }, [myServerVotes]);
   const voted = myVotes.length > 0;
   const total = counts.reduce((sum, n) => sum + n, 0);
-  const persist = (votes: number[], nextCounts: number[]) => {
-    try {
-      const all = JSON.parse(localStorage.getItem("pulse_poll_votes_v1") ?? "{}") as Record<string, unknown>;
-      all[msgId] = multi ? votes : votes[0];
-      localStorage.setItem("pulse_poll_votes_v1", JSON.stringify(all));
-      const c = JSON.parse(localStorage.getItem("pulse_poll_counts_v1") ?? "{}") as Record<string, number[]>;
-      c[msgId] = nextCounts;
-      localStorage.setItem("pulse_poll_counts_v1", JSON.stringify(c));
-    } catch {
-      /* приватный режим */
-    }
+
+  const applyResp = (d: { counts?: number[]; myVotes?: number[] }) => {
+    if (Array.isArray(d.counts) && d.counts.length === opts.length) setCounts(d.counts);
+    if (Array.isArray(d.myVotes)) setMyVotes(d.myVotes);
   };
-  const click = (i: number) => {
-    if (voted) return;
-    if (multi) {
-      setPending((cur) => (cur.includes(i) ? cur.filter((x) => x !== i) : [...cur, i]));
-      return;
-    }
-    const next = [...counts];
-    next[i] += 1;
-    setCounts(next);
+
+  const voteOne = async (i: number) => {
+    if (voted || busy) return;
+    setBusy(true);
+    // оптимистично, чтобы отклик был мгновенным
+    setCounts((c) => c.map((n, j) => (j === i ? n + 1 : n)));
     setMyVotes([i]);
-    persist([i], next);
+    try {
+      const d = await api<{ counts: number[]; myVotes: number[] }>(`/api/messages/${msgId}/vote`, {
+        method: "POST",
+        body: JSON.stringify({ option: i, multi: false }),
+      });
+      applyResp(d);
+    } catch {
+      /* сервер поправит итоги при следующем опросе */
+    } finally {
+      setBusy(false);
+    }
   };
-  const commitMulti = () => {
-    if (pending.length === 0) return;
-    const next = [...counts];
-    for (const i of pending) next[i] += 1;
-    setCounts(next);
-    setMyVotes(pending);
-    setPending([]);
-    persist(pending, next);
+
+  const commitMulti = async () => {
+    if (busy || pending.length === 0) return;
+    setBusy(true);
+    try {
+      // добавляем новые варианты и снимаем убранные
+      const toAdd = pending.filter((i) => !myVotes.includes(i));
+      const toRemove = myVotes.filter((i) => !pending.includes(i));
+      let last: { counts: number[]; myVotes: number[] } | null = null;
+      for (const i of [...toAdd, ...toRemove]) {
+        last = await api<{ counts: number[]; myVotes: number[] }>(`/api/messages/${msgId}/vote`, {
+          method: "POST",
+          body: JSON.stringify({ option: i, multi: true }),
+        });
+      }
+      if (last) applyResp(last);
+      setPending([]);
+    } catch {
+      /* сервер поправит */
+    } finally {
+      setBusy(false);
+    }
   };
+
   return (
     <div className="w-[min(78vw,340px)] py-0.5">
       <p className="mb-0.5 flex items-center gap-1.5 text-[11px] text-white/40">
@@ -4627,8 +4698,12 @@ function PollCard({ msgId, q, opts, multi, quiz }: { msgId: string; q: string; o
           return (
             <button
               key={i}
-              onClick={() => click(i)}
-              disabled={voted}
+              onClick={() => {
+                if (voted) return;
+                if (multi) setPending((cur) => (cur.includes(i) ? cur.filter((x) => x !== i) : [...cur, i]));
+                else void voteOne(i);
+              }}
+              disabled={voted || busy}
               className={`relative overflow-hidden rounded-xl border px-3 py-2 text-left text-[13px] transition-colors ${
                 chosen
                   ? isRight && voted
@@ -4636,7 +4711,7 @@ function PollCard({ msgId, q, opts, multi, quiz }: { msgId: string; q: string; o
                     : chosenWrong
                     ? "border-rose-400/60 text-white"
                     : "border-[#5865f2]/60 text-white"
-                  : "border-white/10 text-white/80 " + (!voted ? "hover:bg-white/8" : "")
+                  : "border-white/10 text-white/80 " + (!voted && !busy ? "hover:bg-white/8" : "")
               }`}
             >
               {voted && (
@@ -4667,9 +4742,13 @@ function PollCard({ msgId, q, opts, multi, quiz }: { msgId: string; q: string; o
           );
         })}
       </div>
-      {!voted && multi && pending.length > 0 && (
-        <button onClick={commitMulti} className="btn-gradient mt-2 rounded-xl px-4 py-1.5 text-[12px] font-semibold">
-          Проголосовать ({pending.length})
+      {!voted && multi && (
+        <button
+          onClick={() => void commitMulti()}
+          disabled={pending.length === 0 || busy}
+          className="btn-gradient mt-2 rounded-xl px-4 py-1.5 text-[12px] font-semibold disabled:opacity-40"
+        >
+          {busy ? "Считаем…" : `Проголосовать${pending.length > 0 ? ` (${pending.length})` : ""}`}
         </button>
       )}
       <p className="mt-1.5 text-[11px] text-white/35 tabular-nums">
@@ -4679,7 +4758,7 @@ function PollCard({ msgId, q, opts, multi, quiz }: { msgId: string; q: string; o
             : "Неверно — правильный ответ подсвечен"
           : total > 0
           ? `Проголосовало: ${total}`
-          : "Проголосуйте — результаты появятся сразу"}
+          : "Проголосуйте — результаты увидят все"}
       </p>
     </div>
   );
@@ -5323,15 +5402,22 @@ function EmojiPicker({
         <div className="border-b border-white/8 px-2.5 py-1.5">
           <p className="pb-1 text-[10px] font-semibold tracking-wide text-white/30 uppercase">Недавние</p>
           <div className="flex flex-wrap gap-0.5">
-            {recentEmojis.slice(0, 16).map((e) => (
-              <button
-                key={e}
-                onClick={() => onPick(e)}
-                className="rounded-lg p-1 text-lg transition-transform hover:scale-125"
-              >
-                {e}
-              </button>
-            ))}
+            {recentEmojis.slice(0, 16).map((e) => {
+              // Кастом-эмодзи хранятся токенами («:ce_gg:») — в «недавних»
+              // рисуем сам анимированный эмодзи, а не сырой токен
+              const ce = /^:ce_[a-z0-9_]+:$/.test(e) ? findCustomEmoji(e.slice(4, -1)) : null;
+              return (
+                <button
+                  key={e}
+                  onClick={() => onPick(e)}
+                  title={ce ? ce.title : e}
+                  className="rounded-lg p-1 text-lg transition-transform hover:scale-125"
+                  {...(ce
+                    ? { dangerouslySetInnerHTML: { __html: ce.svg } }
+                    : { children: e })}
+                />
+              );
+            })}
           </div>
         </div>
       )}

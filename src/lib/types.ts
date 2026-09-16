@@ -24,7 +24,7 @@ export type PublicUser = {
   premium: boolean;
 };
 
-export type Peer = PublicUser & { lastReadAt?: string | null; typingAt?: string | null };
+export type Peer = PublicUser & { lastReadAt?: string | null; typingAt?: string | null; recordingAt?: string | null };
 
 export type ConversationKind = "direct" | "group" | "channel";
 export type MemberRole = "owner" | "admin" | "member";
@@ -55,6 +55,8 @@ export type ConversationMemberItem = {
   role: MemberRole;
   lastReadAt: string | null;
   typingAt: string | null;
+  /** Записывает голосовое прямо сейчас (для индикатора у собеседника). */
+  recordingAt?: string | null;
   joinedAt: string;
 };
 
@@ -159,6 +161,9 @@ export type ChatMessage = {
   replyTo?: ReplyPreview | null;
   /** Реакции (эмодзи → сколько и есть ли моя). */
   reactions?: MessageReaction[];
+  /** Голоса в опросе по вариантам (серверные) и мои выбранные варианты. */
+  pollVotes?: number[];
+  myPollVotes?: number[];
 };
 
 export type CallMedia = "audio" | "video";

@@ -5,12 +5,15 @@ import {
   Ban,
   CalendarDays,
   Copy,
+  Gift,
   Loader2,
   Link2,
   MessageSquareLock,
   MessageSquareText,
   PhoneOff,
+  Star,
   UserPlus,
+  X,
 } from "lucide-react";
 import Avatar, { paletteFor } from "./Avatar";
 import StatusEmoji from "./StatusEmoji";
@@ -19,6 +22,7 @@ import { bannerStyle, isFileBanner } from "@/lib/wallpapers";
 import { api } from "@/lib/api";
 import type { PublicUser } from "@/lib/types";
 import { lastSeenLabel } from "@/lib/format";
+import { GIFTS, findGift, type GiftItem } from "@/lib/gifts";
 
 type Props = {
   user: PublicUser;
@@ -35,6 +39,19 @@ export default function UserCardModal({ user, onClose, onMessage }: Props) {
   const [copiedName, setCopiedName] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
   const [rel, setRel] = useState<"none" | "friend" | "incoming" | "outgoing" | null>(null);
+  /** Подарки пользователя и окно выбора подарка. */
+  const [userGifts, setUserGifts] = useState<GiftItem[] | null>(null);
+  const [giftPicker, setGiftPicker] = useState(false);
+  const [giftSent, setGiftSent] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    api<{ gifts: GiftItem[] }>(`/api/gifts?userId=${user.id}`)
+      .then((d) => alive && setUserGifts(d.gifts))
+      .catch(() => alive && setUserGifts([]));
+    return () => {
+      alive = false;
+    };
+  }, [user.id]);
   const [blocked, setBlocked] = useState(false);
   const [relBusy, setRelBusy] = useState(false);
   useEffect(() => {
@@ -240,6 +257,30 @@ export default function UserCardModal({ user, onClose, onMessage }: Props) {
           })}
         </p>
 
+        {/* Подарки как в ТГ: витрина в профиле */}
+        {userGifts && userGifts.length > 0 && (
+          <div className="mx-auto mt-4 max-w-xs">
+            <p className="pb-2 text-[10px] font-semibold tracking-wide text-white/35 uppercase">
+              Подарки · {userGifts.length}
+            </p>
+            <div className="grid grid-cols-4 gap-2">
+              {userGifts.slice(0, 8).map((g) => {
+                const gd = findGift(g.giftKey);
+                if (!gd) return null;
+                return (
+                  <div
+                    key={g.id}
+                    title={`${gd.name}${g.sender ? ` — от ${g.sender.displayName}` : ""}${g.message ? ` · «${g.message}»` : ""}`}
+                    className={`flex aspect-square items-center justify-center rounded-2xl border border-white/10 bg-gradient-to-br text-3xl ${gd.bg}`}
+                  >
+                    {gd.emoji}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
         {/* Друзья: добавить / принять / отменить / убрать */}
         {rel !== null && (
           <div className="mt-4 flex justify-center gap-2">
@@ -295,14 +336,153 @@ export default function UserCardModal({ user, onClose, onMessage }: Props) {
           </div>
         )}
 
+        <div className="mt-4 flex gap-2">
+          <button
+            onClick={onMessage}
+            className="btn-gradient flex min-w-0 flex-1 items-center justify-center gap-2 rounded-2xl py-3.5 text-[15px] font-semibold text-white"
+          >
+            <MessageSquareText className="h-4.5 w-4.5" />
+            Написать сообщение
+          </button>
+          <button
+            onClick={() => setGiftPicker(true)}
+            title={giftSent ? "Подарок отправлен ✓" : "Подарить подарок"}
+            className={`grid w-14 shrink-0 place-items-center rounded-2xl transition-colors ${
+              giftSent
+                ? "bg-emerald-500/20 text-emerald-300"
+                : "bg-white/10 text-white/80 hover:bg-white/15"
+            }`}
+          >
+            <Gift className="h-5 w-5" />
+          </button>
+        </div>
+      </div>
+
+      {giftPicker && (
+        <GiftPicker
+          userId={user.id}
+          name={user.displayName}
+          onClose={() => setGiftPicker(false)}
+          onSent={() => {
+            setGiftSent(true);
+            setUserGifts((cur) => cur); // список у получателя обновится при следующем открытии
+          }}
+        />
+      )}
+    </ModalShell>
+  );
+}
+
+/** Выбор подарка: сетка как в ТГ, звёзды у Premium бесконечные. */
+function GiftPicker({
+  userId,
+  name,
+  onClose,
+  onSent,
+}: {
+  userId: string;
+  name: string;
+  onClose: () => void;
+  onSent: () => void;
+}) {
+  const [mePremium, setMePremium] = useState<boolean | null>(null);
+  const [picked, setPicked] = useState<string | null>(null);
+  const [message, setMessage] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    let alive = true;
+    api<{ user?: { premium?: boolean }; premium?: boolean }>("/api/auth/me")
+      .then((d) => alive && setMePremium(!!(d.user?.premium ?? (d as { premium?: boolean }).premium)))
+      .catch(() => alive && setMePremium(false));
+    return () => {
+      alive = false;
+    };
+  }, []);
+  const gift = picked ? GIFTS.find((g) => g.key === picked) : null;
+
+  const send = async () => {
+    if (!gift || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await api("/api/gifts", {
+        method: "POST",
+        body: JSON.stringify({ recipientId: userId, giftKey: gift.key, message }),
+      });
+      onSent();
+      onClose();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Не удалось отправить подарок");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-[95] grid place-items-center bg-black/70 p-4 backdrop-blur-sm" onClick={onClose}>
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="glass-strong nice-scroll max-h-[85vh] w-full max-w-md overflow-y-auto rounded-[1.6rem] p-5 shadow-2xl"
+      >
+        <div className="mb-3 flex items-center justify-between">
+          <p className="font-display text-lg font-bold">Подарок для {name}</p>
+          <button onClick={onClose} className="rounded-full bg-white/10 p-1.5 text-white/70">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        <div className="mb-2 flex items-center justify-between text-[12px]">
+          <span className="flex items-center gap-1 text-white/45">
+            <Star className="h-3 w-3 text-amber-300" />
+            Баланс звёзд
+          </span>
+          <span className="font-bold text-amber-300">{mePremium ? "∞ · Premium" : "0 · нужен Premium"}</span>
+        </div>
+        <div className="grid grid-cols-4 gap-2">
+          {GIFTS.map((g) => (
+            <button
+              key={g.key}
+              onClick={() => setPicked(g.key)}
+              title={`${g.name} · ${g.price} звёзд`}
+              className={`flex flex-col items-center gap-1 rounded-2xl border p-2.5 transition-all ${
+                picked === g.key
+                  ? "border-amber-300/70 bg-amber-300/10"
+                  : "border-white/10 bg-white/[0.03] hover:bg-white/8"
+              }`}
+            >
+              <span className={`grid h-12 w-12 place-items-center rounded-xl bg-gradient-to-br text-3xl ${g.bg}`}>
+                {g.emoji}
+              </span>
+              <span className="text-[10px] text-white/55">{g.name}</span>
+              <span className="flex items-center gap-0.5 text-[10px] font-bold text-amber-300 tabular-nums">
+                <Star className="h-2.5 w-2.5" /> {g.price}
+              </span>
+            </button>
+          ))}
+        </div>
+        <input
+          value={message}
+          onChange={(e) => setMessage(e.target.value)}
+          maxLength={140}
+          placeholder="Сообщение к подарку (необязательно)…"
+          className="ring-focus mt-3 w-full rounded-xl border border-white/10 bg-white/[0.05] px-3 py-2.5 text-sm"
+        />
+        {error && <p className="pt-2 text-[12px] text-rose-300">{error}</p>}
+        {!mePremium && (
+          <p className="pt-2 text-[11px] leading-snug text-white/40">
+            Дарить подарки могут только участники с Pulse Premium — у них бесконечные звёзды.
+            Включается бесплатно в профиле.
+          </p>
+        )}
         <button
-          onClick={onMessage}
-          className="btn-gradient mt-4 flex w-full items-center justify-center gap-2 rounded-2xl py-3.5 text-[15px] font-semibold text-white"
+          onClick={() => void send()}
+          disabled={!gift || busy || mePremium !== true}
+          className="btn-gradient mt-3 flex w-full items-center justify-center gap-2 rounded-2xl py-3 text-sm font-semibold text-white disabled:opacity-40"
         >
-          <MessageSquareText className="h-4.5 w-4.5" />
-          Написать сообщение
+          {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Gift className="h-4 w-4" />}
+          {gift ? `Подарить за ${gift.price} звёзд` : "Выберите подарок"}
         </button>
       </div>
-    </ModalShell>
+    </div>
   );
 }
