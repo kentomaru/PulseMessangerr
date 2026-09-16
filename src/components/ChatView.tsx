@@ -87,6 +87,7 @@ import { parseStoryQuote, type StoryQuoteInfo } from "@/lib/storyQuote";
 import { setCachedTranscript } from "@/lib/transcribe";
 import { GIF_PACK, CUSTOM_EMOJI, customEmojiGlyphByToken, customEmojisToTokens, findCustomEmoji, findGif, gifpackId } from "@/lib/premiumContent";
 import { findGift } from "@/lib/gifts";
+import GiftDetailModal from "./GiftDetailModal";
 import {
   callLogLabel,
   dayLabel,
@@ -3488,6 +3489,8 @@ function ForwardModal({
           // а не того, кто пересылает дальше по цепочке
           forwardedFrom:
             message.forwardedFrom ?? message.sender?.displayName ?? message.sender?.username ?? null,
+          forwardedAvatar:
+            message.forwardedAvatar ?? message.sender?.avatarUrl ?? null,
         }),
       });
       notify(`Переслано в «${conv.title}»`);
@@ -4185,10 +4188,10 @@ function MessageBubble({
                 } px-4 py-2.5`
           } ${highlighted ? "ring-2 ring-[#5865f2]/60" : ""}`}
         >
-          {/* «Переслано от …» — как в ТГ, виден автор оригинала */}
+          {/* «Переслано от …» — как в ТГ: аватарка + автор оригинала */}
           {message.forwardedFrom && (
             <p className="mb-1.5 flex items-center gap-1.5 text-[11px] font-semibold text-sky-300">
-              <Forward className="h-3 w-3" />
+              <Avatar name={message.forwardedFrom} src={message.forwardedAvatar ?? null} size={18} />
               Переслано от {message.forwardedFrom}
             </p>
           )}
@@ -4427,8 +4430,7 @@ const WAVE_BARS = [
   8, 14, 20, 11, 26, 18, 9, 22, 30, 14, 10, 24, 16, 28, 12, 19, 25, 9, 15, 27, 11, 21, 17, 29, 13, 23, 10, 18,
 ];
 
-/** Сообщение-подарок в чате: карточка по центру, тап — детали как в ТГ
-    (аватарка и ник отправителя, время отправки, текст подарка). */
+/** Сообщение-подарок в чате: большая карточка по центру, тап — детали как в ТГ. */
 function GiftCard({
   content,
   senderName,
@@ -4456,83 +4458,38 @@ function GiftCard({
   }
   const gift = findGift(giftKey);
   if (!gift) return null;
-  // Анонимность — для всех, кроме получателя (отправитель всегда видит себя)
+  // Анонимность — для всех, кроме отправителя (он всегда видит себя)
   const showAnon = anonymous && !own;
-  const when = new Date(createdAt);
-  const time = when.toLocaleString("ru-RU", {
-    day: "numeric",
-    month: "long",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
   return (
     <>
       <button
         onClick={() => setOpen(true)}
         title={`${gift.name} · нажмите, чтобы посмотреть детали`}
-        className={`gift-shine relative flex w-56 flex-col items-center gap-1 overflow-hidden rounded-2xl border border-white/10 bg-gradient-to-br px-4 py-4 transition-transform hover:scale-[1.02] ${gift.bg}`}
+        className={`gift-shine relative flex w-72 flex-col items-center gap-1.5 overflow-hidden rounded-3xl border border-white/10 bg-gradient-to-br px-5 py-6 transition-transform hover:scale-[1.02] ${gift.bg}`}
       >
         <span
-          className="gift-anim h-16 w-16 [&>svg]:h-full [&>svg]:w-full"
+          className="gift-anim h-20 w-20 [&>svg]:h-full [&>svg]:w-full"
           dangerouslySetInnerHTML={{ __html: gift.icon }}
         />
-        <span className="text-[13px] font-bold">{gift.name}</span>
-        <span className="flex items-center gap-1 text-[11px] font-bold text-amber-200">
-          <Star className="h-3 w-3" /> {gift.price}
+        <span className="text-[15px] font-bold">{gift.name}</span>
+        <span className="flex items-center gap-1 text-[12px] font-bold text-amber-200">
+          <Star className="h-3.5 w-3.5" /> {gift.price}
         </span>
-        {note && <span className="max-w-full truncate text-[11px] text-white/60">«{note}»</span>}
-        <span className="pt-0.5 text-[10px] text-white/35">
+        {note && <span className="max-w-full truncate text-[12px] text-white/60">«{note}»</span>}
+        <span className="pt-0.5 text-[11px] text-white/40">
           {showAnon ? "Подарок от Анонима" : `Подарок от ${senderName || "…"}`}
         </span>
       </button>
       {open && (
-        <div className="fixed inset-0 z-[95] grid place-items-center bg-black/70 p-4 backdrop-blur-sm" onClick={() => setOpen(false)}>
-          <div
-            onClick={(e) => e.stopPropagation()}
-            className="glass-strong w-full max-w-xs rounded-[1.6rem] p-5 shadow-2xl"
-          >
-            <div className={`gift-shine relative mx-auto grid aspect-square w-40 place-items-center overflow-hidden rounded-3xl border border-white/10 bg-gradient-to-br ${gift.bg}`}>
-              <span
-                className="gift-anim h-24 w-24 [&>svg]:h-full [&>svg]:w-full"
-                dangerouslySetInnerHTML={{ __html: gift.icon }}
-              />
-            </div>
-            <p className="pt-3 text-center text-[16px] font-bold">{gift.name}</p>
-            <p className="flex items-center justify-center gap-1 pt-0.5 text-[12px] font-bold text-amber-300">
-              <Star className="h-3 w-3" /> {gift.price} звёзд
-            </p>
-
-            {/* Кто подарил: аватарка + ник + время — как в ТГ */}
-            <div className="mt-3 flex items-center gap-3 rounded-2xl border border-white/8 bg-white/[0.04] px-3 py-2.5">
-              {showAnon ? (
-                <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-white/10 text-white/50">
-                  <UserRound className="h-5 w-5" />
-                </span>
-              ) : (
-                <Avatar name={senderName || "?"} src={senderAvatarUrl} size={40} />
-              )}
-              <span className="min-w-0 flex-1">
-                <span className="block truncate text-[13px] font-semibold">
-                  {showAnon ? "Аноним" : senderName || "—"}
-                </span>
-                <span className="block text-[11px] text-white/40">{time}</span>
-              </span>
-              <Gift className="h-4 w-4 shrink-0 text-amber-200/70" />
-            </div>
-
-            {note && (
-              <p className="mt-2 rounded-xl border border-white/8 bg-white/[0.04] px-3 py-2 text-[12px] leading-relaxed text-white/75">
-                «{note}»
-              </p>
-            )}
-            <button
-              onClick={() => setOpen(false)}
-              className="mt-4 w-full rounded-2xl bg-white/10 py-2.5 text-[13px] font-semibold text-white/80 transition-colors hover:bg-white/15"
-            >
-              Закрыть
-            </button>
-          </div>
-        </div>
+        <GiftDetailModal
+          giftKey={giftKey}
+          note={note}
+          senderName={senderName}
+          senderAvatarUrl={senderAvatarUrl}
+          anonymous={showAnon}
+          createdAt={createdAt}
+          onClose={() => setOpen(false)}
+        />
       )}
     </>
   );
@@ -4560,10 +4517,8 @@ function VoiceBubble({
   const [speedIdx, setSpeedIdx] = useState(0);
   const [total, setTotal] = useState(duration || 0);
   const speeds = [1, 1.5, 2];
-  /** Pulse Premium: голос → текст (модель работает прямо в браузере). */
-  const [sttBusy, setSttBusy] = useState(false);
-  // Текст НЕ показывается сам — только после нажатия «В текст» (как в ТГ)
-  const [sttText, setSttText] = useState<string | null>(() => {
+  /** Текст голосового показывается СРАЗУ: серверная расшифровка или кэш. */
+  const sttText = serverTranscript ?? (() => {
     if (!messageId) return null;
     try {
       const all = JSON.parse(localStorage.getItem("pulse_stt_v1") ?? "{}") as Record<string, string>;
@@ -4571,40 +4526,8 @@ function VoiceBubble({
     } catch {
       return null;
     }
-  });
-  const [sttError, setSttError] = useState("");
-  const toText = async () => {
-    if (!messageId || sttBusy) return;
-    setSttBusy(true);
-    setSttError("");
-    try {
-      const { transcribeAudio, getCachedTranscript, setCachedTranscript } = await import("@/lib/transcribe");
-      // 1) Живая расшифровка, записанная в момент отправки, — мгновенно
-      const cached = getCachedTranscript(messageId);
-      if (cached) {
-        console.info("[pulse-stt] беру готовую расшифровку из кэша");
-        setSttText(cached);
-        setSttBusy(false);
-        return;
-      }
-      // 2) Иначе — локальная модель (если доступна)
-      console.info("[pulse-stt] кэша нет, пробую локальную модель…");
-      const text = await transcribeAudio(url);
-      setSttText(text || "(речь не распознана)");
-      setCachedTranscript(messageId, text || "(речь не распознана)");
-    } catch (e) {
-      console.warn("[pulse-stt] не удалось распознать:", e);
-      setSttError(
-        e instanceof Error && /модель|загруз|сеть|fetch|network/i.test(e.message)
-          ? "Не получилось: модель распознавания недоступна в этой сети. Запишите голосовое заново — текст соберётся прямо во время записи."
-          : e instanceof Error
-          ? e.message
-          : "Не удалось распознать речь",
-      );
-    } finally {
-      setSttBusy(false);
-    }
-  };
+  })();
+
   /** Уникальный ключ плеера для эксклюзивного воспроизведения. */
   const pbId = useRef(`voice-${Math.random().toString(36).slice(2)}`).current;
 
@@ -4698,33 +4621,12 @@ function VoiceBubble({
           >
             {speeds[speedIdx]}x
           </button>
-          {/* Premium: голос в текст */}
-          {premium && messageId && (
-            <button
-              onClick={() => void toText()}
-              disabled={sttBusy}
-              title="Pulse Premium: распознать речь в текст"
-              className={`flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold transition-colors disabled:opacity-60 ${
-                sttText
-                  ? "bg-white/8 text-white/55 hover:bg-white/15"
-                  : "bg-amber-300/20 text-amber-200 hover:bg-amber-300/30"
-              }`}
-            >
-              {sttBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
-              {sttBusy ? "Распознаём…" : sttText ? "Текст" : "В текст"}
-            </button>
-          )}
         </div>
       </div>
     </div>
-    {premium && messageId && sttText && (
+    {sttText && (
       <p className="rounded-xl border border-white/8 bg-black/20 px-3 py-2 text-[12px] leading-relaxed text-white/80">
         {sttText}
-      </p>
-    )}
-    {premium && messageId && sttError && (
-      <p className="rounded-xl border border-rose-400/20 bg-rose-500/10 px-3 py-2 text-[12px] text-rose-300">
-        {sttError}
       </p>
     )}
     </div>

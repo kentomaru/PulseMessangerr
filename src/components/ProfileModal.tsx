@@ -26,6 +26,7 @@ import StatusEmoji from "./StatusEmoji";
 import { PrivacySettings } from "./PrivacyModal";
 import { api, copyToClipboard, uploadFile } from "@/lib/api";
 import { findGift, type GiftItem } from "@/lib/gifts";
+import GiftDetailModal from "./GiftDetailModal";
 import { compressImage } from "@/lib/images";
 import { BANNER_PRESETS, bannerStyle, isFileBanner } from "@/lib/wallpapers";
 import type { PublicUser } from "@/lib/types";
@@ -86,6 +87,8 @@ export default function ProfileModal({
   const [copiedLink, setCopiedLink] = useState(false);
   /** Мои подарки (видны и мне, и другим в карточке). */
   const [myGifts, setMyGifts] = useState<GiftItem[] | null>(null);
+  /** Тап по своему подарку — детали открываются мгновенно, без запросов. */
+  const [giftDetail, setGiftDetail] = useState<GiftItem | null>(null);
   useEffect(() => {
     let alive = true;
     api<{ gifts: GiftItem[] }>(`/api/gifts?userId=${me.id}`)
@@ -214,6 +217,7 @@ export default function ProfileModal({
   };
 
   return (
+    <>
     <ModalShell onClose={onClose}>
       {/* баннер: поддерживает ЖИВЫЕ пресеты (анимированные градиенты),
           загруженные картинки/гифки и градиент по умолчанию */}
@@ -511,16 +515,17 @@ export default function ProfileModal({
                 const gd = findGift(g.giftKey);
                 if (!gd) return null;
                 return (
-                  <div
+                  <button
                     key={g.id}
-                    title={`${gd.name}${g.anonymous ? " — от Анонима" : g.sender ? ` — от ${g.sender.displayName}` : ""}${g.message ? ` · «${g.message}»` : ""}`}
-                    className={`gift-pop gift-shine relative flex aspect-square items-center justify-center overflow-hidden rounded-2xl border border-white/10 bg-gradient-to-br ${gd.bg}`}
+                    onClick={() => setGiftDetail(g)}
+                    title={`${gd.name} — нажмите: кто подарил, когда и с каким текстом`}
+                    className={`gift-pop gift-shine relative flex aspect-square items-center justify-center overflow-hidden rounded-2xl border border-white/10 bg-gradient-to-br transition-transform hover:scale-105 ${gd.bg}`}
                   >
                     <span
                       className="gift-anim h-8 w-8 [&>svg]:h-full [&>svg]:w-full"
                       dangerouslySetInnerHTML={{ __html: gd.icon }}
                     />
-                  </div>
+                  </button>
                 );
               })}
             </div>
@@ -770,6 +775,20 @@ export default function ProfileModal({
         )}
       </div>
     </ModalShell>
+
+      {/* Детали подарка — мгновенно, из уже загруженных данных */}
+      {giftDetail && (
+        <GiftDetailModal
+          giftKey={giftDetail.giftKey}
+          note={giftDetail.message}
+          senderName={giftDetail.sender?.displayName ?? null}
+          senderAvatarUrl={giftDetail.sender?.avatarUrl ?? null}
+          anonymous={!!giftDetail.anonymous && !giftDetail.sender}
+          createdAt={giftDetail.createdAt}
+          onClose={() => setGiftDetail(null)}
+        />
+      )}
+    </>
   );
 }
 

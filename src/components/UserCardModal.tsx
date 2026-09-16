@@ -25,6 +25,7 @@ import { api } from "@/lib/api";
 import type { PublicUser } from "@/lib/types";
 import { lastSeenLabel } from "@/lib/format";
 import { GIFTS, findGift, type GiftItem } from "@/lib/gifts";
+import GiftDetailModal from "./GiftDetailModal";
 
 type Props = {
   user: PublicUser;
@@ -47,6 +48,8 @@ export default function UserCardModal({ user, onClose, onMessage, myId }: Props)
   const [rel, setRel] = useState<"none" | "friend" | "incoming" | "outgoing" | null>(null);
   /** Подарки пользователя и окно выбора подарка. */
   const [userGifts, setUserGifts] = useState<GiftItem[] | null>(null);
+  /** Тап по подарку — мгновенные детали (кто, когда, с каким текстом). */
+  const [giftDetail, setGiftDetail] = useState<GiftItem | null>(null);
   const [giftPicker, setGiftPicker] = useState(false);
   const [giftSent, setGiftSent] = useState(false);
   useEffect(() => {
@@ -274,16 +277,17 @@ export default function UserCardModal({ user, onClose, onMessage, myId }: Props)
                 const gd = findGift(g.giftKey);
                 if (!gd) return null;
                 return (
-                  <div
+                  <button
                     key={g.id}
-                    title={`${gd.name}${g.anonymous ? " — от Анонима" : g.sender ? ` — от ${g.sender.displayName}` : ""}${g.message ? ` · «${g.message}»` : ""}`}
-                    className={`gift-pop gift-shine relative flex aspect-square items-center justify-center overflow-hidden rounded-2xl border border-white/10 bg-gradient-to-br ${gd.bg}`}
+                    onClick={() => setGiftDetail(g)}
+                    title={`${gd.name} — нажмите: кто подарил, когда и с каким текстом`}
+                    className={`gift-pop gift-shine relative flex aspect-square items-center justify-center overflow-hidden rounded-2xl border border-white/10 bg-gradient-to-br transition-transform hover:scale-105 ${gd.bg}`}
                   >
                     <span
                       className="gift-anim h-9 w-9 [&>svg]:h-full [&>svg]:w-full"
                       dangerouslySetInnerHTML={{ __html: gd.icon }}
                     />
-                  </div>
+                  </button>
                 );
               })}
             </div>
@@ -375,6 +379,18 @@ export default function UserCardModal({ user, onClose, onMessage, myId }: Props)
           </div>
         )}
       </div>
+
+      {giftDetail && (
+        <GiftDetailModal
+          giftKey={giftDetail.giftKey}
+          note={giftDetail.message}
+          senderName={giftDetail.sender?.displayName ?? null}
+          senderAvatarUrl={giftDetail.sender?.avatarUrl ?? null}
+          anonymous={!!giftDetail.anonymous && !giftDetail.sender}
+          createdAt={giftDetail.createdAt}
+          onClose={() => setGiftDetail(null)}
+        />
+      )}
 
       {giftPicker && (
         <GiftPicker

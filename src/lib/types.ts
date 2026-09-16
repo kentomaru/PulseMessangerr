@@ -168,6 +168,8 @@ export type ChatMessage = {
   transcript?: string | null;
   /** «Переслано от …» — ник автора оригинала. */
   forwardedFrom?: string | null;
+  /** Аватарка автора оригинала при пересылке. */
+  forwardedAvatar?: string | null;
 };
 
 export type CallMedia = "audio" | "video";

@@ -274,6 +274,8 @@ export const messages = pgTable(
     transcript: text("transcript"),
     /** «Переслано от …» — ник автора оригинала (как в ТГ). */
     forwardedFrom: text("forwarded_from"),
+    /** Аватарка автора оригинала при пересылке. */
+    forwardedAvatar: text("forwarded_avatar"),
   },
   (t) => [
     index("messages_conversation_idx").on(t.conversationId, t.createdAt),

@@ -126,6 +126,7 @@ async function serializeMessages(list: MessageRow[], meId: string): Promise<Chat
       pinned: !!m.pinnedAt,
       transcript: (m as { transcript?: string | null }).transcript ?? null,
       forwardedFrom: (m as { forwardedFrom?: string | null }).forwardedFrom ?? null,
+      forwardedAvatar: (m as { forwardedAvatar?: string | null }).forwardedAvatar ?? null,
       sender: sender ? publicUser(sender) : undefined,
       replyTo: reply ? replyPreview(reply, senders) : null,
       reactions: aggregateReactions(reactionsByMessage.get(m.id) ?? [], meId),
@@ -338,6 +339,10 @@ export const POST = withApi("messages:send", async ({ req, me, log }) => {
     typeof body.forwardedFrom === "string" && body.forwardedFrom.trim()
       ? body.forwardedFrom.trim().slice(0, 64)
       : null;
+  const forwardedAvatar =
+    typeof body.forwardedAvatar === "string" && body.forwardedAvatar.trim()
+      ? body.forwardedAvatar.trim().slice(0, 512)
+      : null;
   if (conversationId && !isUuid(conversationId))
     return NextResponse.json({ error: "Чат не найден" }, { status: 404 });
   const content = String(body.content ?? "").trim();
@@ -475,6 +480,7 @@ export const POST = withApi("messages:send", async ({ req, me, log }) => {
       silent,
       transcript: type === "voice" ? transcript : null,
       forwardedFrom,
+      forwardedAvatar,
     })
     .returning();
   if (clientKey) rememberKey(clientKey, msg.id);
