@@ -28,9 +28,13 @@ type Props = {
   user: PublicUser;
   onClose: () => void;
   onMessage: () => void;
+  /** Id текущего пользователя — чтобы карточка себя не предлагала действия. */
+  myId?: string;
 };
 
-export default function UserCardModal({ user, onClose, onMessage }: Props) {
+export default function UserCardModal({ user, onClose, onMessage, myId }: Props) {
+  /** Своя карточка («как меня видят другие») — без действий над собой. */
+  const isSelf = myId != null && user.id === myId;
   // Баннер мог не дожить до текущего запуска (битый файл) — тогда градиент
   // вместо «сломанной картинки». При ошибке сети делаем ОДНУ повторную
   // попытку с новым параметром — «баннеры хуёво грузят» чаще всего именно
@@ -271,9 +275,9 @@ export default function UserCardModal({ user, onClose, onMessage }: Props) {
                   <div
                     key={g.id}
                     title={`${gd.name}${g.sender ? ` — от ${g.sender.displayName}` : ""}${g.message ? ` · «${g.message}»` : ""}`}
-                    className={`flex aspect-square items-center justify-center rounded-2xl border border-white/10 bg-gradient-to-br text-3xl ${gd.bg}`}
+                    className={`gift-pop gift-shine relative flex aspect-square items-center justify-center overflow-hidden rounded-2xl border border-white/10 bg-gradient-to-br ${gd.bg}`}
                   >
-                    {gd.emoji}
+                    <span className="gift-anim text-3xl">{gd.emoji}</span>
                   </div>
                 );
               })}
@@ -281,8 +285,15 @@ export default function UserCardModal({ user, onClose, onMessage }: Props) {
           </div>
         )}
 
+        {/* Своя карточка: просто бейдж, без действий над собой */}
+        {isSelf && (
+          <div className="mt-4 rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3 text-center text-[13px] text-white/50">
+            Это ваша карточка — так вас видят другие пользователи
+          </div>
+        )}
+
         {/* Друзья: добавить / принять / отменить / убрать */}
-        {rel !== null && (
+        {!isSelf && rel !== null && (
           <div className="mt-4 flex justify-center gap-2">
             {rel === "none" && (
               <button
@@ -336,26 +347,28 @@ export default function UserCardModal({ user, onClose, onMessage }: Props) {
           </div>
         )}
 
-        <div className="mt-4 flex gap-2">
-          <button
-            onClick={onMessage}
-            className="btn-gradient flex min-w-0 flex-1 items-center justify-center gap-2 rounded-2xl py-3.5 text-[15px] font-semibold text-white"
-          >
-            <MessageSquareText className="h-4.5 w-4.5" />
-            Написать сообщение
-          </button>
-          <button
-            onClick={() => setGiftPicker(true)}
-            title={giftSent ? "Подарок отправлен ✓" : "Подарить подарок"}
-            className={`grid w-14 shrink-0 place-items-center rounded-2xl transition-colors ${
-              giftSent
-                ? "bg-emerald-500/20 text-emerald-300"
-                : "bg-white/10 text-white/80 hover:bg-white/15"
-            }`}
-          >
-            <Gift className="h-5 w-5" />
-          </button>
-        </div>
+        {!isSelf && (
+          <div className="mt-4 flex gap-2">
+            <button
+              onClick={onMessage}
+              className="btn-gradient flex min-w-0 flex-1 items-center justify-center gap-2 rounded-2xl py-3.5 text-[15px] font-semibold text-white"
+            >
+              <MessageSquareText className="h-4.5 w-4.5" />
+              Написать сообщение
+            </button>
+            <button
+              onClick={() => setGiftPicker(true)}
+              title={giftSent ? "Подарок отправлен ✓" : "Подарить подарок"}
+              className={`grid w-14 shrink-0 place-items-center rounded-2xl transition-colors ${
+                giftSent
+                  ? "bg-emerald-500/20 text-emerald-300"
+                  : "bg-white/10 text-white/80 hover:bg-white/15"
+              }`}
+            >
+              <Gift className="h-5 w-5" />
+            </button>
+          </div>
+        )}
       </div>
 
       {giftPicker && (

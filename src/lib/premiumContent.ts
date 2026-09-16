@@ -239,3 +239,24 @@ export function customEmojiGlyph(token: string): string {
 export function replaceCustomEmoji(text: string): string {
   return text.replace(/:ce_[a-z0-9_]+:/g, (t) => customEmojiGlyph(t));
 }
+
+/** Глиф кастомного эмодзи (для вставки в поле ввода). */
+export function customEmojiGlyphByToken(token: string): string | null {
+  const ce = CUSTOM_EMOJI.find((c) => c.token === token);
+  if (!ce) return null;
+  return ce.svg.match(/<text[^>]*>([^<]+)/)?.[1] ?? null;
+}
+
+/**
+ * Перед отправкой превращаем вставленные глифы обратно в токены «:ce_x:»,
+ * чтобы в сообщении эмодзи были анимированными.
+ */
+export function customEmojisToTokens(text: string): string {
+  let out = text;
+  for (const ce of CUSTOM_EMOJI) {
+    const glyph = ce.svg.match(/<text[^>]*>([^<]+)/)?.[1];
+    if (!glyph) continue;
+    out = out.split(glyph).join(ce.token);
+  }
+  return out;
+}

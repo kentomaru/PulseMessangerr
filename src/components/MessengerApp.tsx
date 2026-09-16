@@ -971,6 +971,10 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
             onToggleSound={toggleSound}
             onToggleCallSound={toggleCallSound}
             onToggleNotify={toggleNotify}
+            onOpenMyCard={() => {
+              setShowProfile(false);
+              setViewUser(me);
+            }}
             onClose={() => setShowProfile(false)}
             onSaved={(u: PublicUser) => {
               // Приватность сохраняется во вкладке профиля и НЕ закрывает окно;
@@ -989,6 +993,7 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
           <UserCardModal
             key="user-card"
             user={viewUser}
+            myId={me.id}
             onClose={() => setViewUser(null)}
             onMessage={() => {
               void openConversationWith(viewUser);

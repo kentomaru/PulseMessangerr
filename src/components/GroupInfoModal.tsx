@@ -87,6 +87,8 @@ export default function GroupInfoModal({
   const [myGroups, setMyGroups] = useState<{ id: string; name: string | null }[]>([]);
   const [discPicker, setDiscPicker] = useState(false);
   const [discBusy, setDiscBusy] = useState(false);
+  /** Сколько записей в канале / сообщений в группе. */
+  const [postCount, setPostCount] = useState<number | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -103,6 +105,10 @@ export default function GroupInfoModal({
       setAvatarUrl(d.conversation.avatarUrl);
       const tk = (d.conversation as { inviteToken?: string | null }).inviteToken ?? "";
       setUsername(/^[a-z0-9_]{5,32}$/.test(tk) ? tk : "");
+      // Лёгкий запрос ради счётчика записей
+      api<{ postCount?: number }>(`/api/messages?conversationId=${conversationId}&limit=1`)
+        .then((m) => typeof m.postCount === "number" && setPostCount(m.postCount))
+        .catch(() => { /* не критично */ });
     } catch (e) {
       notify(e instanceof Error ? e.message : "Не удалось загрузить");
     } finally {
@@ -331,6 +337,7 @@ export default function GroupInfoModal({
               <span className="flex items-center gap-1">
                 {isChannel ? <Megaphone className="h-3 w-3" /> : <Users className="h-3 w-3" />}
                 {isChannel ? "Канал" : "Группа"} · {info.memberCount}
+                {postCount != null ? ` · ${postCount} ${isChannel ? "записей" : "сообщений"}` : ""}
               </span>
               <span className="flex items-center gap-1">
                 {info.isPrivate ? <Lock className="h-3 w-3" /> : <Hash className="h-3 w-3" />}

@@ -83,7 +83,7 @@ import { renderRichText } from "@/lib/richText";
 import { addScheduled, readScheduled, removeScheduled, type ScheduledMsg } from "@/lib/scheduledStore";
 import { parseStoryQuote, type StoryQuoteInfo } from "@/lib/storyQuote";
 import { setCachedTranscript } from "@/lib/transcribe";
-import { GIF_PACK, CUSTOM_EMOJI, findCustomEmoji, findGif, gifpackId } from "@/lib/premiumContent";
+import { GIF_PACK, CUSTOM_EMOJI, customEmojiGlyphByToken, customEmojisToTokens, findCustomEmoji, findGif, gifpackId } from "@/lib/premiumContent";
 import {
   callLogLabel,
   dayLabel,
@@ -166,6 +166,7 @@ type Props = {
 type MessageLoad = {
   messages: ChatMessage[];
   pinned: ChatMessage[];
+  postCount?: number;
   conversation: ConvMeta;
   members: ConversationMemberItem[];
   peer: Peer | null;
@@ -298,6 +299,8 @@ export default function ChatView({
 }: Props) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [pinned, setPinned] = useState<ChatMessage[]>([]);
+  /** Сколько записей в канале/группе (для подзаголовка). */
+  const [postCount, setPostCount] = useState<number | null>(null);
   const [pinnedIdx, setPinnedIdx] = useState(0);
   const [meta, setMeta] = useState<ConvMeta | null>(null);
   const [members, setMembers] = useState<ConversationMemberItem[]>([]);
@@ -511,6 +514,7 @@ export default function ChatView({
         setMessages(d.messages.filter((m) => (seen.has(m.id) ? false : (seen.add(m.id), true))));
         setPinned(d.pinned ?? []);
       }
+      if (typeof d.postCount === "number") setPostCount(d.postCount);
       setMeta(d.conversation);
       const ms = (d.conversation as unknown as { members?: { user: { id: string; username: string; displayName: string; avatarUrl: string | null } }[] }).members;
       if (ms) setChatMembers(ms.map((m) => m.user));
@@ -929,6 +933,8 @@ export default function ChatView({
   const speechRecRef = useRef<any>(null);
   const liveTranscriptRef = useRef("");
   const pendingTranscriptRef = useRef<string | null>(null);
+  /** Идёт ли живой разбор речи (чтобы движок перезапускался после пауз). */
+  const speechActiveRef = useRef(false);
 
   const startVoiceRecording = async () => {
     if (!canPost || voiceRecActive || noteRecorder) return;
@@ -953,6 +959,7 @@ export default function ChatView({
       // Параллельно с записью слушаем микрофон штатным движком браузера (ru-RU).
       // После отправки привяжем текст к сообщению — «В текст» сработает мгновенно.
       liveTranscriptRef.current = "";
+      speechActiveRef.current = true;
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const SRC = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
       if (SRC) {
@@ -964,17 +971,38 @@ export default function ChatView({
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           recognition.onresult = (e: any) => {
             for (let i = e.resultIndex; i < e.results.length; i++) {
-              if (e.results[i].isFinal) liveTranscriptRef.current += `${e.results[i][0].transcript} `;
+              if (e.results[i].isFinal) {
+                const chunk = `${e.results[i][0].transcript} `;
+                liveTranscriptRef.current += chunk;
+                console.info("[pulse-stt] фрагмент:", chunk.trim(), "| всего:", liveTranscriptRef.current.trim());
+              }
             }
           };
-          recognition.onerror = () => {
-            try { recognition.stop(); } catch { /* уже остановлен */ }
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          recognition.onerror = (e: any) => {
+            console.warn("[pulse-stt] ошибка движка:", e?.error);
+            // "no-speech"/"aborted" не критичны — рестарт в onend; сетевые тоже пробуем пережить
+          };
+          // Браузер сам останавливает распознавание после пауз (~60 с) —
+          // пока запись идёт, перезапускаем его автоматически.
+          recognition.onend = () => {
+            if (speechActiveRef.current) {
+              try {
+                recognition.start();
+                console.info("[pulse-stt] движок перезапущен (запись продолжается)");
+              } catch {
+                /* уже активен */
+              }
+            }
           };
           recognition.start();
           speechRecRef.current = recognition;
-        } catch {
-          /* живая расшифровка недоступна — сработает кнопка «В текст» */
+          console.info("[pulse-stt] живая расшифровка запущена (ru-RU)");
+        } catch (e) {
+          console.warn("[pulse-stt] живая расшифровка недоступна:", e);
         }
+      } else {
+        console.warn("[pulse-stt] Web Speech API не поддерживается этим браузером — сработает кнопка «В текст»");
       }
     } catch {
       notify("Не удалось получить доступ к микрофону");
@@ -986,6 +1014,7 @@ export default function ChatView({
     if (!rec) return;
     voiceRef.current = null;
     sendTyping(false);
+    speechActiveRef.current = false;
     if (speechRecRef.current) {
       try { speechRecRef.current.stop(); } catch { /* уже остановлен */ }
       speechRecRef.current = null;
@@ -1260,24 +1289,27 @@ export default function ChatView({
   /* ─────────────────────────── эмодзи-пикер ─────────────────────────── */
 
   const insertEmoji = (emoji: string) => {
+    // Кастом-эмодзи в поле ввода показываем настоящим эмодзи, а не токеном
+    const glyph = /^:ce_[a-z0-9_]+:$/.test(emoji) ? customEmojiGlyphByToken(emoji) : null;
+    const ins = glyph ?? emoji;
     // Недавние эмодзи: пишем в localStorage (до 24 штук, без повторов)
     try {
       const cur = JSON.parse(localStorage.getItem("pulse_recent_emoji_v1") ?? "[]") as string[];
-      const next = [emoji, ...cur.filter((x) => x !== emoji)].slice(0, 24);
+      const next = [ins, ...cur.filter((x) => x !== ins && x !== emoji)].slice(0, 24);
       localStorage.setItem("pulse_recent_emoji_v1", JSON.stringify(next));
     } catch { /* ignore */ }
     const el = inputRef.current;
     if (!el) {
-      setText((t) => t + emoji);
+      setText((t) => t + ins);
       return;
     }
     const start = el.selectionStart ?? text.length;
     const end = el.selectionEnd ?? text.length;
-    const next = text.slice(0, start) + emoji + text.slice(end);
+    const next = text.slice(0, start) + ins + text.slice(end);
     setText(next);
     requestAnimationFrame(() => {
       el.focus();
-      const pos = start + emoji.length;
+      const pos = start + ins.length;
       el.setSelectionRange(pos, pos);
     });
   };
@@ -1350,12 +1382,15 @@ export default function ChatView({
 
   // Классика мессенджеров: текстовые смайлики при отправке становятся эмодзи
   const emojify = (s: string) =>
-    s
-      .replace(/<3/g, "❤️")
-      .replace(/:\)/g, "🙂")
-      .replace(/:\(/g, "🙁")
-      .replace(/;\)/g, "😉")
-      .replace(/:D/g, "😄");
+    // Глифы кастом-эмодзи в поле ввода → токены, чтобы в сообщении они анимировались
+    customEmojisToTokens(
+      s
+        .replace(/<3/g, "❤️")
+        .replace(/:\)/g, "🙂")
+        .replace(/:\(/g, "🙁")
+        .replace(/;\)/g, "😉")
+        .replace(/:D/g, "😄"),
+    );
 
   /** Скачать историю чата простым текстовым файлом. */
   const exportHistory = () => {
@@ -1589,6 +1624,12 @@ export default function ChatView({
       return { text: `${status}${uname}`, accent: !!peerState?.online };
     }
     const online = members.filter((m) => m.user.online).length;
+    if (kind === "channel") {
+      return {
+        text: `${meta?.memberCount ?? members.length} подписчиков${postCount != null ? ` · ${postCount} записей` : ""}`,
+        accent: false,
+      };
+    }
     return {
       text: `${meta?.memberCount ?? members.length} участников · ${online} в сети`,
       accent: false,
@@ -4634,6 +4675,9 @@ function PollCard({
     setMyVotes(myServerVotes ?? []);
   }, [myServerVotes]);
   const voted = myVotes.length > 0;
+  /** «Результаты» без голосования: столбики видны, голос не засчитан. */
+  const [preview, setPreview] = useState(false);
+  const showBars = voted || preview;
   const total = counts.reduce((sum, n) => sum + n, 0);
 
   const applyResp = (d: { counts?: number[]; myVotes?: number[] }) => {
@@ -4699,11 +4743,11 @@ function PollCard({
             <button
               key={i}
               onClick={() => {
-                if (voted) return;
+                if (voted || preview) return;
                 if (multi) setPending((cur) => (cur.includes(i) ? cur.filter((x) => x !== i) : [...cur, i]));
                 else void voteOne(i);
               }}
-              disabled={voted || busy}
+              disabled={voted || preview || busy}
               className={`relative overflow-hidden rounded-xl border px-3 py-2 text-left text-[13px] transition-colors ${
                 chosen
                   ? isRight && voted
@@ -4714,7 +4758,7 @@ function PollCard({
                   : "border-white/10 text-white/80 " + (!voted && !busy ? "hover:bg-white/8" : "")
               }`}
             >
-              {voted && (
+              {showBars && (
                 <span
                   className={`absolute inset-y-0 left-0 transition-all ${isRight && quiz != null ? "bg-emerald-400/20" : "bg-[#5865f2]/25"}`}
                   style={{ width: `${pct}%` }}
@@ -4736,13 +4780,13 @@ function PollCard({
                   {!chosen && voted && quiz != null && isRight && <Check className="h-2.5 w-2.5 text-emerald-300" />}
                 </span>
                 <span className="min-w-0 flex-1 break-words">{o}</span>
-                {voted && <span className="shrink-0 text-[11px] text-white/45 tabular-nums">{pct}%</span>}
+                {showBars && <span className="shrink-0 text-[11px] text-white/45 tabular-nums">{pct}%</span>}
               </span>
             </button>
           );
         })}
       </div>
-      {!voted && multi && (
+      {!voted && multi && !preview && (
         <button
           onClick={() => void commitMulti()}
           disabled={pending.length === 0 || busy}
@@ -4751,11 +4795,21 @@ function PollCard({
           {busy ? "Считаем…" : `Проголосовать${pending.length > 0 ? ` (${pending.length})` : ""}`}
         </button>
       )}
+      {!voted && (
+        <button
+          onClick={() => setPreview((v) => !v)}
+          className="mt-2 rounded-xl bg-white/[0.06] px-3 py-1.5 text-[12px] font-medium text-white/70 transition-colors hover:bg-white/10"
+        >
+          {preview ? "← Вернуться к голосованию" : "Результаты без голосования"}
+        </button>
+      )}
       <p className="mt-1.5 text-[11px] text-white/35 tabular-nums">
         {voted && quiz != null
           ? myVotes.includes(quiz)
             ? "Верно! 🎉"
             : "Неверно — правильный ответ подсвечен"
+          : preview
+          ? `Проголосовало: ${total} · это предпросмотр, ваш голос не учтён`
           : total > 0
           ? `Проголосовало: ${total}`
           : "Проголосуйте — результаты увидят все"}

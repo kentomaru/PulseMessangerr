@@ -20,10 +20,12 @@ import {
   UsersRound,
   X,
 } from "lucide-react";
+import { ChevronRight, Gem, Gift, Infinity, Package, PenLine, Star, Timer } from "lucide-react";
 import Avatar, { paletteFor } from "./Avatar";
 import StatusEmoji from "./StatusEmoji";
 import { PrivacySettings } from "./PrivacyModal";
 import { api, copyToClipboard, uploadFile } from "@/lib/api";
+import { findGift, type GiftItem } from "@/lib/gifts";
 import { compressImage } from "@/lib/images";
 import { BANNER_PRESETS, bannerStyle, isFileBanner } from "@/lib/wallpapers";
 import type { PublicUser } from "@/lib/types";
@@ -52,6 +54,8 @@ type Props = {
   onToggleSound?: () => void;
   onToggleCallSound?: () => void;
   onToggleNotify?: () => void;
+  /** Открыть свою карточку — «как меня видят другие». */
+  onOpenMyCard?: () => void;
 };
 
 export default function ProfileModal({
@@ -71,6 +75,7 @@ export default function ProfileModal({
   onToggleSound,
   onToggleCallSound,
   onToggleNotify,
+  onOpenMyCard,
 }: Props) {
   /** Вкладки: профиль, приватность, оформление (с превью), друзья. */
   const [tab, setTab] = useState<"profile" | "privacy" | "appearance" | "friends">("profile");
@@ -79,6 +84,17 @@ export default function ProfileModal({
   const [copiedName, setCopiedName] = useState(false);
   /** «Моя ссылка»: глубокая ссылка на профиль (#user=…). */
   const [copiedLink, setCopiedLink] = useState(false);
+  /** Мои подарки (видны и мне, и другим в карточке). */
+  const [myGifts, setMyGifts] = useState<GiftItem[] | null>(null);
+  useEffect(() => {
+    let alive = true;
+    api<{ gifts: GiftItem[] }>(`/api/gifts?userId=${me.id}`)
+      .then((d) => alive && setMyGifts(d.gifts))
+      .catch(() => alive && setMyGifts([]));
+    return () => {
+      alive = false;
+    };
+  }, [me.id]);
   const [bio, setBio] = useState(me.bio);
   const [birthday, setBirthday] = useState(me.birthday ?? "");
   const [avatarUrl, setAvatarUrl] = useState<string | null>(me.avatarUrl);
@@ -447,26 +463,66 @@ export default function ProfileModal({
           </div>
         </div>
 
-        {/* Быстрые кнопки разделов — прямо рядом с именем, без скролла */}
-        <div className="flex flex-wrap gap-1.5">
+        {/* Быстрые разделы — строками как в настройках ТГ: иконка, название, стрелка */}
+        <div className="space-y-1">
           {(
             [
-              ["privacy", "Приватность", Shield],
-              ["appearance", "Оформление", Palette],
-              ["friends", "Друзья", UsersRound],
+              ["privacy", "Приватность", Shield, "from-rose-500/80 to-red-400/70"],
+              ["appearance", "Оформление", Palette, "from-sky-500/80 to-indigo-400/70"],
+              ["friends", "Друзья", UsersRound, "from-emerald-500/80 to-teal-400/70"],
             ] as const
-          ).map(([t, label, Icon]) => (
+          ).map(([t, label, Icon, grad]) => (
             <button
               key={t}
               onClick={() => setTab(t)}
-              className="flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.05] px-3 py-1.5 text-[11px] font-medium text-white/60 transition-colors hover:bg-white/10 hover:text-white"
+              className="flex w-full items-center gap-3 rounded-2xl px-2 py-2 text-left transition-colors hover:bg-white/5"
               title={`Открыть раздел «${label}»`}
             >
-              <Icon className="h-3 w-3" />
-              {label}
+              <span className={`grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-gradient-to-br text-white ${grad}`}>
+                <Icon className="h-4 w-4" />
+              </span>
+              <span className="min-w-0 flex-1 text-[14px] font-medium text-white/85">{label}</span>
+              <ChevronRight className="h-4 w-4 text-white/30" />
             </button>
           ))}
+          {onOpenMyCard && (
+            <button
+              onClick={onOpenMyCard}
+              className="flex w-full items-center gap-3 rounded-2xl px-2 py-2 text-left transition-colors hover:bg-white/5"
+              title="Открыть мою карточку — так меня видят другие"
+            >
+              <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-gradient-to-br from-violet-500/80 to-fuchsia-400/70 text-white">
+                <ImageIcon className="h-4 w-4" />
+              </span>
+              <span className="min-w-0 flex-1 text-[14px] font-medium text-white/85">Моя карточка</span>
+              <ChevronRight className="h-4 w-4 text-white/30" />
+            </button>
+          )}
         </div>
+
+        {/* Мои подарки — анимированные, как в ТГ */}
+        {myGifts && myGifts.length > 0 && (
+          <div>
+            <p className="pb-2 text-[10px] font-semibold tracking-wide text-white/35 uppercase">
+              Мои подарки · {myGifts.length}
+            </p>
+            <div className="grid grid-cols-6 gap-2">
+              {myGifts.slice(0, 12).map((g) => {
+                const gd = findGift(g.giftKey);
+                if (!gd) return null;
+                return (
+                  <div
+                    key={g.id}
+                    title={`${gd.name}${g.sender ? ` — от ${g.sender.displayName}` : ""}${g.message ? ` · «${g.message}»` : ""}`}
+                    className={`gift-pop gift-shine relative flex aspect-square items-center justify-center overflow-hidden rounded-2xl border border-white/10 bg-gradient-to-br ${gd.bg}`}
+                  >
+                    <span className="gift-anim text-2xl">{gd.emoji}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         <label className="block">
           <span className="mb-1.5 block text-xs font-medium tracking-wide text-white/45 uppercase">
@@ -535,14 +591,23 @@ export default function ProfileModal({
         </div>
         {me.premium && (
           <div className="-mt-1 grid grid-cols-2 gap-1.5 rounded-2xl border border-white/8 bg-white/[0.02] p-3 text-[11px] leading-snug text-white/55">
-            <span>📦 Файлы до 4 ГБ</span>
-            <span>🎨 Цвет имени в чатах</span>
-            <span>⏳ Сторис до 48 часов</span>
-            <span>✍️ Подписи до 2048 симв.</span>
-            <span>⭐ Кастом-эмодзи</span>
-            <span>🖼️ Анимированные стикеры</span>
-            <span>💎 Значок в профиле</span>
-            <span>🧬 Все лимиты удвоены</span>
+            {(
+              [
+                [Package, "Файлы до 4 ГБ"],
+                [Palette, "Цвет имени в чатах"],
+                [Timer, "Сторис до 48 часов"],
+                [PenLine, "Подписи до 2048 симв."],
+                [Star, "Кастом-эмодзи"],
+                [ImageIcon, "Анимированные стикеры"],
+                [Gem, "Значок в профиле"],
+                [Infinity, "Все лимиты удвоены"],
+              ] as const
+            ).map(([Icon, label]) => (
+              <span key={label} className="flex items-center gap-1.5">
+                <Icon className="h-3.5 w-3.5 shrink-0 text-amber-200/80" />
+                {label}
+              </span>
+            ))}
           </div>
         )}
 

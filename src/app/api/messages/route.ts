@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { db } from "@/db";
 import { conversationMembers, conversations, messageReactions, messages, pollVotes, userBlocks, users } from "@/db/schema";
-import { and, desc, eq, inArray, isNotNull, isNull, or } from "drizzle-orm";
+import { and, count, desc, eq, inArray, isNotNull, isNull, ne, or } from "drizzle-orm";
 import { publicUser } from "@/lib/auth";
 import { isUuid, withApi } from "@/lib/api-helpers";
 import {
@@ -215,6 +215,19 @@ export const GET = withApi("messages", async ({ req, me }) => {
 
   const active = await findActiveCall(conversationId);
 
+  // Сколько записей/сообщений в чате — для «Записи · N» у каналов и групп
+  const postCountRows = await db
+    .select({ n: count() })
+    .from(messages)
+    .where(
+      and(
+        eq(messages.conversationId, conversationId),
+        isNull(messages.deletedAt),
+        ne(messages.type, "call"),
+      ),
+    );
+  const postCount = postCountRows[0]?.n ?? 0;
+
   // Закреплённые сообщения (плашка сверху чата)
   const pinnedRows = await db
     .select()
@@ -230,6 +243,7 @@ export const GET = withApi("messages", async ({ req, me }) => {
     .limit(10);
 
   return NextResponse.json({
+    postCount,
     messages: await serializeMessages(list, me.id),
     pinned: await serializeMessages(pinnedRows, me.id),
     conversation: {

@@ -52,12 +52,18 @@ async function getModel(): Promise<any> {
     modelPromise = (async () => {
       const vosk = await import("vosk-browser");
       // Сначала пробуем модель со СВОЕГО сервера; если её там нет — запасной хост
+      console.info("[pulse-stt] загрузка модели…");
       try {
         const head = await fetch(MODEL_URL_LOCAL, { method: "HEAD" });
-        if (head.ok) return await vosk.createModel(MODEL_URL_LOCAL);
-      } catch {
-        /* файла на сервере пока нет */
+        if (head.ok) {
+          console.info("[pulse-stt] беру модель со своего сервера:", MODEL_URL_LOCAL);
+          return await vosk.createModel(MODEL_URL_LOCAL);
+        }
+        console.warn("[pulse-stt] на сервере модели нет (код", head.status, ")");
+      } catch (e) {
+        console.warn("[pulse-stt] сервер модели недоступен:", e);
       }
+      console.info("[pulse-stt] пробую запасной хост:", MODEL_URL_FALLBACK);
       return await vosk.createModel(MODEL_URL_FALLBACK);
     })();
     modelPromise.catch(() => {
@@ -92,8 +98,11 @@ async function decodeTo16k(url: string): Promise<AudioBuffer> {
  * Возвращает строку (может быть пустой, если речь не распознана).
  */
 export async function transcribeAudio(url: string): Promise<string> {
+  console.info("[pulse-stt] расшифровка через Vosk:", url);
   const model = await getModel();
+  console.info("[pulse-stt] модель готова, декодирую аудио…");
   const buffer = await decodeTo16k(url);
+  console.info("[pulse-stt] аудио:", buffer.duration.toFixed(1), "с @", buffer.sampleRate, "Гц");
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const recognizer = new model.KaldiRecognizer(16000);
@@ -136,5 +145,7 @@ export async function transcribeAudio(url: string): Promise<string> {
   } catch {
     /* не важно */
   }
-  return parts.join(" ").replace(/\s+/g, " ").trim();
+  const out = parts.join(" ").replace(/\s+/g, " ").trim();
+  console.info(out ? `[pulse-stt] готово: «${out}»` : "[pulse-stt] речь не распознана (пустой результат)");
+  return out;
 }
