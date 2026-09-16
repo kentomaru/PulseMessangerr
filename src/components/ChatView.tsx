@@ -21,7 +21,7 @@ import {
   File as FileIcon,
   FileText,
   Film,
-  BarChart3,
+  Forward,  BarChart3,
   Contact,
   CheckSquare,
   MapPin,
@@ -84,6 +84,7 @@ import { addScheduled, readScheduled, removeScheduled, type ScheduledMsg } from 
 import { parseStoryQuote, type StoryQuoteInfo } from "@/lib/storyQuote";
 import { setCachedTranscript } from "@/lib/transcribe";
 import { GIF_PACK, CUSTOM_EMOJI, customEmojiGlyphByToken, customEmojisToTokens, findCustomEmoji, findGif, gifpackId } from "@/lib/premiumContent";
+import { findGift } from "@/lib/gifts";
 import {
   callLogLabel,
   dayLabel,
@@ -872,6 +873,9 @@ export default function ChatView({
             duration: Math.max(1, Math.round(durationSec)),
           }),
           replyToId: replyTo?.id ?? null,
+          // Расшифровка уходит на сервер вместе с голосовым — её увидят ВСЕ,
+          // а не только тот, кто записывал.
+          transcript: type === "voice" ? pendingTranscriptRef.current ?? null : undefined,
         }),
       });
       // Живая расшифровка, накопленная во время записи, привязывается к сообщению —
@@ -3478,6 +3482,10 @@ function ForwardModal({
           type: message.type === "call" ? "text" : message.type,
           content: message.content,
           replyToId: null,
+          // «Переслано от …»: сохраняем АВТОРА ОРИГИНАЛА, как в ТГ,
+          // а не того, кто пересылает дальше по цепочке
+          forwardedFrom:
+            message.forwardedFrom ?? message.sender?.displayName ?? message.sender?.username ?? null,
         }),
       });
       notify(`Переслано в «${conv.title}»`);
@@ -4103,6 +4111,7 @@ function MessageBubble({
   const isNote = message.type === "video_note" || legacyKind === "video_note";
   const isImage = message.type === "image" && !legacyKind;
   const isFile = message.type === "file" && !legacyKind;
+  const isGift = message.type === "gift";
 
   // голосовые и кружки не группируем вплотную — им нужен воздух
   const media = isVoice || isNote || isFile;
@@ -4174,6 +4183,14 @@ function MessageBubble({
                 } px-4 py-2.5`
           } ${highlighted ? "ring-2 ring-[#5865f2]/60" : ""}`}
         >
+          {/* «Переслано от …» — как в ТГ, виден автор оригинала */}
+          {message.forwardedFrom && (
+            <p className="mb-1.5 flex items-center gap-1.5 text-[11px] font-semibold text-sky-300">
+              <Forward className="h-3 w-3" />
+              Переслано от {message.forwardedFrom}
+            </p>
+          )}
+
           {/* Цитата (ответ на сообщение) */}
           {message.replyTo && (
             <button
@@ -4196,13 +4213,16 @@ function MessageBubble({
             </button>
           )}
 
-          {isVoice && att ? (
+          {isGift ? (
+            <GiftCard content={message.content} senderName={message.sender?.displayName ?? ""} />
+          ) : isVoice && att ? (
             <VoiceBubble
               url={att.url}
               duration={att.duration ?? 0}
               own={own && !space}
               messageId={message.id}
               premium={premium}
+              serverTranscript={message.transcript ?? null}
             />
           ) : isNote && att ? (
             <VideoNoteBubble url={att.url} duration={att.duration ?? 0} />
@@ -4399,18 +4419,92 @@ const WAVE_BARS = [
   8, 14, 20, 11, 26, 18, 9, 22, 30, 14, 10, 24, 16, 28, 12, 19, 25, 9, 15, 27, 11, 21, 17, 29, 13, 23, 10, 18,
 ];
 
+/** Сообщение-подарок в чате: большая иконка, подпись, тап — детали как в ТГ. */
+function GiftCard({ content, senderName }: { content: string; senderName: string }) {
+  const [open, setOpen] = useState(false);
+  let giftKey = "";
+  let note = "";
+  let anonymous = false;
+  try {
+    const p = JSON.parse(content) as { giftKey?: unknown; note?: unknown; anonymous?: unknown };
+    if (typeof p.giftKey === "string") giftKey = p.giftKey;
+    if (typeof p.note === "string") note = p.note;
+    anonymous = p.anonymous === true;
+  } catch {
+    /* битый контент */
+  }
+  const gift = findGift(giftKey);
+  if (!gift) return null;
+  return (
+    <>
+      <button
+        onClick={() => setOpen(true)}
+        title={`${gift.name} · нажмите, чтобы посмотреть детали`}
+        className={`gift-shine relative flex w-52 flex-col items-center gap-1 overflow-hidden rounded-2xl border border-white/10 bg-gradient-to-br px-4 py-4 transition-transform hover:scale-[1.02] ${gift.bg}`}
+      >
+        <span
+          className="gift-anim h-16 w-16 [&>svg]:h-full [&>svg]:w-full"
+          dangerouslySetInnerHTML={{ __html: gift.icon }}
+        />
+        <span className="text-[13px] font-bold">{gift.name}</span>
+        <span className="flex items-center gap-1 text-[11px] font-bold text-amber-200">
+          <Star className="h-3 w-3" /> {gift.price}
+        </span>
+        {note && <span className="max-w-full truncate text-[11px] text-white/60">«{note}»</span>}
+        <span className="pt-0.5 text-[10px] text-white/35">{anonymous ? "Подарок от Анонима" : `Подарок от ${senderName || "…"}`}</span>
+      </button>
+      {open && (
+        <div className="fixed inset-0 z-[95] grid place-items-center bg-black/70 p-4 backdrop-blur-sm" onClick={() => setOpen(false)}>
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="glass-strong w-full max-w-xs rounded-[1.6rem] p-5 text-center shadow-2xl"
+          >
+            <div className={`gift-shine relative mx-auto grid aspect-square w-40 place-items-center overflow-hidden rounded-3xl border border-white/10 bg-gradient-to-br ${gift.bg}`}>
+              <span
+                className="gift-anim h-24 w-24 [&>svg]:h-full [&>svg]:w-full"
+                dangerouslySetInnerHTML={{ __html: gift.icon }}
+              />
+            </div>
+            <p className="pt-3 text-[16px] font-bold">{gift.name}</p>
+            <p className="flex items-center justify-center gap-1 pt-0.5 text-[12px] font-bold text-amber-300">
+              <Star className="h-3 w-3" /> {gift.price} звёзд
+            </p>
+            <p className="pt-2 text-[12px] text-white/50">
+              {anonymous ? "Отправитель скрыл своё имя" : `Отправил(а): ${senderName || "—"}`}
+            </p>
+            {note && (
+              <p className="mt-2 rounded-xl border border-white/8 bg-white/[0.04] px-3 py-2 text-[12px] leading-relaxed text-white/75">
+                «{note}»
+              </p>
+            )}
+            <button
+              onClick={() => setOpen(false)}
+              className="mt-4 w-full rounded-2xl bg-white/10 py-2.5 text-[13px] font-semibold text-white/80 transition-colors hover:bg-white/15"
+            >
+              Закрыть
+            </button>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
 function VoiceBubble({
   url,
   duration,
   own,
   messageId,
   premium,
+  serverTranscript = null,
 }: {
   url: string;
   duration: number;
   own: boolean;
   messageId?: string;
   premium?: boolean;
+  /** Расшифровка с сервера — видна всем сразу, как в ТГ. */
+  serverTranscript?: string | null;
 }) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const [playing, setPlaying] = useState(false);
@@ -4421,6 +4515,8 @@ function VoiceBubble({
   /** Pulse Premium: голос → текст (модель работает прямо в браузере). */
   const [sttBusy, setSttBusy] = useState(false);
   const [sttText, setSttText] = useState<string | null>(() => {
+    // Серверная расшифровка — в приоритете у всех участников чата
+    if (serverTranscript) return serverTranscript;
     if (!messageId) return null;
     try {
       const all = JSON.parse(localStorage.getItem("pulse_stt_v1") ?? "{}") as Record<string, string>;

@@ -141,8 +141,8 @@ export type ChatMessage = {
   id: string;
   conversationId: string;
   senderId: string;
-  /** text | image (content = url или JSON) | voice | video_note | file | call. */
-  type: "text" | "image" | "voice" | "video_note" | "file" | "call";
+  /** text | image (content = url или JSON) | voice | video_note | file | call | gift. */
+  type: "text" | "image" | "voice" | "video_note" | "file" | "call" | "gift";
   content: string;
   replyToId: string | null;
   /** Тихое сообщение — без звука у получателей. */
@@ -164,6 +164,10 @@ export type ChatMessage = {
   /** Голоса в опросе по вариантам (серверные) и мои выбранные варианты. */
   pollVotes?: number[];
   myPollVotes?: number[];
+  /** Расшифровка голосового (хранится на сервере — видна всем). */
+  transcript?: string | null;
+  /** «Переслано от …» — ник автора оригинала. */
+  forwardedFrom?: string | null;
 };
 
 export type CallMedia = "audio" | "video";

@@ -376,6 +376,8 @@ export async function ensureSchema(): Promise<void> {
       created_at timestamptz not null default now()
     );
     alter table gifts add column if not exists hide_sender boolean not null default false;
+    alter table messages add column if not exists transcript text;
+    alter table messages add column if not exists forwarded_from text;
   `);
   log.info("Схема базы данных проверена (ensureSchema: ok)");
 }

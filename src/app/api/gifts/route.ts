@@ -1,10 +1,11 @@
 import { NextResponse } from "next/server";
 import { db } from "@/db";
-import { gifts, users } from "@/db/schema";
-import { desc, eq } from "drizzle-orm";
+import { conversationMembers, conversations, gifts, messages, users } from "@/db/schema";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import { isUuid, withApi } from "@/lib/api-helpers";
 import { publicUser } from "@/lib/auth";
 import { GIFTS } from "@/lib/gifts";
+import { newInviteToken } from "@/lib/conversations";
 
 /**
  * GET /api/gifts?userId=<id> — подарки пользователя (для его профиля).
@@ -73,5 +74,52 @@ export const POST = withApi("gifts:send", async ({ req, me }) => {
     message: message || null,
     hideSender,
   });
+
+  // Как в ТГ: подарок приходит сообщением в личный чат с получателем.
+  // Ищем существующий диалог; нет — создаём.
+  try {
+    const rows = await db
+      .select({
+        convId: conversationMembers.conversationId,
+        userId: conversationMembers.userId,
+        kind: conversations.kind,
+      })
+      .from(conversationMembers)
+      .innerJoin(conversations, eq(conversations.id, conversationMembers.conversationId))
+      .where(and(inArray(conversationMembers.userId, [me.id, recipientId]), eq(conversations.kind, "direct")));
+    const byConv = new Map<string, Set<string>>();
+    for (const r of rows) {
+      const set = byConv.get(r.convId) ?? new Set<string>();
+      set.add(r.userId);
+      byConv.set(r.convId, set);
+    }
+    let dmId: string | null = null;
+    for (const [cid, members] of byConv) {
+      if (members.has(me.id) && members.has(recipientId)) {
+        dmId = cid;
+        break;
+      }
+    }
+    if (!dmId) {
+      const [conv] = await db
+        .insert(conversations)
+        .values({ kind: "direct", isGroup: false, isPrivate: true, ownerId: me.id, inviteToken: newInviteToken() })
+        .returning();
+      await db.insert(conversationMembers).values([
+        { conversationId: conv.id, userId: me.id, role: "owner" },
+        { conversationId: conv.id, userId: recipientId, role: "member" },
+      ]);
+      dmId = conv.id;
+    }
+    await db.insert(messages).values({
+      conversationId: dmId,
+      senderId: me.id,
+      type: "gift",
+      content: JSON.stringify({ giftKey: gift.key, note: message || "", anonymous: hideSender }),
+    });
+  } catch {
+    /* подарок сохранён в профиле — сообщение в чате не критично */
+  }
+
   return NextResponse.json({ ok: true, gift: gift.key, recipient: publicUser(recipient) });
 });

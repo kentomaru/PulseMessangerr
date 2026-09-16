@@ -270,6 +270,10 @@ export const messages = pgTable(
     pinnedAt: timestamp("pinned_at", { withTimezone: true }),
     /** Ссылка на звонок, чтобы лог звонка не дублировался (unique-индекс ниже). */
     callId: uuid("call_id").references(() => calls.id, { onDelete: "cascade" }),
+    /** Расшифровка голосового — хранится на сервере, видна всем. */
+    transcript: text("transcript"),
+    /** «Переслано от …» — ник автора оригинала (как в ТГ). */
+    forwardedFrom: text("forwarded_from"),
   },
   (t) => [
     index("messages_conversation_idx").on(t.conversationId, t.createdAt),

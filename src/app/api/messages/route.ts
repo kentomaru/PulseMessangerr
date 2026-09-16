@@ -124,6 +124,8 @@ async function serializeMessages(list: MessageRow[], meId: string): Promise<Chat
       deletedAt: m.deletedAt ? new Date(m.deletedAt).toISOString() : null,
       editedAt: m.editedAt ? new Date(m.editedAt).toISOString() : null,
       pinned: !!m.pinnedAt,
+      transcript: (m as { transcript?: string | null }).transcript ?? null,
+      forwardedFrom: (m as { forwardedFrom?: string | null }).forwardedFrom ?? null,
       sender: sender ? publicUser(sender) : undefined,
       replyTo: reply ? replyPreview(reply, senders) : null,
       reactions: aggregateReactions(reactionsByMessage.get(m.id) ?? [], meId),
@@ -322,10 +324,20 @@ export const POST = withApi("messages:send", async ({ req, me, log }) => {
       }
     }
   }
-  const ALLOWED_TYPES = ["text", "image", "voice", "video_note", "file"] as const;
+  const ALLOWED_TYPES = ["text", "image", "voice", "video_note", "file", "gift"] as const;
   const type = ALLOWED_TYPES.includes(body.type) ? (body.type as (typeof ALLOWED_TYPES)[number]) : "text";
   const replyToId = typeof body.replyToId === "string" && isUuid(body.replyToId) ? body.replyToId : null;
   const silent = body.silent === true;
+  /** Расшифровка голосового, собранная прямо во время записи (до 2000 симв.). */
+  const transcript =
+    typeof body.transcript === "string" && body.transcript.trim()
+      ? body.transcript.trim().slice(0, 2000)
+      : null;
+  /** «Переслано от …» — ник автора оригинала при пересылке. */
+  const forwardedFrom =
+    typeof body.forwardedFrom === "string" && body.forwardedFrom.trim()
+      ? body.forwardedFrom.trim().slice(0, 64)
+      : null;
   if (conversationId && !isUuid(conversationId))
     return NextResponse.json({ error: "Чат не найден" }, { status: 404 });
   const content = String(body.content ?? "").trim();
@@ -392,7 +404,7 @@ export const POST = withApi("messages:send", async ({ req, me, log }) => {
 
   // Для вложений content — JSON {url, ...} (у image допускается и просто url).
   // Проверяем, что url ведёт на наш файловый сервис, а не на внешний сайт.
-  if (type !== "text") {
+  if (type !== "text" && type !== "gift") {
     let url: string | null = null;
     if (content.startsWith("/api/files/")) {
       url = content;
@@ -454,7 +466,16 @@ export const POST = withApi("messages:send", async ({ req, me, log }) => {
 
   const [msg] = await db
     .insert(messages)
-    .values({ conversationId, senderId: me.id, type, content, replyToId, silent })
+    .values({
+      conversationId,
+      senderId: me.id,
+      type,
+      content,
+      replyToId,
+      silent,
+      transcript: type === "voice" ? transcript : null,
+      forwardedFrom,
+    })
     .returning();
   if (clientKey) rememberKey(clientKey, msg.id);
 

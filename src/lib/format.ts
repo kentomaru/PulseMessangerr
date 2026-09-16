@@ -1,5 +1,6 @@
 import type { AttachmentInfo, CallLogInfo } from "@/lib/types";
 import { gifpackId, findGif, replaceCustomEmoji } from "./premiumContent";
+import { findGift } from "./gifts";
 
 export function timeHHmm(iso: string | Date) {
   const d = new Date(iso);
@@ -153,6 +154,15 @@ export type PreviewKind = "call" | "image" | "voice" | "video" | "file" | null;
 import { parseStoryQuote } from "./storyQuote";
 
 export function previewInfo(type: string, content: string): { kind: PreviewKind; text: string } {
+  if (type === "gift") {
+    try {
+      const p = JSON.parse(content) as { giftKey?: unknown };
+      const g = typeof p.giftKey === "string" ? findGift(p.giftKey) : undefined;
+      return { kind: null, text: g ? `Подарок · ${g.name}` : "Подарок" };
+    } catch {
+      return { kind: null, text: "Подарок" };
+    }
+  }
   if (type === "call") {
     const info = parseCallContent(content);
     return { kind: "call", text: info ? callLogLabel(info) : "Звонок" };
