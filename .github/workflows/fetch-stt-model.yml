@@ -1,0 +1,24 @@
+name: Fetch STT model
+
+on:
+  workflow_dispatch:
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download vosk model (small, RU)
+        run: |
+          mkdir -p public/stt
+          curl -sL --retry 3 -o public/stt/vosk-model-small-ru-0.22.zip \
+            https://alphacephei.com/vosk/models/vosk-model-small-ru-0.22.zip
+          ls -la public/stt
+          python3 -c "import zipfile; z=zipfile.ZipFile('public/stt/vosk-model-small-ru-0.22.zip'); print(len(z.namelist()), 'entries ok')"
+      - name: Commit model to this branch
+        run: |
+          git config user.name "arena-stt-bot"
+          git config user.email "arena-stt-bot@users.noreply.github.com"
+          git add public/stt/vosk-model-small-ru-0.22.zip
+          git commit -m "stt: модель vosk small ru раздаётся со своего домена"
+          git push origin HEAD:refs/heads/arena/01a09617-pulsemessangerr
