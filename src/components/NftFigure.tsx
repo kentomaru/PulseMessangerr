@@ -1,37 +1,48 @@
 import type { Gift } from "@/lib/gifts";
 import { variantFilter } from "@/lib/gifts";
-import NftAnimated, { SCENES } from "./NftAnimated";
 
 /**
- * Хореография «жизни» каждого NFT — своя для каждого:
- * дракон бросается и дышит огнём, кот игриво раскачивается,
- * ракета стартует, кит дрейфует, они содрогается, феникс взмывает…
+ * Живой NFT-подарок на основе его ТЕКСТУРЫ.
+ *
+ * Слои (каждый двигается независимо — вместе выглядит как видео):
+ *  1. пульсирующее свечение (glow);
+ *  2. общий дрейф — подарок никогда не замирает;
+ *  3. личная хореография персонажа (бросок дракона, танец медведя…);
+ *  4. «живая камера» — сама текстура медленно зумится/панорамируется
+ *     (Ken Burns), у каждого NFT своё движение;
+ *  5. пробегающий блик света;
+ *  6. частицы: пламя / искры / сердца / пузыри / угольки / мороз;
+ *  7. дышащая тень.
  */
 type Choreo = {
-  /** Класс анимации самой картинки. */
   anim: string;
-  /** Частицы вокруг: пламя/искры/сердца/пузыри/угольки/мороз. */
+  /** Движение «камеры» по самой текстуре. */
+  cam: string;
   emitter?: "flames" | "sparks" | "hearts" | "bubbles" | "embers" | "frost";
-  /** Цвет пульсирующего свечения. */
   glow: string;
 };
 
 const CHOREO: Record<string, Choreo> = {
-  nft_dragon: { anim: "nftx-dragon", emitter: "flames", glow: "rgba(255,140,40,0.55)" },
-  nft_cat: { anim: "nftx-cat", emitter: "sparks", glow: "rgba(255,225,140,0.5)" },
-  nft_bear: { anim: "nftx-bear", emitter: "sparks", glow: "rgba(255,200,120,0.5)" },
-  nft_heart: { anim: "nftx-heart", emitter: "hearts", glow: "rgba(255,120,170,0.55)" },
-  nft_rocket: { anim: "nftx-rocket", emitter: "flames", glow: "rgba(140,180,255,0.5)" },
-  nft_crown: { anim: "nftx-crown", emitter: "sparks", glow: "rgba(255,215,90,0.55)" },
-  nft_whale: { anim: "nftx-whale", emitter: "bubbles", glow: "rgba(120,160,255,0.5)" },
-  nft_oni: { anim: "nftx-oni", emitter: "embers", glow: "rgba(200,90,255,0.55)" },
-  nft_pegasus: { anim: "nftx-pegasus", emitter: "sparks", glow: "rgba(190,160,255,0.55)" },
-  nft_wolf: { anim: "nftx-wolf", emitter: "frost", glow: "rgba(150,210,255,0.5)" },
-  nft_diamond: { anim: "nftx-diamond", emitter: "sparks", glow: "rgba(160,220,255,0.6)" },
-  nft_phoenix: { anim: "nftx-phoenix", emitter: "embers", glow: "rgba(255,150,40,0.6)" },
+  nft_dragon: { anim: "nftx-dragon", cam: "nftcam-dragon", emitter: "flames", glow: "rgba(255,140,40,0.55)" },
+  nft_cat: { anim: "nftx-cat", cam: "nftcam-cat", emitter: "sparks", glow: "rgba(255,225,140,0.5)" },
+  nft_bear: { anim: "nftx-bear", cam: "nftcam-bear", emitter: "sparks", glow: "rgba(255,200,120,0.5)" },
+  nft_heart: { anim: "nftx-heart", cam: "nftcam-heart", emitter: "hearts", glow: "rgba(255,120,170,0.55)" },
+  nft_rocket: { anim: "nftx-rocket", cam: "nftcam-rocket", emitter: "flames", glow: "rgba(140,180,255,0.5)" },
+  nft_crown: { anim: "nftx-crown", cam: "nftcam-crown", emitter: "sparks", glow: "rgba(255,215,90,0.55)" },
+  nft_whale: { anim: "nftx-whale", cam: "nftcam-whale", emitter: "bubbles", glow: "rgba(120,160,255,0.5)" },
+  nft_oni: { anim: "nftx-oni", cam: "nftcam-oni", emitter: "embers", glow: "rgba(200,90,255,0.55)" },
+  nft_pegasus: { anim: "nftx-pegasus", cam: "nftcam-pegasus", emitter: "sparks", glow: "rgba(190,160,255,0.55)" },
+  nft_wolf: { anim: "nftx-wolf", cam: "nftcam-wolf", emitter: "frost", glow: "rgba(150,210,255,0.5)" },
+  nft_diamond: { anim: "nftx-diamond", cam: "nftcam-diamond", emitter: "sparks", glow: "rgba(160,220,255,0.6)" },
+  nft_phoenix: { anim: "nftx-phoenix", cam: "nftcam-phoenix", emitter: "embers", glow: "rgba(255,150,40,0.6)" },
 };
 
-const FALLBACK: Choreo = { anim: "nftx-idle", emitter: "sparks", glow: "rgba(255,220,120,0.5)" };
+const FALLBACK: Choreo = {
+  anim: "nftx-idle",
+  cam: "nftcam-idle",
+  emitter: "sparks",
+  glow: "rgba(255,220,120,0.5)",
+};
 
 const FLAMES = [
   { l: 16, d: 0, dur: 1.05, s: 1.0, c: "#ff6a2a" },
@@ -82,11 +93,6 @@ const FROST = [
   { l: 48, t: 10, d: 1.2, s: 0.6 },
 ];
 
-/**
- * «Живой» NFT-подарок: у каждого — своя анимация и свои частицы.
- * Все размеры в em (font-size = size/10), так что компонент одинаково
- * жив и в плитке 48px, и в большом просмотре.
- */
 export default function NftFigure({
   gift,
   size,
@@ -96,24 +102,21 @@ export default function NftFigure({
   gift: Gift;
   size: number;
   rounded?: string;
-  /** Расцветка 0–4 (для NFT с вариантами). */
+  /** Расцветка 0–4. */
   variant?: number;
 }) {
   const ch = CHOREO[gift.key] ?? FALLBACK;
-  const hasScene = gift.key in SCENES;
   return (
     <div className={`relative ${rounded}`} style={{ width: size, height: size, fontSize: size / 10 }}>
       <div
         className="nft-glow"
         style={{ background: `radial-gradient(circle, ${ch.glow} 0%, transparent 62%)` }}
       />
-      {/* Внешний слой дрейфует — персонаж никогда не замирает; внутри —
-          собственная покадровая анимация сцены (пасть, лапка, крылья…). */}
+      <div className="nft-shadow" />
+      {/* дрейф → хореография → живая камера по текстуре */}
       <div className="nft-drift" style={{ position: "absolute", inset: 0 }}>
-        {hasScene ? (
-          <NftAnimated kind={gift.key} size={size} variant={variant} rounded={rounded} />
-        ) : (
-          <div className={`nft-wrap ${ch.anim}`} style={{ position: "absolute", inset: 0 }}>
+        <div className={`nft-wrap ${ch.anim}`} style={{ position: "absolute", inset: 0 }}>
+          <div className={`nft-cam ${ch.cam}`} style={{ position: "absolute", inset: 0 }}>
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src={gift.img}
@@ -123,9 +126,11 @@ export default function NftFigure({
               style={{ filter: variantFilter(variant) }}
             />
           </div>
-        )}
+        </div>
+        {/* пробегающий блик света */}
+        <div className={`nft-sweep ${rounded}`} />
       </div>
-      {!hasScene && ch.emitter === "flames" &&
+      {ch.emitter === "flames" &&
         FLAMES.map((f, i) => (
           <span
             key={i}
@@ -141,7 +146,7 @@ export default function NftFigure({
             }
           />
         ))}
-      {!hasScene && ch.emitter === "sparks" &&
+      {ch.emitter === "sparks" &&
         SPARKS.map((s, i) => (
           <span
             key={i}
@@ -151,7 +156,7 @@ export default function NftFigure({
             }
           />
         ))}
-      {!hasScene && ch.emitter === "hearts" &&
+      {ch.emitter === "hearts" &&
         HEARTS.map((h, i) => (
           <svg
             key={i}
@@ -163,7 +168,7 @@ export default function NftFigure({
             <path d="M12 21s-7.5-4.9-10-9.5C.6 8 2.3 4.5 5.8 4.5c2 0 3.4 1 4.2 2.4.8-1.4 2.2-2.4 4.2-2.4 3.5 0 5.2 3.5 3.8 7-2.5 4.6-10 9.5-10 9.5z" />
           </svg>
         ))}
-      {!hasScene && ch.emitter === "bubbles" &&
+      {ch.emitter === "bubbles" &&
         BUBBLES.map((b, i) => (
           <span
             key={i}
@@ -178,7 +183,7 @@ export default function NftFigure({
             }
           />
         ))}
-      {!hasScene && ch.emitter === "embers" &&
+      {ch.emitter === "embers" &&
         EMBERS.map((e, i) => (
           <span
             key={i}
@@ -194,7 +199,7 @@ export default function NftFigure({
             }
           />
         ))}
-      {!hasScene && ch.emitter === "frost" &&
+      {ch.emitter === "frost" &&
         FROST.map((f, i) => (
           <span
             key={i}

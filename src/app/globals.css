@@ -844,3 +844,98 @@ html[data-anims="0"] *::after {
   0%, 100% { opacity: 0.8; transform: scaleX(1); }
   50% { opacity: 0.45; transform: scaleX(0.82); }
 }
+
+/* ============ Живая камера: сама текстура шевелится (у каждого своя) ============ */
+.nft-cam { will-change: transform; overflow: hidden; border-radius: inherit; }
+.nft-cam img { transform-origin: center; }
+.nftcam-dragon img { animation: nftcam-dragon 5.2s ease-in-out infinite alternate; }
+@keyframes nftcam-dragon {
+  from { transform: scale(1) translate(0, 0); }
+  to { transform: scale(1.1) translate(-2%, 1.5%); }
+}
+.nftcam-cat img { animation: nftcam-cat 5.6s ease-in-out infinite alternate; }
+@keyframes nftcam-cat {
+  from { transform: scale(1.04) translateX(-2%); }
+  to { transform: scale(1.08) translateX(2%); }
+}
+.nftcam-bear img { animation: nftcam-bear 1.9s ease-in-out infinite alternate; }
+@keyframes nftcam-bear {
+  from { transform: scale(1.03) rotate(-0.8deg); }
+  to { transform: scale(1.09) rotate(0.8deg); }
+}
+.nftcam-heart img { animation: nftcam-heart 1.5s ease-in-out infinite; }
+@keyframes nftcam-heart {
+  0%, 100% { transform: scale(1.02); }
+  12% { transform: scale(1.12); }
+  24% { transform: scale(1.03); }
+  36% { transform: scale(1.09); }
+  48% { transform: scale(1.02); }
+}
+.nftcam-rocket img { animation: nftcam-rocket 4s ease-in-out infinite alternate; }
+@keyframes nftcam-rocket {
+  from { transform: scale(1.05) translateY(2.5%); }
+  to { transform: scale(1.1) translateY(-3%); }
+}
+.nftcam-crown img { animation: nftcam-crown 5s ease-in-out infinite alternate; }
+@keyframes nftcam-crown {
+  from { transform: scale(1.05) rotate(-1.2deg); }
+  to { transform: scale(1.09) rotate(1.2deg); }
+}
+.nftcam-whale img { animation: nftcam-whale 7s ease-in-out infinite alternate; }
+@keyframes nftcam-whale {
+  from { transform: scale(1.06) translate(2%, 1.5%); }
+  to { transform: scale(1.1) translate(-2%, -2%); }
+}
+.nftcam-oni img { animation: nftcam-oni 6s ease-in-out infinite alternate; }
+@keyframes nftcam-oni {
+  from { transform: scale(1.02); }
+  to { transform: scale(1.13) translateY(-1.5%); }
+}
+.nftcam-pegasus img { animation: nftcam-pegasus 4.6s ease-in-out infinite alternate; }
+@keyframes nftcam-pegasus {
+  from { transform: scale(1.05) translateY(2%); }
+  to { transform: scale(1.09) translateY(-3.5%); }
+}
+.nftcam-wolf img { animation: nftcam-wolf 6.2s ease-in-out infinite alternate; }
+@keyframes nftcam-wolf {
+  from { transform: scale(1.03); }
+  to { transform: scale(1.14) translateY(-1%); }
+}
+.nftcam-diamond img { animation: nftcam-diamond 3.6s ease-in-out infinite alternate; }
+@keyframes nftcam-diamond {
+  from { transform: scale(1.03) rotate(-0.6deg); }
+  to { transform: scale(1.08) rotate(0.6deg); }
+}
+.nftcam-phoenix img { animation: nftcam-phoenix 4.2s ease-in-out infinite alternate; }
+@keyframes nftcam-phoenix {
+  from { transform: scale(1.04) translateY(2.5%); }
+  to { transform: scale(1.11) translateY(-2.5%); }
+}
+.nftcam-idle img { animation: nftcam-idle 6s ease-in-out infinite alternate; }
+@keyframes nftcam-idle {
+  from { transform: scale(1.02); }
+  to { transform: scale(1.08); }
+}
+
+/* Пробегающий блик света — как на видео */
+.nft-sweep {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+.nft-sweep::before {
+  content: "";
+  position: absolute;
+  top: -20%;
+  bottom: -20%;
+  width: 34%;
+  left: -45%;
+  background: linear-gradient(100deg, transparent 0%, rgba(255,255,255,0.32) 50%, transparent 100%);
+  transform: skewX(-18deg);
+  animation: nft-sweep 3.6s ease-in-out infinite;
+}
+@keyframes nft-sweep {
+  0%, 55% { left: -45%; }
+  90%, 100% { left: 135%; }
+}
