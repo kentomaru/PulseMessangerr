@@ -18,6 +18,7 @@ import CallStage from "./CallStage";
 import StoryComposer from "./StoryComposer";
 import StoryViewer from "./StoryViewer";
 import GroupCreateModal from "./GroupCreateModal";
+import RouletteModal from "./RouletteModal";
 import GroupInfoModal from "./GroupInfoModal";
 import DiscoverModal from "./DiscoverModal";
 import IframeNotice from "./IframeNotice";
@@ -80,6 +81,7 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
     }
   });
   const [showProfile, setShowProfile] = useState(false);
+  const [rouletteOpen, setRouletteOpen] = useState(false);
   const [viewUser, setViewUser] = useState<PublicUser | null>(null);
   const [storyComposer, setStoryComposer] = useState(false);
   const [storyViewer, setStoryViewer] = useState<number | null>(null);
@@ -838,6 +840,7 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
             setActiveId(id);
           }}
           onOpenProfile={() => setShowProfile(true)}
+          onRoulette={() => setRouletteOpen(true)}
           onOpenChat={openConversationWith}
           onLogout={logout}
           onOpenStories={(idx) => setStoryViewer(idx)}
@@ -1015,6 +1018,7 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
             notify={notify}
           />
         )}
+        {rouletteOpen && <RouletteModal onClose={() => setRouletteOpen(false)} />}
         {discover && (
           <DiscoverModal
             key="discover"

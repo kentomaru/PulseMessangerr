@@ -105,15 +105,20 @@ export default function NftFigure({
         className="nft-glow"
         style={{ background: `radial-gradient(circle, ${ch.glow} 0%, transparent 62%)` }}
       />
-      <div className={`nft-wrap ${ch.anim}`} style={{ position: "absolute", inset: 0 }}>
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
-          src={gift.img}
-          alt={gift.name}
-          draggable={false}
-          className={`h-full w-full ${rounded} object-cover`}
-          style={{ filter: variantFilter(variant) }}
-        />
+      <div className="nft-shadow" />
+      {/* Два независимых слоя движения = «живое видео»: внешний дрейфует,
+          внутренний отыгрывает личную хореографию подарка. */}
+      <div className="nft-drift" style={{ position: "absolute", inset: 0 }}>
+        <div className={`nft-wrap ${ch.anim}`} style={{ position: "absolute", inset: 0 }}>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={gift.img}
+            alt={gift.name}
+            draggable={false}
+            className={`h-full w-full ${rounded} object-cover`}
+            style={{ filter: variantFilter(variant) }}
+          />
+        </div>
       </div>
       {ch.emitter === "flames" &&
         FLAMES.map((f, i) => (

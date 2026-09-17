@@ -437,7 +437,9 @@ export default function ChatView({
   const [dragOver, setDragOver] = useState(false);
   const [ctxMenu, setCtxMenu] = useState<ContextMenuState | null>(null);
 
-  const [forwarding, setForwarding] = useState<ChatMessage | null>(null);
+  const [forwarding, setForwarding] = useState<ChatMessage[] | null>(null);
+  /** Режим выбора нескольких сообщений для пересылки. */
+  const [forwardSel, setForwardSel] = useState<ChatMessage[] | null>(null);
   /** Сообщение, ожидающее подтверждения удаления (защита от случайных кликов). */
   const [confirmDelete, setConfirmDelete] = useState<ChatMessage | null>(null);
   const [noteRecorder, setNoteRecorder] = useState(false);
@@ -980,16 +982,27 @@ export default function ChatView({
           recognition.lang = "ru-RU";
           recognition.continuous = true;
           recognition.interimResults = true;
+          // Несколько вариантов распознавания — берём самый уверенный,
+          // это заметно снижает число ошибок движка.
+          recognition.maxAlternatives = 4;
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const bestAlt = (alts: any): string => {
+            let best = alts[0];
+            for (let k = 1; k < alts.length; k++) {
+              if ((alts[k]?.confidence ?? 0) > (best?.confidence ?? 0)) best = alts[k];
+            }
+            return String(best?.transcript ?? "").trim();
+          };
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           recognition.onresult = (e: any) => {
             interimTranscriptRef.current = "";
             for (let i = e.resultIndex; i < e.results.length; i++) {
               if (e.results[i].isFinal) {
-                const chunk = `${e.results[i][0].transcript} `;
+                const chunk = `${bestAlt(e.results[i])} `;
                 liveTranscriptRef.current += chunk;
                 console.info("[pulse-stt] фрагмент:", chunk.trim(), "| всего:", liveTranscriptRef.current.trim());
               } else {
-                interimTranscriptRef.current = e.results[i][0].transcript ?? "";
+                interimTranscriptRef.current = bestAlt(e.results[i]);
               }
             }
             setLivePreview(`${liveTranscriptRef.current}${interimTranscriptRef.current}`.replace(/\s+/g, " ").trim());
@@ -1416,6 +1429,7 @@ export default function ChatView({
       if (isModalOpen()) return;
       if (searchOpen) setSearchOpen(false);
       else if (replyTo) setReplyTo(null);
+      else if (forwardSel) setForwardSel(null);
       else if (editing) setEditing(null);
       // Больше ничего не открыто — выходим из чата в список (как в ТГ)
       else if (
@@ -1424,6 +1438,7 @@ export default function ChatView({
         !sendMenu &&
         !pollDraft &&
         !forwarding &&
+        !forwardSel &&
         !confirmDelete &&
         !confirmDeleteChat &&
         !deleteChatForAll &&
@@ -1434,7 +1449,7 @@ export default function ChatView({
     };
     window.addEventListener("keydown", h);
     return () => window.removeEventListener("keydown", h);
-  }, [searchOpen, replyTo, editing, lightbox, emojiOpen, sendMenu, pollDraft, forwarding, confirmDelete, confirmDeleteChat, deleteChatForAll, text, onBack]);
+  }, [searchOpen, replyTo, editing, lightbox, emojiOpen, sendMenu, pollDraft, forwarding, forwardSel, confirmDelete, confirmDeleteChat, deleteChatForAll, text, onBack]);
 
   // Сколько комментариев в обсуждении канала — цифра под постами
   const loadPostCounts = useCallback(() => {
@@ -2136,8 +2151,32 @@ export default function ChatView({
                 <div
                   key={m.id}
                   data-mid={m.id}
-                  className={`relative ${mentionMe ? "rounded-xl bg-[#5865f2]/10 ring-1 ring-[#5865f2]/25" : ""}`}
+                  onClick={
+                    forwardSel
+                      ? (e) => {
+                          e.stopPropagation();
+                          setForwardSel((cur) => {
+                            const list = cur ?? [];
+                            return list.some((x) => x.id === m.id)
+                              ? list.filter((x) => x.id !== m.id)
+                              : [...list, m];
+                          });
+                        }
+                      : undefined
+                  }
+                  className={`relative ${forwardSel ? "cursor-pointer" : ""} ${
+                    forwardSel?.some((x) => x.id === m.id)
+                      ? "rounded-xl ring-2 ring-emerald-300/60"
+                      : mentionMe
+                        ? "rounded-xl bg-[#5865f2]/10 ring-1 ring-[#5865f2]/25"
+                        : ""
+                  }`}
                 >
+                  {forwardSel?.some((x) => x.id === m.id) && (
+                    <span className="absolute top-1 left-1 z-10 grid h-5 w-5 place-items-center rounded-full bg-emerald-400 text-black shadow">
+                      <Check className="h-3 w-3" />
+                    </span>
+                  )}
                   {unreadBefore === m.id && (
                     <div className="flex items-center gap-3 py-2">
                       <span className="h-px flex-1 bg-rose-400/30" />
@@ -2969,10 +3008,36 @@ export default function ChatView({
       </AnimatePresence>
 
       <AnimatePresence>
+        {forwardSel !== null && (
+          <div className="glass-strong absolute bottom-24 left-1/2 z-40 flex -translate-x-1/2 items-center gap-3 rounded-full px-4 py-2 shadow-2xl">
+            <span className="text-[13px] font-medium whitespace-nowrap">
+              Выбрано: {forwardSel.length}
+            </span>
+            <button
+              onClick={() => {
+                if (forwardSel.length > 0) {
+                  setForwarding(forwardSel);
+                  setForwardSel(null);
+                }
+              }}
+              disabled={forwardSel.length === 0}
+              className="btn-gradient flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-[13px] font-semibold text-white disabled:opacity-40"
+            >
+              <ChevronRight className="h-3.5 w-3.5" /> Переслать
+            </button>
+            <button
+              onClick={() => setForwardSel(null)}
+              className="rounded-full bg-white/10 p-1.5 text-white/60 hover:bg-white/15"
+              title="Отменить выбор"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        )}
         {forwarding && (
           <ForwardModal
             key="forward"
-            message={forwarding}
+            messages={forwarding}
             onClose={() => setForwarding(null)}
             notify={notify}
           />
@@ -3130,7 +3195,12 @@ export default function ChatView({
               setCtxMenu(null);
             }}
             onForward={() => {
-              setForwarding(ctxMenu.message);
+              setForwardSel((cur) => {
+                const list = cur ?? [];
+                return list.some((x) => x.id === ctxMenu.message.id)
+                  ? list.filter((x) => x.id !== ctxMenu.message.id)
+                  : [...list, ctxMenu.message];
+              });
               setCtxMenu(null);
             }}
             onSave={() => {
@@ -3398,16 +3468,17 @@ function ContextItem({
 /* ─────────────────────────── пересылка ─────────────────────────── */
 
 function ForwardModal({
-  message,
+  messages,
   onClose,
   notify,
 }: {
-  message: ChatMessage;
+  messages: ChatMessage[];
   onClose: () => void;
   notify: (msg: string) => void;
 }) {
   const [convs, setConvs] = useState<ConversationListItem[] | null>(null);
-  const [sendingTo, setSendingTo] = useState<string | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     api<{ conversations: ConversationListItem[] }>("/api/conversations")
@@ -3415,31 +3486,53 @@ function ForwardModal({
       .catch(() => setConvs([]));
   }, []);
 
-  const forwardTo = async (conv: ConversationListItem) => {
-    if (sendingTo) return;
-    setSendingTo(conv.id);
+  // Esc закрывает окно пересылки
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", h);
+    return () => window.removeEventListener("keydown", h);
+  }, [onClose]);
+
+  const toggleConv = (id: string) =>
+    setSelected((cur) => {
+      const n = new Set(cur);
+      if (n.has(id)) n.delete(id);
+      else n.add(id);
+      return n;
+    });
+
+  /** Пересылает ВСЕ выбранные сообщения во ВСЕ отмеченные чаты (по порядку). */
+  const send = async () => {
+    if (busy || selected.size === 0) return;
+    setBusy(true);
+    const targets = (convs ?? []).filter((c) => selected.has(c.id));
+    let done = 0;
     try {
-      await api("/api/messages", {
-        method: "POST",
-        body: JSON.stringify({
-          conversationId: conv.id,
-          type: message.type === "call" ? "text" : message.type,
-          content: message.content,
-          replyToId: null,
-          // «Переслано от …»: сохраняем АВТОРА ОРИГИНАЛА, как в ТГ,
-          // а не того, кто пересылает дальше по цепочке
-          forwardedFrom:
-            message.forwardedFrom ?? message.sender?.displayName ?? message.sender?.username ?? null,
-          forwardedAvatar:
-            message.forwardedAvatar ?? message.sender?.avatarUrl ?? null,
-          forwardedUserId: message.forwardedUserId ?? message.senderId ?? null,
-        }),
-      });
-      notify(`Переслано в «${conv.title}»`);
+      for (const conv of targets) {
+        for (const m of messages) {
+          await api("/api/messages", {
+            method: "POST",
+            body: JSON.stringify({
+              conversationId: conv.id,
+              type: m.type === "call" ? "text" : m.type,
+              content: m.content,
+              replyToId: null,
+              // «Переслано от …»: сохраняем АВТОРА ОРИГИНАЛА, как в ТГ
+              forwardedFrom: m.forwardedFrom ?? m.sender?.displayName ?? m.sender?.username ?? null,
+              forwardedAvatar: m.forwardedAvatar ?? m.sender?.avatarUrl ?? null,
+              forwardedUserId: m.forwardedUserId ?? m.senderId ?? null,
+            }),
+          });
+        }
+        done += 1;
+      }
+      notify(`Переслано: ${messages.length} сообщ. в ${done} ${done === 1 ? "чат" : "чата(ов)"}`);
       onClose();
     } catch (e) {
       notify(e instanceof Error ? e.message : "Не удалось переслать");
-      setSendingTo(null);
+      setBusy(false);
     }
   };
 
@@ -3459,15 +3552,27 @@ function ForwardModal({
         className="glass-strong w-full max-w-md overflow-hidden rounded-[1.8rem] shadow-2xl"
       >
         <div className="flex items-center justify-between border-b border-white/8 px-6 py-4">
-          <h3 className="font-display text-lg font-bold">Переслать сообщение</h3>
+          <h3 className="font-display text-lg font-bold">
+            Переслать {messages.length > 1 ? `${messages.length} сообщения(й)` : "сообщение"}
+          </h3>
           <button onClick={onClose} className="rounded-full bg-white/5 p-2 text-white/60 transition-colors hover:bg-white/10">
             <X className="h-4 w-4" />
           </button>
         </div>
-        <p className="truncate px-6 pt-4 text-xs text-white/40">
-          <PreviewLabel type={message.type} content={message.content} />
+        <div className="space-y-1 px-6 pt-3">
+          {messages.slice(0, 2).map((m) => (
+            <p key={m.id} className="truncate text-xs text-white/40">
+              <PreviewLabel type={m.type} content={m.content} />
+            </p>
+          ))}
+          {messages.length > 2 && (
+            <p className="text-xs text-white/30">и ещё {messages.length - 2}…</p>
+          )}
+        </div>
+        <p className="px-6 pt-3 pb-1 text-[10px] font-semibold tracking-wide text-white/35 uppercase">
+          Куда переслать · можно несколько
         </p>
-        <div className="nice-scroll max-h-80 overflow-y-auto p-3">
+        <div className="nice-scroll max-h-72 overflow-y-auto p-3">
           {!convs ? (
             <div className="flex justify-center py-10">
               <Loader2 className="h-6 w-6 animate-spin text-white/40" />
@@ -3475,31 +3580,50 @@ function ForwardModal({
           ) : convs.length === 0 ? (
             <p className="px-3 py-6 text-center text-sm text-white/40">Пока нет чатов</p>
           ) : (
-            convs.map((c) => (
-              <button
-                key={c.id}
-                onClick={() => void forwardTo(c)}
-                disabled={sendingTo !== null}
-                className="flex w-full items-center gap-3 rounded-2xl px-3 py-2.5 text-left transition-colors hover:bg-white/8 disabled:opacity-50"
-              >
-                <Avatar
-                  name={c.title}
-                  src={c.kind === "direct" ? c.peer?.avatarUrl ?? null : c.avatarUrl}
-                  size={40}
-                />
-                <span className="min-w-0 flex-1">
-                  <span className="flex items-center gap-1.5 truncate text-sm font-medium">
-                    <span className="truncate">{c.title}</span>
-                    {c.saved && <Bookmark className="h-3 w-3 shrink-0 text-amber-300" />}
+            convs.map((c) => {
+              const on = selected.has(c.id);
+              return (
+                <button
+                  key={c.id}
+                  onClick={() => toggleConv(c.id)}
+                  disabled={busy}
+                  className="flex w-full items-center gap-3 rounded-2xl px-3 py-2.5 text-left transition-colors hover:bg-white/8 disabled:opacity-50"
+                >
+                  <span
+                    className={`grid h-5 w-5 shrink-0 place-items-center rounded-md border transition-colors ${
+                      on ? "border-emerald-300 bg-emerald-300 text-black" : "border-white/25"
+                    }`}
+                  >
+                    {on && <Check className="h-3 w-3" />}
                   </span>
-                  <span className="block text-[11px] text-white/35">
-                    {c.saved ? "избранное" : c.kind === "direct" ? "личный чат" : c.kind === "channel" ? "канал" : "группа"}
+                  <Avatar
+                    name={c.title}
+                    src={c.kind === "direct" ? c.peer?.avatarUrl ?? null : c.avatarUrl}
+                    size={40}
+                  />
+                  <span className="min-w-0 flex-1">
+                    <span className="flex items-center gap-1.5 truncate text-sm font-medium">
+                      <span className="truncate">{c.title}</span>
+                      {c.saved && <Bookmark className="h-3 w-3 shrink-0 text-amber-300" />}
+                    </span>
+                    <span className="block text-[11px] text-white/35">
+                      {c.saved ? "избранное" : c.kind === "direct" ? "личный чат" : c.kind === "channel" ? "канал" : "группа"}
+                    </span>
                   </span>
-                </span>
-                {sendingTo === c.id && <Loader2 className="h-4 w-4 animate-spin text-white/50" />}
-              </button>
-            ))
+                </button>
+              );
+            })
           )}
+        </div>
+        <div className="border-t border-white/8 p-4">
+          <button
+            onClick={() => void send()}
+            disabled={busy || selected.size === 0}
+            className="btn-gradient flex w-full items-center justify-center gap-2 rounded-2xl py-3 text-[15px] font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <ChevronRight className="h-4 w-4" />}
+            {selected.size === 0 ? "Выберите чаты" : `Переслать в ${selected.size} ${selected.size === 1 ? "чат" : "чата(ов)"}`}
+          </button>
         </div>
       </motion.div>
     </motion.div>

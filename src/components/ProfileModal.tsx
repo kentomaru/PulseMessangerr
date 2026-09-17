@@ -23,8 +23,7 @@ import {
   UsersRound,
   X,
 } from "lucide-react";
-import { ChevronRight, Dices, Gem, Gift, Infinity, Package, PenLine, Star, Timer } from "lucide-react";
-import RouletteModal from "./RouletteModal";
+import { ChevronRight, Gem, Gift, Infinity, Package, PenLine, Star, Timer } from "lucide-react";
 import Avatar, { paletteFor } from "./Avatar";
 import StatusEmoji from "./StatusEmoji";
 import { PrivacySettings } from "./PrivacyModal";
@@ -97,7 +96,6 @@ export default function ProfileModal({
   /** Id этого окна в стеке — для корректного каскада Esc. */
   const shellIdRef = useRef(Symbol("profile-modal"));
   const shellId = shellIdRef.current;
-  const [rouletteOpen, setRouletteOpen] = useState(false);
 
   /** Esc: в подразделе возвращает в профиль, из профиля — закрывает окно.
    *  Если сверху открыто другое окно (например, детали подарка) — не мешаем:
@@ -105,14 +103,14 @@ export default function ProfileModal({
   useEffect(() => {
     const h = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
-      if (giftDetail || rouletteOpen) return; // вложенное окно закроется само
+      if (giftDetail) return; // вложенное окно закроется само
       if (!isTopModal(shellId)) return; // поверх профиля открыто что-то другое
       if (tab !== "profile") setTab("profile");
       else onClose();
     };
     window.addEventListener("keydown", h);
     return () => window.removeEventListener("keydown", h);
-  }, [tab, giftDetail, rouletteOpen, onClose]);
+  }, [tab, giftDetail, onClose]);
   useEffect(() => {
     let alive = true;
     api<{ gifts: GiftItem[] }>(`/api/gifts?userId=${me.id}`)
@@ -523,18 +521,9 @@ export default function ProfileModal({
         {/* Мои подарки — анимированные, как в ТГ */}
         {myGifts && myGifts.length > 0 && (
           <div>
-            <div className="flex items-center justify-between pb-2">
-              <p className="text-[10px] font-semibold tracking-wide text-white/35 uppercase">
-                Мои подарки · {myGifts.length}
-              </p>
-              <button
-                onClick={() => setRouletteOpen(true)}
-                className="flex items-center gap-1 rounded-full border border-amber-300/30 bg-amber-300/10 px-2 py-0.5 text-[10px] font-semibold text-amber-300 transition-colors hover:bg-amber-300/20"
-                title="Бесплатный спин раз в 24 часа"
-              >
-                <Dices className="h-3 w-3" /> Рулетка NFT
-              </button>
-            </div>
+            <p className="pb-2 text-[10px] font-semibold tracking-wide text-white/35 uppercase">
+              Мои подарки · {myGifts.length}
+            </p>
             <div className="grid grid-cols-6 gap-2">
               {myGifts.slice(0, 12).map((g) => {
                 const gd = findGift(g.giftKey);
@@ -811,9 +800,6 @@ export default function ProfileModal({
         )}
       </div>
     </ModalShell>
-
-      {/* Рулетка NFT — бесплатный спин раз в 24 часа */}
-      {rouletteOpen && <RouletteModal onClose={() => setRouletteOpen(false)} />}
 
       {/* Детали подарка — мгновенно, из уже загруженных данных */}
       {giftDetail && (

@@ -27,7 +27,6 @@ import { api } from "@/lib/api";
 import type { PublicUser } from "@/lib/types";
 import { lastSeenLabel } from "@/lib/format";
 import { GIFTS, findGift, NFT_VARIANTS, type GiftItem } from "@/lib/gifts";
-import RouletteModal from "./RouletteModal";
 import GiftDetailModal from "./GiftDetailModal";
 import NftFigure from "./NftFigure";
 
@@ -55,7 +54,6 @@ export default function UserCardModal({ user, onClose, onMessage, myId }: Props)
   /** Тап по подарку — мгновенные детали (кто, когда, с каким текстом). */
   const [giftDetail, setGiftDetail] = useState<GiftItem | null>(null);
   const [giftPicker, setGiftPicker] = useState(false);
-  const [rouletteOpen, setRouletteOpen] = useState(false);
   const [giftSent, setGiftSent] = useState(false);
   useEffect(() => {
     let alive = true;
@@ -426,8 +424,6 @@ export default function UserCardModal({ user, onClose, onMessage, myId }: Props)
         <GiftPicker
           userId={user.id}
           name={user.displayName}
-          rouletteOpen={rouletteOpen}
-          onRoulette={() => setRouletteOpen(true)}
           onClose={() => setGiftPicker(false)}
           onSent={() => {
             setGiftSent(true);
@@ -435,7 +431,6 @@ export default function UserCardModal({ user, onClose, onMessage, myId }: Props)
           }}
         />
       )}
-      {rouletteOpen && <RouletteModal onClose={() => setRouletteOpen(false)} />}
     </ModalShell>
   );
 }
@@ -446,15 +441,11 @@ function GiftPicker({
   name,
   onClose,
   onSent,
-  rouletteOpen,
-  onRoulette,
 }: {
   userId: string;
   name: string;
   onClose: () => void;
   onSent: () => void;
-  rouletteOpen: boolean;
-  onRoulette: () => void;
 }) {
   const [mePremium, setMePremium] = useState<boolean | null>(null);
   const [picked, setPicked] = useState<string | null>(null);
@@ -480,14 +471,13 @@ function GiftPicker({
   useEffect(() => {
     const h = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
-      if (rouletteOpen) return; // рулетка закроет себя сама
       e.stopImmediatePropagation();
       if (picked) setPicked(null);
       else onClose();
     };
     window.addEventListener("keydown", h, true);
     return () => window.removeEventListener("keydown", h, true);
-  }, [picked, onClose, rouletteOpen]);
+  }, [picked, onClose]);
 
   const send = async () => {
     if (!gift || busy) return;
@@ -646,18 +636,8 @@ function GiftPicker({
               </span>
               <span className="font-bold text-amber-300">{mePremium ? "∞ · Premium" : "0 · нужен Premium"}</span>
             </div>
-            <button
-              onClick={onRoulette}
-              className="mb-3 flex w-full items-center gap-3 rounded-2xl border border-amber-300/35 bg-gradient-to-r from-amber-300/15 via-orange-400/10 to-transparent px-4 py-3 text-left transition-colors hover:border-amber-300/60"
-            >
-              <Dices className="h-5 w-5 shrink-0 text-amber-300" />
-              <span className="min-w-0 flex-1">
-                <span className="block text-[13px] font-bold">Рулетка NFT</span>
-                <span className="block text-[11px] text-white/40">Бесплатный спин раз в 24 часа — вплоть до Феникса 50 000 ⭐</span>
-              </span>
-            </button>
             <div className="grid grid-cols-4 gap-2">
-              {GIFTS.filter((g) => !g.rouletteOnly).map((g) => (
+              {GIFTS.map((g) => (
                 <button
                   key={g.key}
                   onClick={() => {

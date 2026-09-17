@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import {
+  Dices,
   Bell,
   BellOff,
   BellRing,
@@ -88,6 +89,8 @@ type Props = {
   onOpenMessage?: (conversationId: string, messageId: string) => void;
   /** Открыть «Избранное» (чат с самим собой). */
   onOpenSaved: () => void;
+  /** Открыть рулетку NFT. */
+  onRoulette: () => void;
   /** Включить/выключить звук уведомлений. */
   onToggleSound: () => void;
   /** Включить/выключить звук входящего звонка. */
@@ -227,6 +230,7 @@ export default function Sidebar({
   onDiscover,
   onOpenMessage,
   onOpenSaved,
+  onRoulette,
   onToggleSound,
   onToggleCallSound,
   onToggleNotify,
@@ -337,6 +341,19 @@ export default function Sidebar({
   >([]);
   const [searching, setSearching] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
+
+  // Esc: закрывает меню «+» и выводит из архива (как в ТГ)
+  useEffect(() => {
+    if (!createOpen && !archiveOpen) return;
+    const h = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      e.stopImmediatePropagation();
+      if (createOpen) setCreateOpen(false);
+      else if (archiveOpen) setArchiveOpen(false);
+    };
+    window.addEventListener("keydown", h, true);
+    return () => window.removeEventListener("keydown", h, true);
+  }, [createOpen, archiveOpen]);
   const searchBoxRef = useRef<HTMLDivElement | null>(null);
   const createRef = useRef<HTMLDivElement | null>(null);
 
@@ -710,6 +727,16 @@ export default function Sidebar({
 
       {/* Список диалогов */}
       <div className="nice-scroll min-h-0 flex-1 overflow-y-auto px-2.5 pb-4">
+        {/* Рулетка NFT — отдельная кнопка */}
+        <button
+          onClick={onRoulette}
+          className="mb-1 flex w-full items-center gap-2.5 rounded-xl border border-amber-300/25 bg-gradient-to-r from-amber-300/12 to-transparent px-3 py-2 text-[13px] font-medium text-amber-200 transition-colors hover:border-amber-300/50"
+          title="Бесплатный спин раз в 24 часа"
+        >
+          <Dices className="h-4 w-4" /> Рулетка NFT
+          <span className="ml-auto text-[10px] text-white/30">24ч</span>
+        </button>
+
         {/* Полка архива — как в ТГ */}
         {archiveOpen ? (
           <button

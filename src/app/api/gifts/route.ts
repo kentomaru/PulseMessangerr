@@ -66,9 +66,6 @@ export const POST = withApi("gifts:send", async ({ req, me }) => {
   /* Себе дарить можно — подарок попадёт в собственную витрину. */
   const gift = GIFTS.find((g) => g.key === giftKey);
   if (!gift) return NextResponse.json({ error: "Такого подарка нет" }, { status: 400 });
-  if (gift.rouletteOnly)
-    return NextResponse.json({ error: "Этот NFT выпадает только в рулетке" }, { status: 400 });
-
   const [meRow] = await db.select().from(users).where(eq(users.id, me.id)).limit(1);
   if (!meRow || !(meRow as { premium?: boolean }).premium)
     return NextResponse.json({ error: "Подарки дарят участники с Pulse Premium" }, { status: 403 });
