@@ -605,3 +605,69 @@ html[data-anims="0"] *::after {
 .no-scrollbar::-webkit-scrollbar {
   display: none;
 }
+
+/* ============ Живые NFT-подарки ============ */
+.nft-figure {
+  animation: nft-float 4s ease-in-out infinite;
+}
+@keyframes nft-float {
+  0%, 100% { transform: translateY(0) rotate(-1.6deg); }
+  50% { transform: translateY(-5%) rotate(1.6deg); }
+}
+.nft-glow {
+  position: absolute;
+  inset: -18%;
+  filter: blur(0.5em);
+  opacity: 0.5;
+  pointer-events: none;
+  animation: nft-glow 2.4s ease-in-out infinite;
+}
+@keyframes nft-glow {
+  0%, 100% { opacity: 0.4; transform: scale(0.9); }
+  50% { opacity: 0.95; transform: scale(1.07); }
+}
+.nft-flame {
+  position: absolute;
+  bottom: 8%;
+  width: 1.5em;
+  height: 2.1em;
+  border-radius: 48% 52% 60% 40% / 60% 60% 40% 40%;
+  filter: blur(0.13em);
+  opacity: 0;
+  pointer-events: none;
+  transform-origin: bottom center;
+  animation: nft-flame 1.1s ease-out infinite;
+}
+@keyframes nft-flame {
+  0% { opacity: 0; transform: translateY(0.7em) scale(calc(var(--fs, 1) * 0.35)); }
+  18% { opacity: 0.95; }
+  100% { opacity: 0; transform: translateY(-4.4em) scale(calc(var(--fs, 1) * 0.12)); }
+}
+.nft-spark {
+  position: absolute;
+  width: 0.8em;
+  height: 0.8em;
+  clip-path: polygon(50% 0%, 61% 35%, 98% 35%, 68% 57%, 79% 91%, 50% 70%, 21% 91%, 32% 57%, 2% 35%, 39% 35%);
+  background: #ffe9a3;
+  opacity: 0;
+  pointer-events: none;
+  animation: nft-spark 1.9s ease-in-out infinite;
+}
+@keyframes nft-spark {
+  0%, 100% { opacity: 0; transform: scale(calc(var(--ss, 1) * 0.2)) rotate(0deg); }
+  50% { opacity: 1; transform: scale(var(--ss, 1)) rotate(180deg); }
+}
+.nft-heart {
+  position: absolute;
+  bottom: 12%;
+  width: 0.9em;
+  height: 0.9em;
+  opacity: 0;
+  pointer-events: none;
+  animation: nft-heart 2.2s ease-out infinite;
+}
+@keyframes nft-heart {
+  0% { opacity: 0; transform: translateY(0.4em) scale(calc(var(--hs, 1) * 0.5)); }
+  20% { opacity: 0.95; }
+  100% { opacity: 0; transform: translateY(-4em) translateX(0.6em) scale(calc(var(--hs, 1) * 1.05)); }
+}

@@ -28,6 +28,7 @@ import StatusEmoji from "./StatusEmoji";
 import { PrivacySettings } from "./PrivacyModal";
 import { api, copyToClipboard, uploadFile } from "@/lib/api";
 import { findGift, type GiftItem } from "@/lib/gifts";
+import NftFigure from "./NftFigure";
 import GiftDetailModal from "./GiftDetailModal";
 import { compressImage } from "@/lib/images";
 import { BANNER_PRESETS, bannerStyle, isFileBanner } from "@/lib/wallpapers";
@@ -530,8 +531,7 @@ export default function ProfileModal({
                     } ${gd.bg}`}
                   >
                     {gd.img ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img src={gd.img} alt={gd.name} className="gift-anim h-full w-full object-cover" />
+                      <NftFigure gift={gd} size={72} rounded="rounded-2xl" />
                     ) : (
                       <span
                         className="gift-anim h-8 w-8 [&>svg]:h-full [&>svg]:w-full"

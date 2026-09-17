@@ -10,6 +10,7 @@ import { useState } from "react";
 import { Gift, Loader2, Pin, Star, UserRound, X } from "lucide-react";
 import Avatar from "./Avatar";
 import { findGift } from "@/lib/gifts";
+import NftFigure from "./NftFigure";
 import { api } from "@/lib/api";
 
 export default function GiftDetailModal({
@@ -91,8 +92,7 @@ export default function GiftDetailModal({
           }`}
         >
           {gift.img ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={gift.img} alt={gift.name} className="gift-anim h-full w-full object-cover" />
+            <NftFigure gift={gift} size={168} rounded="rounded-2xl" />
           ) : (
             <span
               className="gift-anim h-28 w-28 [&>svg]:h-full [&>svg]:w-full"

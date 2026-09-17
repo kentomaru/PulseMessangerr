@@ -27,6 +27,7 @@ import type { PublicUser } from "@/lib/types";
 import { lastSeenLabel } from "@/lib/format";
 import { GIFTS, findGift, type GiftItem } from "@/lib/gifts";
 import GiftDetailModal from "./GiftDetailModal";
+import NftFigure from "./NftFigure";
 
 type Props = {
   user: PublicUser;
@@ -287,8 +288,7 @@ export default function UserCardModal({ user, onClose, onMessage, myId }: Props)
                     } ${gd.bg}`}
                   >
                     {gd.img ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img src={gd.img} alt={gd.name} className="gift-anim h-full w-full object-cover" />
+                      <NftFigure gift={gd} size={56} rounded="rounded-2xl" />
                     ) : (
                       <span
                         className="gift-anim h-9 w-9 [&>svg]:h-full [&>svg]:w-full"
@@ -504,8 +504,7 @@ function GiftPicker({
             </div>
             <div className={`gift-shine relative mx-auto grid aspect-square w-44 place-items-center overflow-hidden rounded-3xl border ${gift.nft ? "border-amber-300/50" : "border-white/10"} bg-gradient-to-br ${gift.bg}`}>
               {gift.img ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={gift.img} alt={gift.name} className="gift-anim h-full w-full object-cover" />
+                <NftFigure gift={gift} size={168} rounded="rounded-2xl" />
               ) : (
                 <span
                   className="gift-anim h-24 w-24 [&>svg]:h-full [&>svg]:w-full"
@@ -591,8 +590,7 @@ function GiftPicker({
                   )}
                   <span className={`grid h-12 w-12 place-items-center overflow-hidden rounded-xl bg-gradient-to-br ${g.bg}`}>
                     {g.img ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img src={g.img} alt={g.name} className="gift-anim h-full w-full rounded-xl object-cover" />
+                      <NftFigure gift={g} size={48} rounded="rounded-xl" />
                     ) : (
                       <span
                         className="gift-anim h-9 w-9 [&>svg]:h-full [&>svg]:w-full"

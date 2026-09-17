@@ -86,6 +86,7 @@ import { parseStoryQuote, type StoryQuoteInfo } from "@/lib/storyQuote";
 import { setCachedTranscript } from "@/lib/transcribe";
 import { GIF_PACK, CUSTOM_EMOJI, customEmojiGlyphByToken, customEmojisToTokens, findCustomEmoji, findGif, gifpackId } from "@/lib/premiumContent";
 import { findGift } from "@/lib/gifts";
+import NftFigure from "./NftFigure";
 import GiftDetailModal from "./GiftDetailModal";
 import {
   callLogLabel,
@@ -4417,8 +4418,7 @@ function GiftCard({
         } ${gift.bg}`}
       >
         {gift.img ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src={gift.img} alt={gift.name} className="gift-anim h-20 w-20 rounded-2xl object-cover" />
+          <NftFigure gift={gift} size={80} rounded="rounded-2xl" />
         ) : (
           <span
             className="gift-anim h-20 w-20 [&>svg]:h-full [&>svg]:w-full"
