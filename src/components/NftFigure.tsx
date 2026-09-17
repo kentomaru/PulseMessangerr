@@ -1,3 +1,4 @@
+import { useState } from "react";
 import type { Gift } from "@/lib/gifts";
 import { variantFilter } from "@/lib/gifts";
 
@@ -106,6 +107,9 @@ export default function NftFigure({
   variant?: number;
 }) {
   const ch = CHOREO[gift.key] ?? FALLBACK;
+  /** «Живой подарок»: играем видео; если оно не загрузилось — фолбэк на текстуру. */
+  const [videoFailed, setVideoFailed] = useState(false);
+  const showVideo = !!gift.video && !videoFailed;
   return (
     <div className={`relative ${rounded}`} style={{ width: size, height: size, fontSize: size / 10 }}>
       <div
@@ -113,19 +117,34 @@ export default function NftFigure({
         style={{ background: `radial-gradient(circle, ${ch.glow} 0%, transparent 62%)` }}
       />
       <div className="nft-shadow" />
-      {/* дрейф → хореография → живая камера по текстуре */}
+      {/* дрейф → хореография → (видео ИЛИ живая камера по текстуре) */}
       <div className="nft-drift" style={{ position: "absolute", inset: 0 }}>
         <div className={`nft-wrap ${ch.anim}`} style={{ position: "absolute", inset: 0 }}>
-          <div className={`nft-cam ${ch.cam}`} style={{ position: "absolute", inset: 0 }}>
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={gift.img}
-              alt={gift.name}
+          {showVideo ? (
+            // Видео двигается само — зум камеры ему не нужен
+            <video
+              src={gift.video}
+              autoPlay
+              loop
+              muted
+              playsInline
               draggable={false}
+              onError={() => setVideoFailed(true)}
               className={`h-full w-full ${rounded} object-cover`}
               style={{ filter: variantFilter(variant) }}
             />
-          </div>
+          ) : (
+            <div className={`nft-cam ${ch.cam}`} style={{ position: "absolute", inset: 0 }}>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={gift.img}
+                alt={gift.name}
+                draggable={false}
+                className={`h-full w-full ${rounded} object-cover`}
+                style={{ filter: variantFilter(variant) }}
+              />
+            </div>
+          )}
         </div>
         {/* пробегающий блик света */}
         <div className={`nft-sweep ${rounded}`} />

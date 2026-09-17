@@ -25,6 +25,10 @@ export type Gift = {
   edition?: number;
   /** Доступен только в рулетке NFT (не продаётся в каталоге). */
   rouletteOnly?: boolean;
+  /** «Живой подарок»: видео вместо текстуры (автоплей, зациклено). */
+  live?: boolean;
+  /** Путь к видео (если подарок «живой»). */
+  video?: string;
 };
 
 /** Блик-звёздочка для «дорогих» подарков. */
@@ -300,11 +304,14 @@ export const GIFTS: Gift[] = [
     key: "nft_dragon",
     emoji: "🐉",
     name: "Золотой дракон",
-    price: 5000,
+    price: 100000,
     bg: "from-emerald-500/30 to-yellow-400/10",
     nft: true,
+    /** Самый эксклюзивный подарок: настоящее видео. */
+    live: true,
+    video: "/gifts/dragon.mp4",
     img: "/gifts/nft-dragon.png",
-    edition: 100,
+    edition: 10,
     icon: "",
   },
   {

@@ -93,7 +93,7 @@ export default function GiftDetailModal({
       >
         <div className="flex items-center justify-between pb-2">
           <p className="font-display text-[15px] font-bold">
-            {gift.nft ? "NFT-подарок" : "Подарок"}
+{gift.live ? "Живой подарок" : gift.nft ? "NFT-подарок" : "Подарок"}
           </p>
           <button onClick={onClose} className="rounded-full bg-white/10 p-1.5 text-white/70 transition-colors hover:bg-white/15">
             <X className="h-4 w-4" />

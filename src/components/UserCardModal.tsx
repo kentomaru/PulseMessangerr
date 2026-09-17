@@ -649,9 +649,9 @@ function GiftPicker({
                     g.nft ? "border-amber-300/40 hover:border-amber-300/70" : "border-white/10 hover:border-amber-300/50"
                   } bg-white/[0.03]`}
                 >
-                  {g.nft && (
-                    <span className="absolute top-1 right-1 rounded-full bg-black/60 px-1.5 py-px text-[8px] font-bold tracking-wider text-amber-300 uppercase backdrop-blur">
-                      NFT
+                  {(g.nft || g.live) && (
+                    <span className={`absolute top-1 right-1 rounded-full bg-black/60 px-1.5 py-px text-[8px] font-bold tracking-wider uppercase backdrop-blur ${g.live ? "text-rose-300" : "text-amber-300"}`}>
+                      {g.live ? "LIVE" : "NFT"}
                     </span>
                   )}
                   <span className={`grid h-12 w-12 place-items-center overflow-hidden rounded-xl bg-gradient-to-br ${g.bg}`}>

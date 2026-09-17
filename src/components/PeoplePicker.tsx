@@ -38,6 +38,15 @@ export default function PeoplePicker({
   const [selected, setSelected] = useState<PublicUser[]>([]);
   const [busy, setBusy] = useState(false);
 
+  // Esc закрывает окно поиска людей
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", h);
+    return () => window.removeEventListener("keydown", h);
+  }, [onClose]);
+
   useEffect(() => {
     const q = query.trim();
     if (q.length < 1) {

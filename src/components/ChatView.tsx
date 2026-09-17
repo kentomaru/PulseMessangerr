@@ -4554,9 +4554,9 @@ function GiftCard({
             dangerouslySetInnerHTML={{ __html: gift.icon }}
           />
         )}
-        {gift.nft && (
-          <span className="absolute top-2 left-2 rounded-full bg-black/60 px-1.5 py-px text-[8px] font-bold tracking-wider text-amber-300 uppercase backdrop-blur">
-            NFT
+        {(gift.nft || gift.live) && (
+          <span className={`absolute top-2 left-2 rounded-full bg-black/60 px-1.5 py-px text-[8px] font-bold tracking-wider uppercase backdrop-blur ${gift.live ? "text-rose-300" : "text-amber-300"}`}>
+            {gift.live ? "LIVE" : "NFT"}
           </span>
         )}
         <span className="text-[15px] font-bold">{gift.name}</span>
