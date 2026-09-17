@@ -84,6 +84,7 @@ import { renderRichText } from "@/lib/richText";
 import { addScheduled, readScheduled, removeScheduled, type ScheduledMsg } from "@/lib/scheduledStore";
 import { parseStoryQuote, type StoryQuoteInfo } from "@/lib/storyQuote";
 import { setCachedTranscript } from "@/lib/transcribe";
+import { isModalOpen } from "@/lib/modals";
 import { GIF_PACK, CUSTOM_EMOJI, customEmojiGlyphByToken, customEmojisToTokens, findCustomEmoji, findGif, gifpackId } from "@/lib/premiumContent";
 import { findGift } from "@/lib/gifts";
 import NftFigure from "./NftFigure";
@@ -1411,6 +1412,8 @@ export default function ChatView({
         return;
       }
       if (e.key !== "Escape") return;
+      // Поверх чата открыто модальное окно — Esc достаётся ему, чат не трогаем
+      if (isModalOpen()) return;
       if (searchOpen) setSearchOpen(false);
       else if (replyTo) setReplyTo(null);
       else if (editing) setEditing(null);
@@ -4396,11 +4399,13 @@ function GiftCard({
   let giftKey = "";
   let note = "";
   let anonymous = false;
+  let variant = 0;
   try {
-    const p = JSON.parse(content) as { giftKey?: unknown; note?: unknown; anonymous?: unknown };
+    const p = JSON.parse(content) as { giftKey?: unknown; note?: unknown; anonymous?: unknown; variant?: unknown };
     if (typeof p.giftKey === "string") giftKey = p.giftKey;
     if (typeof p.note === "string") note = p.note;
     anonymous = p.anonymous === true;
+    if (typeof p.variant === "number" && p.variant >= 0 && p.variant <= 4) variant = p.variant;
   } catch {
     /* битый контент */
   }
@@ -4418,7 +4423,7 @@ function GiftCard({
         } ${gift.bg}`}
       >
         {gift.img ? (
-          <NftFigure gift={gift} size={80} rounded="rounded-2xl" />
+          <NftFigure gift={gift} size={80} rounded="rounded-2xl" variant={variant} />
         ) : (
           <span
             className="gift-anim h-20 w-20 [&>svg]:h-full [&>svg]:w-full"
@@ -4447,6 +4452,7 @@ function GiftCard({
           senderAvatarUrl={senderAvatarUrl}
           anonymous={showAnon}
           createdAt={createdAt}
+          variant={variant}
           onClose={() => setOpen(false)}
         />
       )}

@@ -606,14 +606,8 @@ html[data-anims="0"] *::after {
   display: none;
 }
 
-/* ============ Живые NFT-подарки ============ */
-.nft-figure {
-  animation: nft-float 4s ease-in-out infinite;
-}
-@keyframes nft-float {
-  0%, 100% { transform: translateY(0) rotate(-1.6deg); }
-  50% { transform: translateY(-5%) rotate(1.6deg); }
-}
+/* ============ Живые NFT-подарки: у каждого СВОЯ анимация ============ */
+.nft-wrap { will-change: transform; }
 .nft-glow {
   position: absolute;
   inset: -18%;
@@ -626,6 +620,110 @@ html[data-anims="0"] *::after {
   0%, 100% { opacity: 0.4; transform: scale(0.9); }
   50% { opacity: 0.95; transform: scale(1.07); }
 }
+
+/* --- Дракон: медленный замах и резкий бросок с выдохом огня --- */
+.nftx-dragon { animation: nftx-dragon 4.6s ease-in-out infinite; transform-origin: 50% 85%; }
+@keyframes nftx-dragon {
+  0%, 100% { transform: translateY(0) rotate(-2deg); }
+  34% { transform: translateY(-3%) rotate(3deg); }
+  44% { transform: translateY(-7%) rotate(-6deg) scale(1.03); }
+  52% { transform: translateY(-2%) rotate(1deg); }
+  70% { transform: translateY(-1%) rotate(-1deg); }
+}
+/* --- Кот: игривое раскачивание с «пружинкой» --- */
+.nftx-cat { animation: nftx-cat 3.2s ease-in-out infinite; transform-origin: 50% 92%; }
+@keyframes nftx-cat {
+  0%, 100% { transform: rotate(0deg) scale(1); }
+  20% { transform: rotate(4.5deg) scale(1.01); }
+  40% { transform: rotate(0deg) scale(0.985, 1.01); }
+  60% { transform: rotate(-4.5deg) scale(1.01); }
+  80% { transform: rotate(0deg) scale(0.99); }
+}
+/* --- Медведь: танец — переступает с лапы на лапу --- */
+.nftx-bear { animation: nftx-bear 1.9s ease-in-out infinite; }
+@keyframes nftx-bear {
+  0%, 100% { transform: translateX(-3.5%) rotate(-2.5deg); }
+  50% { transform: translateX(3.5%) rotate(2.5deg); }
+}
+/* --- Сердце: двойной удар, как настоящее --- */
+.nftx-heart { animation: nftx-heart 1.5s ease-in-out infinite; }
+@keyframes nftx-heart {
+  0%, 100% { transform: scale(1); }
+  12% { transform: scale(1.13); }
+  24% { transform: scale(1); }
+  36% { transform: scale(1.09); }
+  48% { transform: scale(1); }
+}
+/* --- Ракета: дрожь на старте → взлёт → зависание --- */
+.nftx-rocket { animation: nftx-rocket 3.6s ease-in-out infinite; }
+@keyframes nftx-rocket {
+  0%, 8% { transform: translateY(0) translateX(0); }
+  10% { transform: translateY(0) translateX(-1%); }
+  12% { transform: translateY(0) translateX(1%); }
+  14% { transform: translateY(0) translateX(-1%); }
+  16% { transform: translateY(0) translateX(0); }
+  42% { transform: translateY(-9%); }
+  62% { transform: translateY(-5%); }
+  80% { transform: translateY(-8%); }
+}
+/* --- Корона: величественный 3D-поворот --- */
+.nftx-crown { animation: nftx-crown 4.4s ease-in-out infinite; perspective: 40em; }
+@keyframes nftx-crown {
+  0%, 100% { transform: rotateY(-14deg) scale(1); }
+  50% { transform: rotateY(14deg) scale(1.04); }
+}
+/* --- Кит: глубокий медленный дрейф --- */
+.nftx-whale { animation: nftx-whale 6.2s ease-in-out infinite; }
+@keyframes nftx-whale {
+  0%, 100% { transform: translate(0, 0) rotate(-1.5deg); }
+  30% { transform: translate(2%, -3%) rotate(1deg); }
+  60% { transform: translate(-2%, 2%) rotate(1.8deg); }
+}
+/* --- Они: зловещая дрожь после паузы --- */
+.nftx-oni { animation: nftx-oni 3.4s ease-in-out infinite; transform-origin: 50% 80%; }
+@keyframes nftx-oni {
+  0%, 68%, 100% { transform: rotate(0deg) translateY(0); }
+  72% { transform: rotate(-2.6deg) translateY(-1%); }
+  77% { transform: rotate(2.2deg) translateY(0.5%); }
+  82% { transform: rotate(-1.6deg) translateY(-0.5%); }
+  87% { transform: rotate(0.8deg) translateY(0); }
+}
+/* --- Пегас: широкий полёт с креном --- */
+.nftx-pegasus { animation: nftx-pegasus 3.8s ease-in-out infinite; }
+@keyframes nftx-pegasus {
+  0%, 100% { transform: translateY(2%) rotate(1.6deg); }
+  50% { transform: translateY(-7%) rotate(-2.2deg); }
+}
+/* --- Волк: крадущееся покачивание --- */
+.nftx-wolf { animation: nftx-wolf 4.2s ease-in-out infinite; transform-origin: 50% 88%; }
+@keyframes nftx-wolf {
+  0%, 100% { transform: translateX(0) rotate(0deg); }
+  28% { transform: translateX(-2.5%) rotate(-2.4deg); }
+  55% { transform: translateX(1.5%) rotate(1.2deg); }
+  80% { transform: translateX(2.5%) rotate(2.2deg); }
+}
+/* --- Алмаз: мерцание граней (пульс + лёгкий блеск) --- */
+.nftx-diamond { animation: nftx-diamond 2.7s ease-in-out infinite; }
+@keyframes nftx-diamond {
+  0%, 100% { transform: scale(1) rotate(0deg); filter: brightness(1); }
+  30% { transform: scale(1.045) rotate(-0.8deg); filter: brightness(1.22); }
+  60% { transform: scale(1.01) rotate(0.8deg); filter: brightness(0.95); }
+}
+/* --- Феникс: взмах и подъём из пламени --- */
+.nftx-phoenix { animation: nftx-phoenix 3s ease-in-out infinite; transform-origin: 50% 75%; }
+@keyframes nftx-phoenix {
+  0%, 100% { transform: translateY(0) rotate(-2deg) scaleX(1); }
+  40% { transform: translateY(-8%) rotate(2.4deg) scaleX(1.03); }
+  70% { transform: translateY(-3%) rotate(-1deg) scaleX(0.985); }
+}
+/* --- Запасная лёгкая анимация --- */
+.nftx-idle { animation: nftx-idle 4s ease-in-out infinite; }
+@keyframes nftx-idle {
+  0%, 100% { transform: translateY(0) rotate(-1.4deg); }
+  50% { transform: translateY(-5%) rotate(1.4deg); }
+}
+
+/* ============ Частицы ============ */
 .nft-flame {
   position: absolute;
   bottom: 8%;
@@ -670,4 +768,50 @@ html[data-anims="0"] *::after {
   0% { opacity: 0; transform: translateY(0.4em) scale(calc(var(--hs, 1) * 0.5)); }
   20% { opacity: 0.95; }
   100% { opacity: 0; transform: translateY(-4em) translateX(0.6em) scale(calc(var(--hs, 1) * 1.05)); }
+}
+.nft-bubble {
+  position: absolute;
+  bottom: 6%;
+  width: 0.9em;
+  height: 0.9em;
+  border-radius: 50%;
+  border: 0.12em solid rgba(200, 225, 255, 0.8);
+  background: radial-gradient(circle at 32% 30%, rgba(255,255,255,0.75), rgba(255,255,255,0.05) 55%);
+  opacity: 0;
+  pointer-events: none;
+  animation: nft-bubble 3s ease-in infinite;
+}
+@keyframes nft-bubble {
+  0% { opacity: 0; transform: translateY(0.4em) scale(calc(var(--bs, 1) * 0.5)); }
+  15% { opacity: 0.9; }
+  100% { opacity: 0; transform: translateY(-5em) translateX(0.5em) scale(calc(var(--bs, 1) * 1.05)); }
+}
+.nft-ember {
+  position: absolute;
+  bottom: 10%;
+  width: 0.42em;
+  height: 0.42em;
+  border-radius: 50%;
+  opacity: 0;
+  pointer-events: none;
+  animation: nft-ember 3s ease-out infinite;
+}
+@keyframes nft-ember {
+  0% { opacity: 0; transform: translateY(0.3em) scale(calc(var(--es, 1) * 0.6)); }
+  12% { opacity: 1; }
+  100% { opacity: 0; transform: translateY(-5.2em) translateX(-0.6em) scale(calc(var(--es, 1) * 0.3)); }
+}
+.nft-frost {
+  position: absolute;
+  width: 0.55em;
+  height: 0.55em;
+  background: #dff2ff;
+  clip-path: polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%);
+  opacity: 0;
+  pointer-events: none;
+  animation: nft-frost 3.4s ease-in-out infinite;
+}
+@keyframes nft-frost {
+  0%, 100% { opacity: 0; transform: scale(calc(var(--fs2, 1) * 0.3)) rotate(45deg); }
+  45% { opacity: 0.95; transform: scale(var(--fs2, 1)) rotate(90deg); }
 }

@@ -191,6 +191,13 @@ export default function GroupCreateModal({
             <input
               value={name}
               onChange={(e) => setName(e.target.value)}
+              onKeyDown={(e) => {
+                // Enter — создать, как кнопкой
+                if (e.key === "Enter" && !saving && name.trim().length >= 2) {
+                  e.preventDefault();
+                  void create();
+                }
+              }}
               maxLength={32}
               placeholder={kind === "channel" ? "Название канала" : "Название группы"}
               className="ring-focus w-full rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3 text-[15px] placeholder:text-white/25"
@@ -198,6 +205,12 @@ export default function GroupCreateModal({
             <input
               value={about}
               onChange={(e) => setAbout(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !saving && name.trim().length >= 2) {
+                  e.preventDefault();
+                  void create();
+                }
+              }}
               maxLength={255}
               placeholder="О чём это (необязательно)"
               className="ring-focus w-full rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-2.5 text-sm placeholder:text-white/25"

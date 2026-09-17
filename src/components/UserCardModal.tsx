@@ -14,6 +14,7 @@ import {
   MessageSquareLock,
   MessageSquareText,
   PhoneOff,
+  Dices,
   Star,
   UserPlus,
   X,
@@ -25,7 +26,8 @@ import { bannerStyle, isFileBanner } from "@/lib/wallpapers";
 import { api } from "@/lib/api";
 import type { PublicUser } from "@/lib/types";
 import { lastSeenLabel } from "@/lib/format";
-import { GIFTS, findGift, type GiftItem } from "@/lib/gifts";
+import { GIFTS, findGift, NFT_VARIANTS, type GiftItem } from "@/lib/gifts";
+import RouletteModal from "./RouletteModal";
 import GiftDetailModal from "./GiftDetailModal";
 import NftFigure from "./NftFigure";
 
@@ -53,6 +55,7 @@ export default function UserCardModal({ user, onClose, onMessage, myId }: Props)
   /** Тап по подарку — мгновенные детали (кто, когда, с каким текстом). */
   const [giftDetail, setGiftDetail] = useState<GiftItem | null>(null);
   const [giftPicker, setGiftPicker] = useState(false);
+  const [rouletteOpen, setRouletteOpen] = useState(false);
   const [giftSent, setGiftSent] = useState(false);
   useEffect(() => {
     let alive = true;
@@ -288,7 +291,7 @@ export default function UserCardModal({ user, onClose, onMessage, myId }: Props)
                     } ${gd.bg}`}
                   >
                     {gd.img ? (
-                      <NftFigure gift={gd} size={56} rounded="rounded-2xl" />
+                      <NftFigure gift={gd} size={56} rounded="rounded-2xl" variant={g.variant} />
                     ) : (
                       <span
                         className="gift-anim h-9 w-9 [&>svg]:h-full [&>svg]:w-full"
@@ -406,6 +409,8 @@ export default function UserCardModal({ user, onClose, onMessage, myId }: Props)
           createdAt={giftDetail.createdAt}
           giftId={giftDetail.id}
           pinned={!!giftDetail.pinned}
+          variant={giftDetail.variant ?? 0}
+          source={giftDetail.source ?? "gift"}
           canPin={isSelf}
           onPinned={(v) => {
             setUserGifts((cur) =>
@@ -421,6 +426,8 @@ export default function UserCardModal({ user, onClose, onMessage, myId }: Props)
         <GiftPicker
           userId={user.id}
           name={user.displayName}
+          rouletteOpen={rouletteOpen}
+          onRoulette={() => setRouletteOpen(true)}
           onClose={() => setGiftPicker(false)}
           onSent={() => {
             setGiftSent(true);
@@ -428,6 +435,7 @@ export default function UserCardModal({ user, onClose, onMessage, myId }: Props)
           }}
         />
       )}
+      {rouletteOpen && <RouletteModal onClose={() => setRouletteOpen(false)} />}
     </ModalShell>
   );
 }
@@ -438,11 +446,15 @@ function GiftPicker({
   name,
   onClose,
   onSent,
+  rouletteOpen,
+  onRoulette,
 }: {
   userId: string;
   name: string;
   onClose: () => void;
   onSent: () => void;
+  rouletteOpen: boolean;
+  onRoulette: () => void;
 }) {
   const [mePremium, setMePremium] = useState<boolean | null>(null);
   const [picked, setPicked] = useState<string | null>(null);
@@ -451,6 +463,8 @@ function GiftPicker({
   const [hideName, setHideName] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** Расцветка выбранного NFT: 0–4 или «случайная». */
+  const [variantChoice, setVariantChoice] = useState<number | "random">(0);
   useEffect(() => {
     let alive = true;
     api<{ user?: { premium?: boolean }; premium?: boolean }>("/api/auth/me")
@@ -462,6 +476,19 @@ function GiftPicker({
   }, []);
   const gift = picked ? GIFTS.find((g) => g.key === picked) ?? null : null;
 
+  // Esc: сначала назад к каталогу, потом — закрыть окно
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      if (rouletteOpen) return; // рулетка закроет себя сама
+      e.stopImmediatePropagation();
+      if (picked) setPicked(null);
+      else onClose();
+    };
+    window.addEventListener("keydown", h, true);
+    return () => window.removeEventListener("keydown", h, true);
+  }, [picked, onClose, rouletteOpen]);
+
   const send = async () => {
     if (!gift || busy) return;
     setBusy(true);
@@ -469,7 +496,13 @@ function GiftPicker({
     try {
       await api("/api/gifts", {
         method: "POST",
-        body: JSON.stringify({ recipientId: userId, giftKey: gift.key, message, hideSender: hideName }),
+        body: JSON.stringify({
+          recipientId: userId,
+          giftKey: gift.key,
+          message,
+          hideSender: hideName,
+          variant: gift.nft ? (variantChoice === "random" ? -1 : variantChoice) : 0,
+        }),
       });
       onSent();
       onClose();
@@ -504,7 +537,7 @@ function GiftPicker({
             </div>
             <div className={`gift-shine relative mx-auto grid aspect-square w-44 place-items-center overflow-hidden rounded-3xl border ${gift.nft ? "border-amber-300/50" : "border-white/10"} bg-gradient-to-br ${gift.bg}`}>
               {gift.img ? (
-                <NftFigure gift={gift} size={168} rounded="rounded-2xl" />
+                <NftFigure gift={gift} size={168} rounded="rounded-2xl" variant={variantChoice === "random" ? undefined : variantChoice} />
               ) : (
                 <span
                   className="gift-anim h-24 w-24 [&>svg]:h-full [&>svg]:w-full"
@@ -516,6 +549,46 @@ function GiftPicker({
             <p className="flex items-center justify-center gap-1 pt-0.5 text-[12px] font-bold text-amber-300">
               <Star className="h-3 w-3" /> {gift.price} звёзд
             </p>
+            {gift.nft && gift.img && (
+              <div className="mt-3 rounded-2xl border border-white/8 bg-white/[0.03] p-3">
+                <p className="pb-2 text-[11px] font-semibold tracking-wide text-white/40 uppercase">
+                  Расцветка · {NFT_VARIANTS.length} вариантов
+                </p>
+                <div className="flex items-center gap-1.5">
+                  {NFT_VARIANTS.map((v, i) => (
+                    <button
+                      key={v.name}
+                      onClick={() => setVariantChoice(i)}
+                      title={v.name}
+                      className={`overflow-hidden rounded-xl border p-0.5 transition-all ${
+                        variantChoice === i
+                          ? "border-amber-300 ring-1 ring-amber-300"
+                          : "border-white/10 hover:border-white/30"
+                      }`}
+                    >
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={gift.img} alt={v.name} className="h-9 w-9 rounded-lg object-cover" style={{ filter: v.filter }} />
+                    </button>
+                  ))}
+                  <button
+                    onClick={() => setVariantChoice("random")}
+                    title="Случайная расцветка"
+                    className={`ml-auto flex items-center gap-1 rounded-xl border px-2 py-1.5 text-[11px] font-medium transition-colors ${
+                      variantChoice === "random"
+                        ? "border-amber-300 text-amber-300"
+                        : "border-white/15 text-white/50 hover:border-white/35"
+                    }`}
+                  >
+                    <Dices className="h-3.5 w-3.5" /> Рандом
+                  </button>
+                </div>
+                <p className="pt-1.5 text-[11px] text-white/35">
+                  {variantChoice === "random"
+                    ? "Расцветка выпадет случайно при отправке"
+                    : `Выбрано: ${NFT_VARIANTS[variantChoice as number].name}`}
+                </p>
+              </div>
+            )}
             <textarea
               value={message}
               onChange={(e) => setMessage(e.target.value)}
@@ -573,11 +646,24 @@ function GiftPicker({
               </span>
               <span className="font-bold text-amber-300">{mePremium ? "∞ · Premium" : "0 · нужен Premium"}</span>
             </div>
+            <button
+              onClick={onRoulette}
+              className="mb-3 flex w-full items-center gap-3 rounded-2xl border border-amber-300/35 bg-gradient-to-r from-amber-300/15 via-orange-400/10 to-transparent px-4 py-3 text-left transition-colors hover:border-amber-300/60"
+            >
+              <Dices className="h-5 w-5 shrink-0 text-amber-300" />
+              <span className="min-w-0 flex-1">
+                <span className="block text-[13px] font-bold">Рулетка NFT</span>
+                <span className="block text-[11px] text-white/40">Бесплатный спин раз в 24 часа — вплоть до Феникса 50 000 ⭐</span>
+              </span>
+            </button>
             <div className="grid grid-cols-4 gap-2">
-              {GIFTS.map((g) => (
+              {GIFTS.filter((g) => !g.rouletteOnly).map((g) => (
                 <button
                   key={g.key}
-                  onClick={() => setPicked(g.key)}
+                  onClick={() => {
+                    setPicked(g.key);
+                    setVariantChoice(0);
+                  }}
                   title={`${g.name} · ${g.price} звёзд${g.nft ? " · NFT" : ""}`}
                   className={`relative flex flex-col items-center gap-1 rounded-2xl border p-2.5 transition-all hover:bg-white/8 ${
                     g.nft ? "border-amber-300/40 hover:border-amber-300/70" : "border-white/10 hover:border-amber-300/50"

@@ -377,6 +377,9 @@ export async function ensureSchema(): Promise<void> {
     );
     alter table gifts add column if not exists hide_sender boolean not null default false;
     alter table gifts add column if not exists pinned boolean not null default false;
+    alter table gifts add column if not exists variant integer not null default 0;
+    alter table gifts add column if not exists source text not null default 'gift';
+    alter table users add column if not exists roulette_at timestamptz;
     alter table messages add column if not exists transcript text;
     alter table messages add column if not exists forwarded_from text;
     alter table messages add column if not exists forwarded_avatar text;

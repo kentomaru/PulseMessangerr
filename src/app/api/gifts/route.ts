@@ -37,6 +37,8 @@ export const GET = withApi("gifts:list", async ({ req, me }) => {
         message: r.message,
         createdAt: new Date(r.createdAt).toISOString(),
         pinned: !!(r as { pinned?: boolean }).pinned,
+        variant: Number((r as { variant?: number }).variant ?? 0),
+        source: ((r as { source?: string }).source === "roulette" ? "roulette" : "gift") as "gift" | "roulette",
         anonymous: hidden,
         sender: visible
           ? { id: visible.id, displayName: visible.displayName, username: visible.username, avatarUrl: visible.avatarUrl }
@@ -56,10 +58,16 @@ export const POST = withApi("gifts:send", async ({ req, me }) => {
   const giftKey = String(body.giftKey ?? "");
   const message = typeof body.message === "string" ? body.message.trim().slice(0, 140) : "";
   const hideSender = body.hideSender === true;
+  // Расцветка: 0–4 явно, либо -1 → случайная («выбить на рандом»)
+  const vRaw = Number(body.variant ?? 0);
+  const variant =
+    vRaw === -1 ? Math.floor(Math.random() * 5) : Number.isFinite(vRaw) && vRaw >= 0 && vRaw <= 4 ? Math.floor(vRaw) : 0;
   if (!isUuid(recipientId)) return NextResponse.json({ error: "Пользователь не найден" }, { status: 404 });
   /* Себе дарить можно — подарок попадёт в собственную витрину. */
   const gift = GIFTS.find((g) => g.key === giftKey);
   if (!gift) return NextResponse.json({ error: "Такого подарка нет" }, { status: 400 });
+  if (gift.rouletteOnly)
+    return NextResponse.json({ error: "Этот NFT выпадает только в рулетке" }, { status: 400 });
 
   const [meRow] = await db.select().from(users).where(eq(users.id, me.id)).limit(1);
   if (!meRow || !(meRow as { premium?: boolean }).premium)
@@ -73,6 +81,8 @@ export const POST = withApi("gifts:send", async ({ req, me }) => {
     giftKey,
     message: message || null,
     hideSender,
+    variant,
+    source: "gift",
   });
 
   // Как в ТГ: подарок приходит сообщением в личный чат с получателем.
@@ -118,7 +128,7 @@ export const POST = withApi("gifts:send", async ({ req, me }) => {
       conversationId: dmId,
       senderId: me.id,
       type: "gift",
-      content: JSON.stringify({ giftKey: gift.key, note: message || "", anonymous: hideSender }),
+      content: JSON.stringify({ giftKey: gift.key, note: message || "", anonymous: hideSender, variant }),
     });
   } catch {
     /* подарок сохранён в профиле — сообщение в чате не критично */

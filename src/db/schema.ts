@@ -47,6 +47,8 @@ export const users = pgTable("users", {
     /** Приватность: видно ли в поиске. Ссылка-инвайт работает всегда. */
     discoverable: boolean("discoverable").notNull().default(true),
     birthday: text("birthday").notNull().default(""),
+  /** Последний спин рулетки NFT (кулдаун 24 ч). */
+  rouletteAt: timestamp("roulette_at", { withTimezone: true }),
 });
 
 export type User = typeof users.$inferSelect;
@@ -430,6 +432,10 @@ export const gifts = pgTable(
     hideSender: boolean("hide_sender").notNull().default(false),
     /** Закреплён в витрине профиля — показывается первым. */
     pinned: boolean("pinned").notNull().default(false),
+    /** Расцветка (0–4) — у каждого NFT пять вариантов. */
+    variant: integer("variant").notNull().default(0),
+    /** Источник: подарок или выигрыш в рулетке. */
+    source: text("source").notNull().default("gift"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
 );

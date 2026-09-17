@@ -5,6 +5,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { ChevronLeft, ChevronRight, Eye, ImageOff, Loader2, Reply, Send, Trash2, X } from "lucide-react";
 import Avatar from "./Avatar";
 import { api } from "@/lib/api";
+import { modalEnter, isTopModal } from "@/lib/modals";
 import { encodeStoryQuote } from "@/lib/storyQuote";
 import { timeAgo } from "@/lib/format";
 import type { PublicUser, StoryGroup, StoryItem } from "@/lib/types";
@@ -109,17 +110,25 @@ export default function StoryViewer({
     };
   }, [story?.id, paused, showViewers, next, story, onWatched, storyIsVideo]);
 
-  // клавиатура
+  // клавиатура: Esc закрывает просмотр (только если поверх не открыто окно)
   useEffect(() => {
+    const id = Symbol("story-viewer");
+    const leave = modalEnter(id);
     const onKey = (e: KeyboardEvent) => {
       const typing = document.activeElement === replyRef.current;
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape") {
+        if (isTopModal(id)) onClose();
+        return;
+      }
       if (typing) return;
       if (e.key === "ArrowRight") next();
       if (e.key === "ArrowLeft") prev();
     };
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      leave();
+    };
   }, [next, prev, onClose]);
 
   const openViewers = async () => {

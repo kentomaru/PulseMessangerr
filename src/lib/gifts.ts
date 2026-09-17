@@ -23,6 +23,8 @@ export type Gift = {
   img?: string;
   /** Тираж лимитированной серии. */
   edition?: number;
+  /** Доступен только в рулетке NFT (не продаётся в каталоге). */
+  rouletteOnly?: boolean;
 };
 
 /** Блик-звёздочка для «дорогих» подарков. */
@@ -306,6 +308,78 @@ export const GIFTS: Gift[] = [
     icon: "",
   },
   {
+    key: "nft_whale",
+    emoji: "🐋",
+    name: "Космический кит",
+    price: 5000,
+    bg: "from-indigo-500/30 to-cyan-400/10",
+    nft: true,
+    img: "/gifts/nft-whale.png",
+    edition: 80,
+    rouletteOnly: true,
+    icon: "",
+  },
+  {
+    key: "nft_oni",
+    emoji: "👺",
+    name: "Маска они",
+    price: 7500,
+    bg: "from-purple-500/30 to-rose-500/10",
+    nft: true,
+    img: "/gifts/nft-oni.png",
+    edition: 60,
+    rouletteOnly: true,
+    icon: "",
+  },
+  {
+    key: "nft_pegasus",
+    emoji: "🦄",
+    name: "Пегас",
+    price: 10000,
+    bg: "from-violet-500/30 to-sky-400/10",
+    nft: true,
+    img: "/gifts/nft-pegasus.png",
+    edition: 45,
+    rouletteOnly: true,
+    icon: "",
+  },
+  {
+    key: "nft_wolf",
+    emoji: "🐺",
+    name: "Ледяной волк",
+    price: 15000,
+    bg: "from-slate-500/30 to-cyan-300/10",
+    nft: true,
+    img: "/gifts/nft-wolf.png",
+    edition: 30,
+    rouletteOnly: true,
+    icon: "",
+  },
+  {
+    key: "nft_diamond",
+    emoji: "💠",
+    name: "Вечный алмаз",
+    price: 25000,
+    bg: "from-cyan-400/30 to-blue-500/10",
+    nft: true,
+    img: "/gifts/nft-diamond.png",
+    edition: 15,
+    rouletteOnly: true,
+    icon: "",
+  },
+  {
+    key: "nft_phoenix",
+    emoji: "🔥",
+    name: "Феникс",
+    price: 50000,
+    bg: "from-orange-500/30 to-amber-400/10",
+    nft: true,
+    img: "/gifts/nft-phoenix.png",
+    edition: 5,
+    rouletteOnly: true,
+    icon: "",
+  },
+  {
     key: "diamond",
     emoji: "💎",
     name: "Алмаз",
@@ -342,5 +416,34 @@ export type GiftItem = {
   anonymous?: boolean;
   /** Закреплён в витрине — показывается первым. */
   pinned?: boolean;
+  /** Расцветка (0–4) — у каждого NFT пять вариантов. */
+  variant?: number;
+  /** Откуда подарок: подарен или выигран в рулетке. */
+  source?: "gift" | "roulette";
   sender: { id: string | null; displayName: string; username: string; avatarUrl: string | null } | null;
 };
+
+
+/* ============ Расцветки NFT: у каждого 5 вариантов ============ */
+
+export type NftVariant = { name: string; filter: string };
+
+/** Пять расцветок каждого NFT (вариант 0 — классический, без фильтра). */
+export const NFT_VARIANTS: NftVariant[] = [
+  { name: "Классический", filter: "none" },
+  { name: "Лазурный", filter: "hue-rotate(185deg) saturate(1.1)" },
+  { name: "Изумрудный", filter: "hue-rotate(105deg) saturate(1.05)" },
+  { name: "Рубиновый", filter: "hue-rotate(315deg) saturate(1.15)" },
+  { name: "Золотой", filter: "hue-rotate(40deg) saturate(1.35) brightness(1.08)" },
+];
+
+/** CSS-фильтр для расцветки (0–4, -1/мусор → классика). */
+export function variantFilter(variant: number | undefined | null): string {
+  if (variant == null || variant < 0 || variant >= NFT_VARIANTS.length) return "none";
+  return NFT_VARIANTS[variant].filter;
+}
+
+export function variantName(variant: number | undefined | null): string {
+  if (variant == null || variant < 0 || variant >= NFT_VARIANTS.length) return NFT_VARIANTS[0].name;
+  return NFT_VARIANTS[variant].name;
+}

@@ -147,9 +147,16 @@ export default function StoryComposer({ onClose, onPublished, notify, premium }:
         <textarea
           value={caption}
           onChange={(e) => setCaption(e.target.value)}
+          onKeyDown={(e) => {
+            // Enter — опубликовать (Shift+Enter — перенос строки)
+            if (e.key === "Enter" && !e.shiftKey && file && !busy) {
+              e.preventDefault();
+              void publish();
+            }
+          }}
           maxLength={140}
           rows={2}
-          placeholder="Подпись (необязательно)…"
+          placeholder="Подпись (необязательно)…  Enter — опубликовать"
           className="ring-focus nice-scroll w-full resize-none rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3 text-[15px] transition-all placeholder:text-white/25"
         />
 
