@@ -1,5 +1,6 @@
 import type { Gift } from "@/lib/gifts";
 import { variantFilter } from "@/lib/gifts";
+import NftAnimated, { SCENES } from "./NftAnimated";
 
 /**
  * Хореография «жизни» каждого NFT — своя для каждого:
@@ -99,28 +100,32 @@ export default function NftFigure({
   variant?: number;
 }) {
   const ch = CHOREO[gift.key] ?? FALLBACK;
+  const hasScene = gift.key in SCENES;
   return (
     <div className={`relative ${rounded}`} style={{ width: size, height: size, fontSize: size / 10 }}>
       <div
         className="nft-glow"
         style={{ background: `radial-gradient(circle, ${ch.glow} 0%, transparent 62%)` }}
       />
-      <div className="nft-shadow" />
-      {/* Два независимых слоя движения = «живое видео»: внешний дрейфует,
-          внутренний отыгрывает личную хореографию подарка. */}
+      {/* Внешний слой дрейфует — персонаж никогда не замирает; внутри —
+          собственная покадровая анимация сцены (пасть, лапка, крылья…). */}
       <div className="nft-drift" style={{ position: "absolute", inset: 0 }}>
-        <div className={`nft-wrap ${ch.anim}`} style={{ position: "absolute", inset: 0 }}>
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src={gift.img}
-            alt={gift.name}
-            draggable={false}
-            className={`h-full w-full ${rounded} object-cover`}
-            style={{ filter: variantFilter(variant) }}
-          />
-        </div>
+        {hasScene ? (
+          <NftAnimated kind={gift.key} size={size} variant={variant} rounded={rounded} />
+        ) : (
+          <div className={`nft-wrap ${ch.anim}`} style={{ position: "absolute", inset: 0 }}>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={gift.img}
+              alt={gift.name}
+              draggable={false}
+              className={`h-full w-full ${rounded} object-cover`}
+              style={{ filter: variantFilter(variant) }}
+            />
+          </div>
+        )}
       </div>
-      {ch.emitter === "flames" &&
+      {!hasScene && ch.emitter === "flames" &&
         FLAMES.map((f, i) => (
           <span
             key={i}
@@ -136,7 +141,7 @@ export default function NftFigure({
             }
           />
         ))}
-      {ch.emitter === "sparks" &&
+      {!hasScene && ch.emitter === "sparks" &&
         SPARKS.map((s, i) => (
           <span
             key={i}
@@ -146,7 +151,7 @@ export default function NftFigure({
             }
           />
         ))}
-      {ch.emitter === "hearts" &&
+      {!hasScene && ch.emitter === "hearts" &&
         HEARTS.map((h, i) => (
           <svg
             key={i}
@@ -158,7 +163,7 @@ export default function NftFigure({
             <path d="M12 21s-7.5-4.9-10-9.5C.6 8 2.3 4.5 5.8 4.5c2 0 3.4 1 4.2 2.4.8-1.4 2.2-2.4 4.2-2.4 3.5 0 5.2 3.5 3.8 7-2.5 4.6-10 9.5-10 9.5z" />
           </svg>
         ))}
-      {ch.emitter === "bubbles" &&
+      {!hasScene && ch.emitter === "bubbles" &&
         BUBBLES.map((b, i) => (
           <span
             key={i}
@@ -173,7 +178,7 @@ export default function NftFigure({
             }
           />
         ))}
-      {ch.emitter === "embers" &&
+      {!hasScene && ch.emitter === "embers" &&
         EMBERS.map((e, i) => (
           <span
             key={i}
@@ -189,7 +194,7 @@ export default function NftFigure({
             }
           />
         ))}
-      {ch.emitter === "frost" &&
+      {!hasScene && ch.emitter === "frost" &&
         FROST.map((f, i) => (
           <span
             key={i}
