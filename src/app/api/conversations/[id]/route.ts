@@ -77,6 +77,12 @@ export const PATCH = withApi<{ id: string }>("conversations:update", async ({ re
   if (typeof body.avatarUrl === "string" || body.avatarUrl === null)
     patch.avatarUrl = body.avatarUrl && String(body.avatarUrl).startsWith("/api/files/") ? body.avatarUrl : null;
   if (typeof body.isPrivate === "boolean") patch.isPrivate = body.isPrivate;
+  // «Скрывать владельца канала» — переключает только владелец
+  if (typeof body.showOwner === "boolean") {
+    if (access.membership.role !== "owner")
+      return NextResponse.json({ error: "Это решает владелец" }, { status: 403 });
+    patch.showOwner = body.showOwner;
+  }
   // Юзернейм чата/канала (@name): храним в invite_token — без новых колонок БД
   if (typeof body.username === "string") {
     if (access.membership.role !== "owner")

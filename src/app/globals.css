@@ -74,6 +74,57 @@ select:focus-visible,
 
 /* ───────────────────  Кнопки  ─────────────────── */
 
+/* ── Микро-анимации «живости» (2026-09) ─────────────────────────── */
+/* Тактильный отклик: любая кнопка слегка пружинит при нажатии */
+button, [role="button"] {
+  transition-property: transform, opacity, background-color, border-color, color, box-shadow, filter;
+  transition-duration: 0.14s;
+  transition-timing-function: ease;
+}
+button:active:not(:disabled) {
+  transform: scale(0.96);
+}
+/* Кнопки с собственной трансформацией наведения сохраняют её и при нажатии */
+button.hover\:scale-105:active:not(:disabled),
+button.hover\:scale-\[1\.02\]:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+/* Пункты меню: лёгкий сдвиг вправо при наведении */
+.nav-item { transition: transform 0.16s ease, background-color 0.16s ease, color 0.16s ease; }
+.nav-item:hover { transform: translateX(3px); }
+
+/* Индикатор звонка: расходящееся кольцо */
+@keyframes pm-ring-pulse {
+  0% { box-shadow: 0 0 0 0 rgba(74, 222, 128, 0.55); }
+  70% { box-shadow: 0 0 0 6px rgba(74, 222, 128, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(74, 222, 128, 0); }
+}
+.live-dot { animation: pm-ring-pulse 1.6s ease-out infinite; }
+
+/* Градиентные кнопки: бегущий блик */
+@keyframes pm-shine {
+  0% { transform: translateX(-130%) skewX(-18deg); }
+  60%, 100% { transform: translateX(230%) skewX(-18deg); }
+}
+.btn-gradient { position: relative; overflow: hidden; }
+.btn-gradient::after {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 40%;
+  background: linear-gradient(100deg, transparent, rgba(255, 255, 255, 0.28), transparent);
+  animation: pm-shine 2.8s ease-in-out infinite;
+  pointer-events: none;
+}
+
+/* Новые сообщения и панели: мягкое появление снизу */
+@keyframes pm-rise {
+  from { opacity: 0; transform: translateY(7px) scale(0.985); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+.pm-rise { animation: pm-rise 0.22s cubic-bezier(0.2, 0.8, 0.3, 1) both; }
+
 .btn-gradient {
   position: relative;
   background: #5865f2;

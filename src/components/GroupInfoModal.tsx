@@ -77,6 +77,8 @@ export default function GroupInfoModal({
   const [restricted, setRestricted] = useState(false);
   /** Слоумод: пауза между сообщениями участников (сек, 0 — выключен). */
   const [slowMode, setSlowMode] = useState(0);
+  /** Показывать ли участникам, кто владелец канала. */
+  const [showOwner, setShowOwner] = useState(true);
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   const [username, setUsername] = useState("");
   const [saving, setSaving] = useState(false);
@@ -101,6 +103,7 @@ export default function GroupInfoModal({
       setAbout(d.conversation.about ?? "");
       setIsPrivate(d.conversation.isPrivate);
       setRestricted(!!(d.conversation as { restricted?: boolean }).restricted);
+      setShowOwner((d.conversation as { showOwner?: boolean }).showOwner !== false);
       setSlowMode(typeof (d.conversation as { slowMode?: number }).slowMode === "number" ? (d.conversation as { slowMode?: number }).slowMode ?? 0 : 0);
       setAvatarUrl(d.conversation.avatarUrl);
       const tk = (d.conversation as { inviteToken?: string | null }).inviteToken ?? "";
@@ -229,7 +232,7 @@ export default function GroupInfoModal({
           about,
           isPrivate,
           avatarUrl,
-          ...(info?.myRole === "owner" ? { username, restricted } : {}),
+          ...(info?.myRole === "owner" ? { username, restricted, showOwner } : {}),
           ...(info?.myRole === "owner" || info?.myRole === "admin" ? { slowMode } : {}),
         }),
       });
@@ -446,6 +449,31 @@ export default function GroupInfoModal({
                 </select>
               </div>
             )}
+            {owner && info.kind === "channel" && (
+              <button
+                onClick={() => setShowOwner((v) => !v)}
+                className="flex w-full items-center gap-3 rounded-xl border border-white/8 bg-white/[0.03] px-3 py-2.5 text-left"
+              >
+                <Crown className="h-4 w-4 shrink-0 text-amber-300" />
+                <span className="min-w-0 flex-1">
+                  <span className="block text-sm font-medium">Показывать владельца канала</span>
+                  <span className="block text-[11px] text-white/35">
+                    Если выключить — участники не увидят, кто владелец
+                  </span>
+                </span>
+                <span
+                  className={`relative h-6 w-11 shrink-0 rounded-full transition-colors ${
+                    showOwner ? "bg-[#5865f2]" : "bg-white/15"
+                  }`}
+                >
+                  <span
+                    className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all ${
+                      showOwner ? "left-[1.375rem]" : "left-0.5"
+                    }`}
+                  />
+                </span>
+              </button>
+            )}
             <div className="flex gap-2">
               <button
                 onClick={() => void save()}
@@ -462,6 +490,7 @@ export default function GroupInfoModal({
                   setAbout(info.about);
                   setIsPrivate(info.isPrivate);
                   setRestricted(!!info.restricted);
+                  setShowOwner(info.showOwner !== false);
                   setSlowMode(typeof info.slowMode === "number" ? info.slowMode : 0);
                   setAvatarUrl(info.avatarUrl);
                 }}
@@ -590,10 +619,16 @@ export default function GroupInfoModal({
                   <p className="flex items-center gap-1.5 truncate text-sm font-medium">
                     {m.user.displayName}
                     {isMe && <span className="text-[10px] text-white/30">(вы)</span>}
-                    {m.role === "owner" && <Crown className="h-3 w-3 text-amber-300" />}
+                    {m.role === "owner" && (info.showOwner !== false || isMe) && (
+                      <Crown className="h-3 w-3 text-amber-300" />
+                    )}
                   </p>
                   <p className="truncate text-[11px] text-white/35">
-                    @{m.user.username} · {ROLE_LABEL[m.role]} · с нами {timeAgo(m.joinedAt)}
+                    @{m.user.username} ·{" "}
+                    {m.role === "owner" && info.showOwner === false && !isMe
+                      ? ROLE_LABEL.member
+                      : ROLE_LABEL[m.role]}{" "}
+                    · с нами {timeAgo(m.joinedAt)}
                   </p>
                 </div>
               </button>

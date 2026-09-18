@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import {
+  ChevronRight,
   ArrowLeft,
   Ban,
   CalendarDays,
@@ -28,6 +29,7 @@ import type { PublicUser } from "@/lib/types";
 import { lastSeenLabel } from "@/lib/format";
 import { GIFTS, findGift, NFT_VARIANTS, type GiftItem } from "@/lib/gifts";
 import GiftDetailModal from "./GiftDetailModal";
+import GiftsPanel from "./GiftsPanel";
 import NftFigure from "./NftFigure";
 
 type Props = {
@@ -53,6 +55,7 @@ export default function UserCardModal({ user, onClose, onMessage, myId }: Props)
   const [userGifts, setUserGifts] = useState<GiftItem[] | null>(null);
   /** Тап по подарку — мгновенные детали (кто, когда, с каким текстом). */
   const [giftDetail, setGiftDetail] = useState<GiftItem | null>(null);
+  const [giftsPanelOpen, setGiftsPanelOpen] = useState(false);
   const [giftPicker, setGiftPicker] = useState(false);
   const [giftSent, setGiftSent] = useState(false);
   useEffect(() => {
@@ -269,43 +272,38 @@ export default function UserCardModal({ user, onClose, onMessage, myId }: Props)
           })}
         </p>
 
-        {/* Подарки как в ТГ: витрина в профиле */}
+        {/* Подарки — отдельная плашка с листанием */}
         {userGifts && userGifts.length > 0 && (
-          <div className="mx-auto mt-4 max-w-xs">
-            <p className="pb-2 text-[10px] font-semibold tracking-wide text-white/35 uppercase">
-              Подарки · {userGifts.length}
-            </p>
-            <div className="grid grid-cols-4 gap-2">
-              {userGifts.slice(0, 8).map((g) => {
+          <button
+            onClick={() => setGiftsPanelOpen(true)}
+            className="mt-4 flex w-full items-center gap-3 rounded-2xl border border-white/8 bg-white/[0.03] px-3.5 py-3 text-left transition-colors hover:border-amber-300/40 hover:bg-white/[0.06]"
+          >
+            <span className="flex shrink-0 -space-x-2">
+              {userGifts.slice(0, 3).map((g) => {
                 const gd = findGift(g.giftKey);
                 if (!gd) return null;
                 return (
-                  <button
+                  <span
                     key={g.id}
-                    onClick={() => setGiftDetail(g)}
-                    title={`${gd.name} — нажмите: кто подарил, когда и с каким текстом`}
-                    className={`gift-pop gift-shine relative flex aspect-square items-center justify-center overflow-hidden rounded-2xl border bg-gradient-to-br transition-transform hover:scale-105 ${
-                      gd.nft ? "border-amber-300/40" : "border-white/10"
-                    } ${gd.bg}`}
+                    className={`grid h-10 w-10 place-items-center overflow-hidden rounded-xl ring-2 ring-black/40 bg-gradient-to-br ${gd.bg}`}
                   >
                     {gd.img ? (
-                      <NftFigure gift={gd} size={56} rounded="rounded-2xl" variant={g.variant} />
+                      <NftFigure gift={gd} size={38} rounded="rounded-[10px]" variant={g.variant} />
                     ) : (
-                      <span
-                        className="gift-anim h-9 w-9 [&>svg]:h-full [&>svg]:w-full"
-                        dangerouslySetInnerHTML={{ __html: gd.icon }}
-                      />
+                      <span className="h-6 w-6 [&>svg]:h-full [&>svg]:w-full" dangerouslySetInnerHTML={{ __html: gd.icon }} />
                     )}
-                    {g.pinned && (
-                      <span className="absolute top-1 right-1 grid h-4 w-4 place-items-center rounded-full bg-black/60 text-amber-300 backdrop-blur">
-                        <Pin className="h-2.5 w-2.5" />
-                      </span>
-                    )}
-                  </button>
+                  </span>
                 );
               })}
-            </div>
-          </div>
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block text-sm font-semibold">Подарки</span>
+              <span className="block text-[11px] text-white/35">
+                {userGifts.length} шт · нажмите, чтобы листать
+              </span>
+            </span>
+            <ChevronRight className="h-4 w-4 shrink-0 text-white/30" />
+          </button>
         )}
 
         {/* Своя карточка: просто бейдж, без действий над собой */}
@@ -396,6 +394,15 @@ export default function UserCardModal({ user, onClose, onMessage, myId }: Props)
           </button>
         </div>
       </div>
+
+      {/* Плашка подарков — отдельное окно с листанием */}
+      {giftsPanelOpen && userGifts && (
+        <GiftsPanel
+          title="Подарки"
+          gifts={userGifts}
+          onClose={() => setGiftsPanelOpen(false)}
+        />
+      )}
 
       {giftDetail && (
         <GiftDetailModal

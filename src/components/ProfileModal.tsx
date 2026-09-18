@@ -30,6 +30,7 @@ import { PrivacySettings } from "./PrivacyModal";
 import { api, copyToClipboard, uploadFile } from "@/lib/api";
 import { findGift, type GiftItem } from "@/lib/gifts";
 import NftFigure from "./NftFigure";
+import GiftsPanel from "./GiftsPanel";
 import GiftDetailModal from "./GiftDetailModal";
 import { compressImage } from "@/lib/images";
 import { BANNER_PRESETS, bannerStyle, isFileBanner } from "@/lib/wallpapers";
@@ -93,6 +94,7 @@ export default function ProfileModal({
   const [myGifts, setMyGifts] = useState<GiftItem[] | null>(null);
   /** Тап по своему подарку — детали открываются мгновенно, без запросов. */
   const [giftDetail, setGiftDetail] = useState<GiftItem | null>(null);
+  const [giftsPanelOpen, setGiftsPanelOpen] = useState(false);
   /** Id этого окна в стеке — для корректного каскада Esc. */
   const shellIdRef = useRef(Symbol("profile-modal"));
   const shellId = shellIdRef.current;
@@ -518,43 +520,38 @@ export default function ProfileModal({
           )}
         </div>
 
-        {/* Мои подарки — анимированные, как в ТГ */}
+        {/* Подарки — отдельная плашка с листанием */}
         {myGifts && myGifts.length > 0 && (
-          <div>
-            <p className="pb-2 text-[10px] font-semibold tracking-wide text-white/35 uppercase">
-              Мои подарки · {myGifts.length}
-            </p>
-            <div className="grid grid-cols-6 gap-2">
-              {myGifts.slice(0, 12).map((g) => {
+          <button
+            onClick={() => setGiftsPanelOpen(true)}
+            className="flex w-full items-center gap-3 rounded-2xl border border-white/8 bg-white/[0.03] px-3.5 py-3 text-left transition-colors hover:border-amber-300/40 hover:bg-white/[0.06]"
+          >
+            <span className="flex shrink-0 -space-x-2">
+              {myGifts.slice(0, 3).map((g) => {
                 const gd = findGift(g.giftKey);
                 if (!gd) return null;
                 return (
-                  <button
+                  <span
                     key={g.id}
-                    onClick={() => setGiftDetail(g)}
-                    title={`${gd.name} — нажмите: кто подарил, когда и с каким текстом`}
-                    className={`gift-pop gift-shine relative flex aspect-square items-center justify-center overflow-hidden rounded-2xl border bg-gradient-to-br transition-transform hover:scale-105 ${
-                      gd.nft ? "border-amber-300/40" : "border-white/10"
-                    } ${gd.bg}`}
+                    className={`grid h-10 w-10 place-items-center overflow-hidden rounded-xl ring-2 ring-black/40 bg-gradient-to-br ${gd.bg}`}
                   >
                     {gd.img ? (
-                      <NftFigure gift={gd} size={72} rounded="rounded-2xl" variant={g.variant} />
+                      <NftFigure gift={gd} size={38} rounded="rounded-[10px]" variant={g.variant} />
                     ) : (
-                      <span
-                        className="gift-anim h-8 w-8 [&>svg]:h-full [&>svg]:w-full"
-                        dangerouslySetInnerHTML={{ __html: gd.icon }}
-                      />
+                      <span className="h-6 w-6 [&>svg]:h-full [&>svg]:w-full" dangerouslySetInnerHTML={{ __html: gd.icon }} />
                     )}
-                    {g.pinned && (
-                      <span className="absolute top-1 right-1 grid h-4 w-4 place-items-center rounded-full bg-black/60 text-amber-300 backdrop-blur">
-                        <Pin className="h-2.5 w-2.5" />
-                      </span>
-                    )}
-                  </button>
+                  </span>
                 );
               })}
-            </div>
-          </div>
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block text-sm font-semibold">Мои подарки</span>
+              <span className="block text-[11px] text-white/35">
+                {myGifts.length} шт · нажмите, чтобы листать
+              </span>
+            </span>
+            <ChevronRight className="h-4 w-4 shrink-0 text-white/30" />
+          </button>
         )}
 
         <label className="block">
@@ -800,6 +797,16 @@ export default function ProfileModal({
         )}
       </div>
     </ModalShell>
+
+      {/* Плашка подарков — отдельное окно с листанием */}
+      {giftsPanelOpen && myGifts && (
+        <GiftsPanel
+          title="Мои подарки"
+          gifts={myGifts}
+          canPin
+          onClose={() => setGiftsPanelOpen(false)}
+        />
+      )}
 
       {/* Детали подарка — мгновенно, из уже загруженных данных */}
       {giftDetail && (

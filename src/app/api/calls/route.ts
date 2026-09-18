@@ -41,6 +41,10 @@ export const POST = withApi("calls:start", async ({ req, me, log }) => {
 
   const kind = normalizeKind(access.conversation.kind);
 
+  // Каналы — не место для звонков: только текст (как в ТГ)
+  if (kind === "channel")
+    return NextResponse.json({ error: "Звонки в каналах отключены" }, { status: 403 });
+
   // Уже живой звонок? Тогда просто входим в комнату.
   await sweepStaleCalls([conversationId]);
   const existing = await findActiveCall(conversationId);

@@ -4189,7 +4189,7 @@ function MessageBubble({
 
   return (
     <div
-      className={`group no-callout relative flex items-start gap-2 ${media ? "py-1.5" : "py-0.5"} ${
+      className={`group no-callout pm-rise relative flex items-start gap-2 ${media ? "py-1.5" : "py-0.5"} ${
         grouped ? "" : "mt-1.5"
       } ${isGift ? "justify-center" : alignRight ? "justify-end" : "justify-start"} ${highlighted ? "animate-pulse-dot" : ""}`}
       onContextMenu={(e) => {

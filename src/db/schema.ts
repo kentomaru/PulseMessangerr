@@ -90,6 +90,8 @@ export const conversations = pgTable(
     isPrivate: boolean("is_private").notNull().default(true),
     /** Токен постоянной ссылки-приглашения: /#group=<token>. */
     inviteToken: text("invite_token").unique(),
+    /** Показывать ли участникам, кто владелец (канал). */
+    showOwner: boolean("show_owner").notNull().default(true),
     /** «Запретить копирование/сохранение» — как ограниченные каналы в ТГ. */
     restricted: boolean("restricted").notNull().default(false),
   // Минимальная пауза между сообщениями участников (сек, 0 — выключен)

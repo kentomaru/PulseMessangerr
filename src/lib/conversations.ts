@@ -141,6 +141,8 @@ export async function serializeConversation(
     isPrivate: !!conv.isPrivate,
     // «Запрет копирования/сохранения» — как ограниченные каналы в ТГ
     restricted: !!(conv as { restricted?: boolean }).restricted,
+    // Владелец канала может скрыть, что он владелец
+    showOwner: (conv as { showOwner?: boolean }).showOwner !== false,
     slowMode: typeof (conv as { slowMode?: number }).slowMode === "number" ? (conv as { slowMode?: number }).slowMode ?? 0 : 0,
     ownerId: conv.ownerId,
     createdAt: new Date(conv.createdAt).toISOString(),

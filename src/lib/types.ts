@@ -39,6 +39,8 @@ export type ConversationInfo = {
   isPrivate: boolean;
   restricted?: boolean;
   slowMode?: number;
+  /** Показывать ли участникам, кто владелец (канал). */
+  showOwner?: boolean;
   ownerId: string | null;
   createdAt: string;
   memberCount: number;

@@ -380,6 +380,7 @@ export async function ensureSchema(): Promise<void> {
     alter table gifts add column if not exists variant integer not null default 0;
     alter table gifts add column if not exists source text not null default 'gift';
     alter table users add column if not exists roulette_at timestamptz;
+    alter table conversations add column if not exists show_owner boolean not null default true;
     alter table messages add column if not exists transcript text;
     alter table messages add column if not exists forwarded_from text;
     alter table messages add column if not exists forwarded_avatar text;
