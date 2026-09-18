@@ -9,17 +9,28 @@ import {
   Eye,
   EyeOff,
   Loader2,
+  Camera,
+  ImagePlus,
   Lock,
   MessagesSquare,
   PhoneCall,
   Sparkles,
   User,
 } from "lucide-react";
-import { api } from "@/lib/api";
+import { api, uploadFile } from "@/lib/api";
+import { saveAccount } from "@/lib/accounts";
+import { compressImage } from "@/lib/images";
 
 type Mode = "login" | "register";
 
-export default function AuthScreen({ bannedNote }: { bannedNote?: string }) {
+export default function AuthScreen({
+  bannedNote,
+  onClose,
+}: {
+  bannedNote?: string;
+  /** Если задан — экран открыт как «добавить аккаунт» поверх приложения. */
+  onClose?: () => void;
+}) {
   const [mode, setMode] = useState<Mode>("login");
   const [username, setUsername] = useState("");
   const [displayName, setDisplayName] = useState("");
@@ -28,6 +39,11 @@ export default function AuthScreen({ bannedNote }: { bannedNote?: string }) {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  /** Фото профиля и баннер — можно загрузить прямо при регистрации. */
+  const [avatarFile, setAvatarFile] = useState<File | null>(null);
+  const [avatarPrev, setAvatarPrev] = useState<string | null>(null);
+  const [bannerFile, setBannerFile] = useState<File | null>(null);
+  const [bannerPrev, setBannerPrev] = useState<string | null>(null);
 
   /** Подсказка надёжности пароля при регистрации. */
   const strength = (() => {
@@ -57,10 +73,34 @@ export default function AuthScreen({ bannedNote }: { bannedNote?: string }) {
     }
     setLoading(true);
     try {
-      await api(`/api/auth/${mode}`, {
+      const d = await api<{
+        token?: string;
+        user?: { id: string; username: string; displayName: string; avatarUrl: string | null };
+      }>(`/api/auth/${mode}`, {
         method: "POST",
         body: JSON.stringify({ username, password, displayName }),
       });
+      // Мультиаккаунт: сохраняем аккаунт для быстрого переключения (до 5)
+      if (d.token && d.user) {
+        saveAccount({
+          userId: d.user.id,
+          username: d.user.username,
+          displayName: d.user.displayName,
+          avatarUrl: d.user.avatarUrl,
+          token: d.token,
+        });
+      }
+      // Фото и баннер загружаем сразу после создания аккаунта
+      if (mode === "register" && (avatarFile || bannerFile)) {
+        try {
+          const patch: { avatarUrl?: string; bannerUrl?: string } = {};
+          if (avatarFile) patch.avatarUrl = await uploadFile(await compressImage(avatarFile, 512));
+          if (bannerFile) patch.bannerUrl = await uploadFile(await compressImage(bannerFile, 1280));
+          await api("/api/auth/me", { method: "PATCH", body: JSON.stringify(patch) });
+        } catch {
+          // аккаунт создан — картинки можно добавить позже в профиле
+        }
+      }
       window.location.reload();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Что-то пошло не так");
@@ -78,6 +118,15 @@ export default function AuthScreen({ bannedNote }: { bannedNote?: string }) {
       </div>
 
       <div className="relative z-10 grid w-full max-w-5xl overflow-hidden rounded-[2rem] border border-white/10 shadow-[0_40px_120px_-30px_rgba(0,0,0,0.9)] md:grid-cols-[1.15fr_1fr]">
+        {onClose && (
+          <button
+            onClick={onClose}
+            title="Вернуться в приложение"
+            className="absolute top-4 right-4 z-20 grid h-9 w-9 place-items-center rounded-full bg-white/10 text-white/70 transition-colors hover:bg-white/20 hover:text-white"
+          >
+            ✕
+          </button>
+        )}
         {/* Hero panel */}
         <div className="relative hidden flex-col justify-between overflow-hidden bg-gradient-to-br from-[#262930] via-[#1e2127] to-[#16181c] p-10 md:flex">
           <div className="absolute -top-24 -right-24 h-72 w-72 rounded-full bg-white/10 blur-[90px]" />
@@ -186,6 +235,55 @@ export default function AuthScreen({ bannedNote }: { bannedNote?: string }) {
                     className="w-full bg-transparent text-[15px] placeholder:text-white/30"
                   />
                 </label>
+              )}
+
+              {mode === "register" && (
+                <div className="flex items-center gap-3">
+                  {/* Фото профиля */}
+                  <label className="group relative h-16 w-16 shrink-0 cursor-pointer overflow-hidden rounded-full border border-dashed border-white/20 bg-white/[0.04] transition-colors hover:border-white/40" title="Фото профиля">
+                    {avatarPrev ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={avatarPrev} alt="Аватар" className="h-full w-full object-cover" />
+                    ) : (
+                      <span className="grid h-full w-full place-items-center text-white/35">
+                        <Camera className="h-5 w-5" />
+                      </span>
+                    )}
+                    <input
+                      type="file"
+                      accept="image/png,image/jpeg,image/webp"
+                      className="hidden"
+                      onChange={(e) => {
+                        const f = e.target.files?.[0] ?? null;
+                        setAvatarFile(f);
+                        setAvatarPrev(f ? URL.createObjectURL(f) : null);
+                        e.target.value = "";
+                      }}
+                    />
+                  </label>
+                  {/* Баннер */}
+                  <label className="group relative h-16 flex-1 cursor-pointer overflow-hidden rounded-2xl border border-dashed border-white/20 bg-white/[0.04] transition-colors hover:border-white/40" title="Баннер профиля">
+                    {bannerPrev ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={bannerPrev} alt="Баннер" className="h-full w-full object-cover" />
+                    ) : (
+                      <span className="flex h-full w-full items-center justify-center gap-2 text-[12px] text-white/35">
+                        <ImagePlus className="h-4 w-4" /> Баннер (необязательно)
+                      </span>
+                    )}
+                    <input
+                      type="file"
+                      accept="image/png,image/jpeg,image/webp"
+                      className="hidden"
+                      onChange={(e) => {
+                        const f = e.target.files?.[0] ?? null;
+                        setBannerFile(f);
+                        setBannerPrev(f ? URL.createObjectURL(f) : null);
+                        e.target.value = "";
+                      }}
+                    />
+                  </label>
+                </div>
               )}
 
               <label className="ring-focus flex items-center gap-3 rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3.5 transition-all">

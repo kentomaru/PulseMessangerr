@@ -55,6 +55,8 @@ export const users = pgTable("users", {
   bannedAt: timestamp("banned_at", { withTimezone: true }),
   /** Причина блокировки (видна заблокированному). */
   banReason: text("ban_reason"),
+  /** Аккаунт удалён админом: отображается как «Удалённый аккаунт». */
+  deletedAt: timestamp("deleted_at", { withTimezone: true }),
 });
 
 export type User = typeof users.$inferSelect;
@@ -67,6 +69,10 @@ export const sessions = pgTable(
     userId: uuid("user_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
+    /** User-Agent устройства (для «Устройств» в профиле). */
+    userAgent: text("user_agent"),
+    /** IP, с которого вошли. */
+    ip: text("ip"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
   },

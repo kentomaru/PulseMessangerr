@@ -1,10 +1,10 @@
 import { NextResponse } from "next/server";
 import { db } from "@/db";
 import { conversationMembers, conversations, gifts, messages, users } from "@/db/schema";
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { isUuid, withApi } from "@/lib/api-helpers";
 import { publicUser } from "@/lib/auth";
-import { GIFTS } from "@/lib/gifts";
+import { GIFTS, GIFT_LIMIT } from "@/lib/gifts";
 import { newInviteToken } from "@/lib/conversations";
 
 /**
@@ -71,6 +71,17 @@ export const POST = withApi("gifts:send", async ({ req, me }) => {
     return NextResponse.json({ error: "Подарки дарят участники с Pulse Premium" }, { status: 403 });
   const [recipient] = await db.select().from(users).where(eq(users.id, recipientId)).limit(1);
   if (!recipient) return NextResponse.json({ error: "Пользователь не найден" }, { status: 404 });
+
+  // Полка подарков не резиновая: максимум 50 на аккаунт
+  const [cnt] = await db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(gifts)
+    .where(eq(gifts.recipientId, recipientId));
+  if ((cnt?.n ?? 0) >= GIFT_LIMIT)
+    return NextResponse.json(
+      { error: `Полка подарков заполнена — максимум ${GIFT_LIMIT} подарков` },
+      { status: 409 },
+    );
 
   await db.insert(gifts).values({
     senderId: me.id,

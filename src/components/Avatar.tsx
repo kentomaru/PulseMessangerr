@@ -72,6 +72,21 @@ export default function Avatar({
             else setBroken(true);
           }}
         />
+      ) : name === "Удалённый аккаунт" ? (
+        // «Аватар призрака» — так выглядит удалённый админом аккаунт
+        <div
+          className="flex h-full w-full items-center justify-center rounded-full bg-gradient-to-br from-zinc-600 to-zinc-800 text-white/70 ring-1 ring-white/15"
+          title="Удалённый аккаунт"
+        >
+          <svg
+            viewBox="0 0 24 24"
+            fill="currentColor"
+            style={{ width: size * 0.55, height: size * 0.55 }}
+            aria-hidden="true"
+          >
+            <path d="M12 2a8 8 0 0 0-8 8v10l2.5-2 2.5 2 3-2.4 3 2.4 2.5-2 2.5 2V10a8 8 0 0 0-8-8Zm-3 9.5A1.5 1.5 0 1 1 10.5 10 1.5 1.5 0 0 1 9 11.5Zm6 0A1.5 1.5 0 1 1 16.5 10 1.5 1.5 0 0 1 15 11.5Z" />
+          </svg>
+        </div>
       ) : (
         <div
           className={`flex h-full w-full items-center justify-center rounded-full bg-gradient-to-br ${paletteFor(

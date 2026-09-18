@@ -5,9 +5,15 @@ import { Loader2, RefreshCw } from "lucide-react";
 
 /** Экран «подключаемся к базе»: показывается, если БД ещё поднимается (например, на Railway). */
 export default function DbConnecting() {
+  // Защита от вечного цикла перезагрузок: не больше 6 попыток подряд
+  const tries = Number(typeof window !== "undefined" ? sessionStorage.getItem("pm_db_tries") ?? "0" : "0");
+  const exhausted = tries >= 6;
   useEffect(() => {
+    if (exhausted) return;
+    sessionStorage.setItem("pm_db_tries", String(tries + 1));
     const t = setTimeout(() => window.location.reload(), 5_000);
     return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return (
@@ -23,8 +29,9 @@ export default function DbConnecting() {
         </div>
         <h1 className="font-display mt-6 text-xl font-bold">Подключаемся к базе данных</h1>
         <p className="mt-3 text-sm leading-relaxed text-white/50">
-          Сервер уже работает и ждёт, когда база данных ответит. Это занимает несколько секунд
-          после запуска — страница обновится автоматически.
+          {exhausted
+            ? "База данных так и не ответила. Попробуйте обновить страницу позже или написать администратору."
+            : "Сервер уже работает и ждёт, когда база данных ответит. Это занимает несколько секунд после запуска — страница обновится автоматически."}
         </p>
         <button
           onClick={() => window.location.reload()}

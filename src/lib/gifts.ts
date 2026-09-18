@@ -553,6 +553,9 @@ export const GIFTS: Gift[] = [
   },
 ];
 
+/** Лимит подарков на одну витрину (как в ТГ: полка не резиновая). */
+export const GIFT_LIMIT = 50;
+
 export function findGift(key: string): Gift | undefined {
   return GIFTS.find((g) => g.key === key);
 }

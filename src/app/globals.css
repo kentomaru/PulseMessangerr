@@ -94,6 +94,10 @@ button.hover\:scale-\[1\.02\]:active:not(:disabled) {
 .nav-item { transition: transform 0.16s ease, background-color 0.16s ease, color 0.16s ease; }
 .nav-item:hover { transform: translateX(3px); }
 
+/* Строки чатов в сайдбаре: лёгкий сдвиг при наведении */
+.conv-row { transition: transform 0.15s ease, background-color 0.15s ease; }
+.conv-row:hover { transform: translateX(3px); }
+
 /* Индикатор звонка: расходящееся кольцо */
 @keyframes pm-ring-pulse {
   0% { box-shadow: 0 0 0 0 rgba(74, 222, 128, 0.55); }

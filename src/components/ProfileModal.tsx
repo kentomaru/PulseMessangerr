@@ -12,7 +12,9 @@ import {
   ImageIcon,
   Loader2,
   Link2,
+  Lock,
   LogOut,
+  Monitor,
   MessageSquareLock,
   Palette,
   PhoneOff,
@@ -31,6 +33,8 @@ import { api, copyToClipboard, uploadFile } from "@/lib/api";
 import { findGift, type GiftItem } from "@/lib/gifts";
 import NftFigure from "./NftFigure";
 import GiftsPanel from "./GiftsPanel";
+import SessionsModal from "./SessionsModal";
+import { PinSetupModal, hasPin } from "./PinLock";
 import GiftDetailModal from "./GiftDetailModal";
 import { compressImage } from "@/lib/images";
 import { BANNER_PRESETS, bannerStyle, isFileBanner } from "@/lib/wallpapers";
@@ -57,6 +61,8 @@ type Props = {
   soundOn?: boolean;
   callSoundOn?: boolean;
   notifyOn?: boolean;
+  /** Тост-уведомления (для вложенных окон вроде «Устройств»). */
+  notify?: (m: string) => void;
   onToggleSound?: () => void;
   onToggleCallSound?: () => void;
   onToggleNotify?: () => void;
@@ -78,6 +84,7 @@ export default function ProfileModal({
   soundOn = true,
   callSoundOn = true,
   notifyOn = false,
+  notify = () => {},
   onToggleSound,
   onToggleCallSound,
   onToggleNotify,
@@ -95,6 +102,11 @@ export default function ProfileModal({
   /** Тап по своему подарку — детали открываются мгновенно, без запросов. */
   const [giftDetail, setGiftDetail] = useState<GiftItem | null>(null);
   const [giftsPanelOpen, setGiftsPanelOpen] = useState(false);
+  /** «Устройства»: активные сессии аккаунта. */
+  const [devicesOpen, setDevicesOpen] = useState(false);
+  const [pinOpen, setPinOpen] = useState(false);
+  const [pinOn, setPinOn] = useState(false);
+  useEffect(() => setPinOn(hasPin()), [pinOpen]);
   /** Id этого окна в стеке — для корректного каскада Esc. */
   const shellIdRef = useRef(Symbol("profile-modal"));
   const shellId = shellIdRef.current;
@@ -421,6 +433,20 @@ export default function ProfileModal({
           <FriendsTab me={me} />
         ) : tab === "privacy" ? (
           <>
+            <button
+              onClick={() => setPinOpen(true)}
+              className="flex w-full items-center gap-3 rounded-2xl border border-white/8 bg-white/[0.03] px-3.5 py-3 text-left transition-colors hover:bg-white/[0.06]"
+              title="Защитить вход в приложение 4-значным кодом"
+            >
+              <Lock className="h-4.5 w-4.5 shrink-0 text-indigo-300" />
+              <span className="min-w-0 flex-1">
+                <span className="block text-[13px] font-semibold">PIN-код приложения</span>
+                <span className="block text-[11px] text-white/35">
+                  {pinOn ? "Включён — нажмите, чтобы сменить или отключить" : "Замок на вход, как в ТГ"}
+                </span>
+              </span>
+              <span className={`h-2 w-2 shrink-0 rounded-full ${pinOn ? "bg-emerald-400" : "bg-white/15"}`} />
+            </button>
             <p className="text-xs leading-relaxed text-white/35">
               Эти настройки применяются сразу после сохранения и действуют на всех, кто пытается
               найти вас в Pulse.
@@ -765,6 +791,15 @@ export default function ProfileModal({
           Сохранить
         </button>
 
+        <button
+          onClick={() => setDevicesOpen(true)}
+          className="glass flex w-full items-center justify-center gap-2 rounded-2xl py-3 text-sm font-medium text-white/70 transition-colors hover:text-white"
+          title="Активные сессии и устройства"
+        >
+          <Monitor className="h-4 w-4" />
+          Устройства и сессии
+        </button>
+
         <div className="flex gap-2.5">
           <button
             onClick={() => void logoutAll()}
@@ -797,6 +832,13 @@ export default function ProfileModal({
         )}
       </div>
     </ModalShell>
+
+      {pinOpen && (
+        <PinSetupModal onClose={() => setPinOpen(false)} notify={notify} />
+      )}
+
+      {/* Устройства: активные сессии */}
+      {devicesOpen && <SessionsModal onClose={() => setDevicesOpen(false)} notify={notify} />}
 
       {/* Плашка подарков — отдельное окно с листанием */}
       {giftsPanelOpen && myGifts && (

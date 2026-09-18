@@ -6,7 +6,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { ModalShell } from "./ProfileModal";
 import GiftDetailModal from "./GiftDetailModal";
 import NftFigure from "./NftFigure";
-import { findGift, type GiftItem } from "@/lib/gifts";
+import { findGift, GIFT_LIMIT, type GiftItem } from "@/lib/gifts";
 
 /**
  * Отдельная плашка подарков: окно с листанием по страницам (как альбом),
@@ -50,7 +50,7 @@ export default function GiftsPanel({
       <div className="p-6">
         <div className="flex items-center justify-between pb-4">
           <p className="font-display flex items-center gap-2 text-lg font-bold">
-            <Gift className="h-5 w-5 text-amber-300" /> {title} · {sorted.length}
+            <Gift className="h-5 w-5 text-amber-300" /> {title} · {sorted.length}{canPin ? ` / ${GIFT_LIMIT}` : ""}
           </p>
           <button onClick={onClose} className="rounded-full bg-white/10 p-1.5 text-white/70">
             <X className="h-4 w-4" />

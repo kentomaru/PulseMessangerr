@@ -19,6 +19,8 @@ import StoryComposer from "./StoryComposer";
 import StoryViewer from "./StoryViewer";
 import GroupCreateModal from "./GroupCreateModal";
 import AdminPanel from "./AdminPanel";
+import AuthScreen from "./AuthScreen";
+import { hasPin, PinGate } from "./PinLock";
 import RouletteModal from "./RouletteModal";
 import GroupInfoModal from "./GroupInfoModal";
 import DiscoverModal from "./DiscoverModal";
@@ -85,6 +87,17 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
   const [rouletteOpen, setRouletteOpen] = useState(false);
   /** Админка: панель управления пользователями/банами. */
   const [adminOpen, setAdminOpen] = useState(false);
+  /** Мультиаккаунт: экран входа для добавления аккаунта. */
+  const [addAccountOpen, setAddAccountOpen] = useState(false);
+  /** PIN-замок: пока не введён код, приложение не показываем. */
+  const [pinLocked, setPinLocked] = useState(false);
+  useEffect(() => {
+    try {
+      setPinLocked(hasPin() && sessionStorage.getItem("pulse_unlocked") !== "1");
+    } catch {
+      setPinLocked(false);
+    }
+  }, []);
   const [viewUser, setViewUser] = useState<PublicUser | null>(null);
   const [storyComposer, setStoryComposer] = useState(false);
   const [storyViewer, setStoryViewer] = useState<number | null>(null);
@@ -167,7 +180,7 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
     void loadStories();
     const t = setInterval(loadConversations, 4000);
     const ts = setInterval(loadStories, 30_000);
-    return () => {
+  return () => {
       clearInterval(t);
       clearInterval(ts);
     };
@@ -799,6 +812,11 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
     });
   };
 
+  // PIN-замок: до ввода кода приложение не показывается
+  if (pinLocked) {
+    return <PinGate onUnlock={() => setPinLocked(false)} />;
+  }
+
   return (
     <main
       className="relative z-10 flex h-dvh overflow-hidden"
@@ -845,6 +863,7 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
           onOpenProfile={() => setShowProfile(true)}
           onRoulette={() => setRouletteOpen(true)}
           onOpenAdmin={me.isAdmin ? () => setAdminOpen(true) : undefined}
+          onAddAccount={() => setAddAccountOpen(true)}
           onOpenChat={openConversationWith}
           onLogout={logout}
           onOpenStories={(idx) => setStoryViewer(idx)}
@@ -975,6 +994,7 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
             soundOn={soundOn}
             callSoundOn={callSoundOn}
             notifyOn={notifyOn}
+            notify={notify}
             onToggleSound={toggleSound}
             onToggleCallSound={toggleCallSound}
             onToggleNotify={toggleNotify}
@@ -1024,6 +1044,13 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
         )}
         {rouletteOpen && <RouletteModal onClose={() => setRouletteOpen(false)} />}
         {adminOpen && <AdminPanel onClose={() => setAdminOpen(false)} notify={notify} />}
+        {addAccountOpen && (
+          <div className="fixed inset-0 z-[105] overflow-y-auto bg-black/80 backdrop-blur-sm">
+            <div className="grid min-h-full place-items-center p-4">
+              <AuthScreen onClose={() => setAddAccountOpen(false)} />
+            </div>
+          </div>
+        )}
         {discover && (
           <DiscoverModal
             key="discover"

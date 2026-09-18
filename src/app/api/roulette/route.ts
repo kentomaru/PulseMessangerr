@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
 import { db } from "@/db";
 import { gifts, users } from "@/db/schema";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { withApi } from "@/lib/api-helpers";
-import { GIFTS, NFT_VARIANTS } from "@/lib/gifts";
+import { GIFTS, NFT_VARIANTS, GIFT_LIMIT } from "@/lib/gifts";
 
 /** Кулдаун рулетки — 24 часа. Таймер хранится НА СЕРВЕРЕ (как у ГС):
  *  перезагрузка страницы его не сбрасывает. */
@@ -60,6 +60,17 @@ export const POST = withApi("roulette:spin", async ({ me }) => {
       { status: 409 },
     );
   }
+
+  // Полка подарков не резиновая: максимум 50 на аккаунт
+  const [cnt] = await db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(gifts)
+    .where(eq(gifts.recipientId, me.id));
+  if ((cnt?.n ?? 0) >= GIFT_LIMIT)
+    return NextResponse.json(
+      { error: `Полка подарков заполнена — максимум ${GIFT_LIMIT} подарков` },
+      { status: 409 },
+    );
 
   // Взвешенный выбор приза
   let roll = Math.random() * TOTAL_W;

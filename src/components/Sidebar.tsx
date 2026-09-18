@@ -10,6 +10,7 @@ import {
   Bookmark,
   Check,
   CheckCheck,
+  ChevronDown,
   Compass,
   ShieldCheck,
   Hash,
@@ -39,6 +40,7 @@ import {
   VolumeX,
 } from "lucide-react";
 import Avatar from "./Avatar";
+import { getAccounts, removeAccount, MAX_ACCOUNTS, type SavedAccount } from "@/lib/accounts";
 import PreviewLabel from "./PreviewLabel";
 import StatusEmoji from "./StatusEmoji";
 import StoriesRow from "./StoriesRow";
@@ -94,6 +96,8 @@ type Props = {
   onRoulette: () => void;
   /** Открыть админку (только для администраторов платформы). */
   onOpenAdmin?: () => void;
+  /** Добавить аккаунт (мультиаккаунт, до 5). */
+  onAddAccount?: () => void;
   /** Включить/выключить звук уведомлений. */
   onToggleSound: () => void;
   /** Включить/выключить звук входящего звонка. */
@@ -235,6 +239,7 @@ export default function Sidebar({
   onOpenSaved,
   onRoulette,
   onOpenAdmin,
+  onAddAccount,
   onToggleSound,
   onToggleCallSound,
   onToggleNotify,
@@ -444,6 +449,27 @@ export default function Sidebar({
   );
   const unpinnedDms = useMemo(() => dms.filter((c) => !pinnedIds.has(c.id)), [dms, pinnedIds]);
 
+  // Мультиаккаунт: список сохранённых аккаунтов + переключение по токену
+  const [accOpen, setAccOpen] = useState(false);
+  const [accList, setAccList] = useState<SavedAccount[]>([]);
+  useEffect(() => {
+    if (accOpen) setAccList(getAccounts());
+  }, [accOpen]);
+  const switchAccount = async (acc: SavedAccount) => {
+    if (acc.userId === me.id) {
+      setAccOpen(false);
+      return;
+    }
+    try {
+      await api("/api/auth/use-token", { method: "POST", body: JSON.stringify({ token: acc.token }) });
+      window.location.reload();
+    } catch {
+      // токен протух/снесён — убираем из списка
+      removeAccount(acc.userId);
+      setAccList(getAccounts());
+    }
+  };
+
   const linkToken = extractToken(query);
 
   return (
@@ -458,14 +484,76 @@ export default function Sidebar({
             <span className="text-gradient font-display text-lg font-bold tracking-[0.18em]">PULSE</span>
             <Sparkles className="h-3.5 w-3.5 text-slate-400/90" />
           </div>
-          <button
-            onClick={onOpenProfile}
-            className="flex max-w-full items-center gap-1.5 text-left text-xs text-white/40 transition-colors hover:text-white/70"
-            title="Открыть профиль"
-          >
-            <span className="truncate">@{me.username}</span>
-            {me.statusEmoji && <StatusEmoji value={me.statusEmoji} size={16} />}
-          </button>
+          <div className="flex max-w-full items-center gap-1">
+            <button
+              onClick={onOpenProfile}
+              className="flex min-w-0 items-center gap-1.5 text-left text-xs text-white/40 transition-colors hover:text-white/70"
+              title="Открыть профиль"
+            >
+              <span className="truncate">@{me.username}</span>
+              {me.statusEmoji && <StatusEmoji value={me.statusEmoji} size={16} />}
+            </button>
+            <div className="relative">
+              <button
+                onClick={() => setAccOpen((v) => !v)}
+                title="Аккаунты — переключение и добавление"
+                className={`grid h-5 w-5 place-items-center rounded-md text-white/35 transition-colors hover:bg-white/10 hover:text-white/70 ${accOpen ? "bg-white/10 text-white/70" : ""}`}
+              >
+                <ChevronDown className={`h-3.5 w-3.5 transition-transform ${accOpen ? "rotate-180" : ""}`} />
+              </button>
+              <AnimatePresence>
+                {accOpen && (
+                  <motion.div
+                    key="acc-menu"
+                    initial={{ opacity: 0, y: -6, scale: 0.96 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, y: -4, scale: 0.97 }}
+                    className="glass-strong absolute left-0 z-40 mt-2 w-64 overflow-hidden rounded-2xl p-1.5 shadow-2xl"
+                  >
+                    <p className="px-2.5 pt-1.5 pb-1 text-[10px] font-semibold tracking-wide text-white/35 uppercase">
+                      Аккаунты · {accList.length}/{MAX_ACCOUNTS}
+                    </p>
+                    {accList.map((a) => (
+                      <div key={a.userId} className="group/acc flex items-center gap-2 rounded-xl px-2 py-1.5 hover:bg-white/8">
+                        <button onClick={() => void switchAccount(a)} className="flex min-w-0 flex-1 items-center gap-2.5 text-left" title={`Переключиться на @${a.username}`}>
+                          <Avatar name={a.displayName} src={a.avatarUrl} size={30} />
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate text-[13px] font-medium">{a.displayName}</span>
+                            <span className="block truncate text-[11px] text-white/40">@{a.username}</span>
+                          </span>
+                          {a.userId === me.id && <span className="h-2 w-2 shrink-0 rounded-full bg-emerald-400" title="Текущий аккаунт" />}
+                        </button>
+                        {a.userId !== me.id && (
+                          <button
+                            onClick={() => {
+                              removeAccount(a.userId);
+                              setAccList(getAccounts());
+                            }}
+                            title="Убрать из списка"
+                            className="grid h-6 w-6 shrink-0 place-items-center rounded-lg text-white/30 opacity-0 transition-opacity hover:bg-rose-500/20 hover:text-rose-300 group-hover/acc:opacity-100"
+                          >
+                            ✕
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                    <button
+                      onClick={() => {
+                        setAccOpen(false);
+                        onAddAccount?.();
+                      }}
+                      disabled={!onAddAccount || accList.length >= MAX_ACCOUNTS}
+                      className="mt-1 flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left text-[13px] text-indigo-300 transition-colors hover:bg-white/8 disabled:opacity-40"
+                      title={accList.length >= MAX_ACCOUNTS ? `Максимум ${MAX_ACCOUNTS} аккаунтов` : "Войти в ещё один аккаунт"}
+                    >
+                      <Plus className="h-4 w-4" />
+                      {accList.length >= MAX_ACCOUNTS ? `Максимум ${MAX_ACCOUNTS} аккаунтов` : "Добавить аккаунт"}
+                    </button>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+          </div>
         </div>
 
         <div ref={createRef} className="relative">
@@ -936,7 +1024,7 @@ function ConvRow({
           onSelect(conv.id);
         }
       }}
-      className={`group/row relative flex w-full cursor-pointer items-center gap-3 rounded-2xl px-3 text-left transition-colors ${compact ? "py-1.5" : "py-3"} ${
+      className={`conv-row group/row relative flex w-full cursor-pointer items-center gap-3 rounded-2xl px-3 text-left transition-colors ${compact ? "py-1.5" : "py-3"} ${
         active
           ? "bg-white/10"
           : "hover:bg-white/5"

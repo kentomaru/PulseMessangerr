@@ -25,6 +25,7 @@ export const GET = withApi("admin/users", async ({ req, me }) => {
       isAdmin: users.isAdmin,
       bannedAt: users.bannedAt,
       banReason: users.banReason,
+      deletedAt: users.deletedAt,
       createdAt: users.createdAt,
       lastSeenAt: users.lastSeenAt,
     })
@@ -37,6 +38,7 @@ export const GET = withApi("admin/users", async ({ req, me }) => {
     users: rows.map((r) => ({
       ...r,
       bannedAt: r.bannedAt ? new Date(r.bannedAt).toISOString() : null,
+      deletedAt: r.deletedAt ? new Date(r.deletedAt).toISOString() : null,
       createdAt: new Date(r.createdAt).toISOString(),
       lastSeenAt: r.lastSeenAt ? new Date(r.lastSeenAt).toISOString() : null,
     })),

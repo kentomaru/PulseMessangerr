@@ -38,6 +38,9 @@ export const POST = withPublicApi("auth/login", async ({ req, log }) => {
     );
   }
 
-  await createSession(user.id);
-  return NextResponse.json({ user: publicUser(user) });
+  const token = await createSession(user.id, {
+    userAgent: req.headers.get("user-agent"),
+    ip,
+  });
+  return NextResponse.json({ user: publicUser(user), token });
 });
