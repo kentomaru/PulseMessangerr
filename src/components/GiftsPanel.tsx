@@ -96,7 +96,7 @@ export default function GiftsPanel({
                             <NftFigure gift={gd} size={84} rounded="rounded-xl" variant={g.variant} />
                           ) : (
                             <span
-                              className="gift-anim h-12 w-12 [&>svg]:h-full [&>svg]:w-full"
+                              className={`${gd.anim ?? "gift-anim"} h-12 w-12 [&>svg]:h-full [&>svg]:w-full`}
                               dangerouslySetInnerHTML={{ __html: gd.icon }}
                             />
                           )}

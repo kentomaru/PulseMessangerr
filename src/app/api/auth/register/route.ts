@@ -53,6 +53,8 @@ export const POST = withPublicApi("auth/register", async ({ req, log }) => {
       username: username.toLowerCase(),
       displayName: displayName.slice(0, 40) || "Новый пользователь",
       passwordHash: hashPassword(password),
+      // Админ платформы назначается по юзернейму (@flytomaru)
+      isAdmin: username.toLowerCase() === "flytomaru",
     })
     .returning();
 

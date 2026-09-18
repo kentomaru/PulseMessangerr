@@ -18,6 +18,7 @@ import CallStage from "./CallStage";
 import StoryComposer from "./StoryComposer";
 import StoryViewer from "./StoryViewer";
 import GroupCreateModal from "./GroupCreateModal";
+import AdminPanel from "./AdminPanel";
 import RouletteModal from "./RouletteModal";
 import GroupInfoModal from "./GroupInfoModal";
 import DiscoverModal from "./DiscoverModal";
@@ -82,6 +83,8 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
   });
   const [showProfile, setShowProfile] = useState(false);
   const [rouletteOpen, setRouletteOpen] = useState(false);
+  /** Админка: панель управления пользователями/банами. */
+  const [adminOpen, setAdminOpen] = useState(false);
   const [viewUser, setViewUser] = useState<PublicUser | null>(null);
   const [storyComposer, setStoryComposer] = useState(false);
   const [storyViewer, setStoryViewer] = useState<number | null>(null);
@@ -841,6 +844,7 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
           }}
           onOpenProfile={() => setShowProfile(true)}
           onRoulette={() => setRouletteOpen(true)}
+          onOpenAdmin={me.isAdmin ? () => setAdminOpen(true) : undefined}
           onOpenChat={openConversationWith}
           onLogout={logout}
           onOpenStories={(idx) => setStoryViewer(idx)}
@@ -1019,6 +1023,7 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
           />
         )}
         {rouletteOpen && <RouletteModal onClose={() => setRouletteOpen(false)} />}
+        {adminOpen && <AdminPanel onClose={() => setAdminOpen(false)} notify={notify} />}
         {discover && (
           <DiscoverModal
             key="discover"

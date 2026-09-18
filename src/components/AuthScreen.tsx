@@ -19,7 +19,7 @@ import { api } from "@/lib/api";
 
 type Mode = "login" | "register";
 
-export default function AuthScreen() {
+export default function AuthScreen({ bannedNote }: { bannedNote?: string }) {
   const [mode, setMode] = useState<Mode>("login");
   const [username, setUsername] = useState("");
   const [displayName, setDisplayName] = useState("");
@@ -91,6 +91,15 @@ export default function AuthScreen() {
           </div>
 
           <div className="relative">
+            {bannedNote && (
+              <div className="mb-4 flex items-start gap-3 rounded-2xl border border-rose-400/30 bg-rose-500/10 px-4 py-3 text-[13px] text-rose-200">
+                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                <span>
+                  <b>Аккаунт заблокирован.</b> Причина: {bannedNote}. Если вы считаете это
+                  ошибкой — обратитесь к администрации.
+                </span>
+              </div>
+            )}
             <h1 className="font-display text-[2.6rem] leading-[1.05] font-bold text-white">
               Общайтесь.
               <br />

@@ -29,6 +29,14 @@ export const POST = withPublicApi("auth/login", async ({ req, log }) => {
     log.warn("Неудачный вход", { username });
     return NextResponse.json({ error: "Неверное имя пользователя или пароль" }, { status: 401 });
   }
+  // Блокировка администратором: вход закрыт, причина показывается
+  if (user.bannedAt) {
+    log.warn("Вход заблокированного аккаунта", { username });
+    return NextResponse.json(
+      { error: `Аккаунт заблокирован администратором. Причина: ${user.banReason || "не указана"}` },
+      { status: 403 },
+    );
+  }
 
   await createSession(user.id);
   return NextResponse.json({ user: publicUser(user) });

@@ -11,6 +11,7 @@ import {
   Check,
   CheckCheck,
   Compass,
+  ShieldCheck,
   Hash,
   Loader2,
   Lock,
@@ -91,6 +92,8 @@ type Props = {
   onOpenSaved: () => void;
   /** Открыть рулетку NFT. */
   onRoulette: () => void;
+  /** Открыть админку (только для администраторов платформы). */
+  onOpenAdmin?: () => void;
   /** Включить/выключить звук уведомлений. */
   onToggleSound: () => void;
   /** Включить/выключить звук входящего звонка. */
@@ -231,6 +234,7 @@ export default function Sidebar({
   onOpenMessage,
   onOpenSaved,
   onRoulette,
+  onOpenAdmin,
   onToggleSound,
   onToggleCallSound,
   onToggleNotify,
@@ -508,6 +512,17 @@ export default function Sidebar({
                     onDiscover();
                   }}
                 />
+                {onOpenAdmin && (
+                  <CreateItem
+                    icon={<ShieldCheck className="h-4 w-4 text-indigo-300" />}
+                    title="Админка"
+                    hint="Баны и управление"
+                    onClick={() => {
+                      setCreateOpen(false);
+                      onOpenAdmin();
+                    }}
+                  />
+                )}
               </motion.div>
             )}
           </AnimatePresence>

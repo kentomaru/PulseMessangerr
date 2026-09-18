@@ -442,7 +442,7 @@ export default function UserCardModal({ user, onClose, onMessage, myId }: Props)
   );
 }
 
-/** Выбор подарка: сетка как в ТГ, звёзды у Premium бесконечные. */
+/** Выбор подарков: сетка как в ТГ; можно выбрать несколько сразу. */
 function GiftPicker({
   userId,
   name,
@@ -454,15 +454,19 @@ function GiftPicker({
   onClose: () => void;
   onSent: () => void;
 }) {
+  const MAX_PICK = 10;
   const [mePremium, setMePremium] = useState<boolean | null>(null);
-  const [picked, setPicked] = useState<string | null>(null);
+  /** Выбранные подарки (ключи) — можно несколько сразу, как в ТГ. */
+  const [picked, setPicked] = useState<string[]>([]);
+  const [step2, setStep2] = useState(false);
   const [message, setMessage] = useState("");
   /** «Скрыть моё имя» — как в ТГ, получатель увидит «Аноним». */
   const [hideName, setHideName] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  /** Расцветка выбранного NFT: 0–4 или «случайная». */
+  /** Расцветка NFT-подарков: 0–4 или «случайная». */
   const [variantChoice, setVariantChoice] = useState<number | "random">(0);
+
   useEffect(() => {
     let alive = true;
     api<{ user?: { premium?: boolean }; premium?: boolean }>("/api/auth/me")
@@ -472,35 +476,54 @@ function GiftPicker({
       alive = false;
     };
   }, []);
-  const gift = picked ? GIFTS.find((g) => g.key === picked) ?? null : null;
 
-  // Esc: сначала назад к каталогу, потом — закрыть окно
+  const selected = picked
+    .map((k) => GIFTS.find((g) => g.key === k))
+    .filter((g): g is NonNullable<ReturnType<typeof findGift>> => !!g);
+  const totalPrice = selected.reduce((s, g) => s + g.price, 0);
+  const hasNft = selected.some((g) => g.nft && g.img);
+
+  const toggle = (key: string) => {
+    setError(null);
+    setPicked((cur) => {
+      if (cur.includes(key)) return cur.filter((k) => k !== key);
+      if (cur.length >= MAX_PICK) {
+        setError(`Не больше ${MAX_PICK} подарков за раз`);
+        return cur;
+      }
+      return [...cur, key];
+    });
+  };
+
+  // Esc: сначала назад к каталогу (сброс шага), потом — закрыть окно
   useEffect(() => {
     const h = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
       e.stopImmediatePropagation();
-      if (picked) setPicked(null);
+      if (step2) setStep2(false);
       else onClose();
     };
     window.addEventListener("keydown", h, true);
     return () => window.removeEventListener("keydown", h, true);
-  }, [picked, onClose]);
+  }, [step2, onClose]);
 
   const send = async () => {
-    if (!gift || busy) return;
+    if (selected.length === 0 || busy) return;
     setBusy(true);
     setError(null);
     try {
-      await api("/api/gifts", {
-        method: "POST",
-        body: JSON.stringify({
-          recipientId: userId,
-          giftKey: gift.key,
-          message,
-          hideSender: hideName,
-          variant: gift.nft ? (variantChoice === "random" ? -1 : variantChoice) : 0,
-        }),
-      });
+      for (const g of selected) {
+        await api("/api/gifts", {
+          method: "POST",
+          body: JSON.stringify({
+            recipientId: userId,
+            giftKey: g.key,
+            message,
+            hideSender: hideName,
+            variant: g.nft ? (variantChoice === "random" ? -1 : variantChoice) : 0,
+          }),
+        });
+      }
       onSent();
       onClose();
     } catch (e) {
@@ -516,40 +539,57 @@ function GiftPicker({
         onClick={(e) => e.stopPropagation()}
         className="glass-strong nice-scroll max-h-[85vh] w-full max-w-md overflow-y-auto rounded-[1.6rem] p-5 shadow-2xl"
       >
-        {/* ── Шаг 2: подтверждение подарка (как в ТГ — большой подарок, подпись, имя) ── */}
-        {gift ? (
+        {/* ── Шаг 2: подтверждение (подпись, имя, отправка всех выбранных) ── */}
+        {step2 && selected.length > 0 ? (
           <>
             <div className="mb-3 flex items-center gap-2">
               <button
-                onClick={() => setPicked(null)}
+                onClick={() => setStep2(false)}
                 title="Назад к каталогу"
                 className="rounded-full bg-white/10 p-1.5 text-white/70 transition-colors hover:bg-white/15"
               >
                 <ArrowLeft className="h-4 w-4" />
               </button>
-              <p className="font-display flex-1 text-lg font-bold">Подарить «{gift.name}»</p>
+              <p className="font-display flex-1 text-lg font-bold">
+                {selected.length === 1 ? `Подарить «${selected[0].name}»` : `Подарить ${selected.length} подарков`}
+              </p>
               <button onClick={onClose} className="rounded-full bg-white/10 p-1.5 text-white/70">
                 <X className="h-4 w-4" />
               </button>
             </div>
-            <div className={`gift-shine relative mx-auto grid aspect-square w-44 place-items-center overflow-hidden rounded-3xl border ${gift.nft ? "border-amber-300/50" : "border-white/10"} bg-gradient-to-br ${gift.bg}`}>
-              {gift.img ? (
-                <NftFigure gift={gift} size={168} rounded="rounded-2xl" variant={variantChoice === "random" ? undefined : variantChoice} />
-              ) : (
+
+            {/* Лента выбранных подарков: тап по крестику убирает */}
+            <div className="nice-scroll mb-2 flex gap-2 overflow-x-auto pb-1">
+              {selected.map((g) => (
                 <span
-                  className="gift-anim h-24 w-24 [&>svg]:h-full [&>svg]:w-full"
-                  dangerouslySetInnerHTML={{ __html: gift.icon }}
-                />
-              )}
+                  key={g.key}
+                  className={`gift-pop relative grid h-16 w-16 shrink-0 place-items-center overflow-hidden rounded-2xl border bg-gradient-to-br ${
+                    g.nft ? "border-amber-300/50" : "border-white/10"
+                  } ${g.bg}`}
+                >
+                  {g.img ? (
+                    <NftFigure gift={g} size={60} rounded="rounded-xl" variant={variantChoice === "random" ? undefined : variantChoice} />
+                  ) : (
+                    <span className={`${g.anim ?? "gift-anim"} h-10 w-10 [&>svg]:h-full [&>svg]:w-full`} dangerouslySetInnerHTML={{ __html: g.icon }} />
+                  )}
+                  <button
+                    onClick={() => {
+                      toggle(g.key);
+                      if (selected.length <= 1) setStep2(false);
+                    }}
+                    title="Убрать из выбора"
+                    className="absolute top-0.5 right-0.5 grid h-4 w-4 place-items-center rounded-full bg-black/70 text-white/80 hover:text-white"
+                  >
+                    <X className="h-2.5 w-2.5" />
+                  </button>
+                </span>
+              ))}
             </div>
-            <p className="pt-3 text-center text-[15px] font-semibold">{gift.name}</p>
-            <p className="flex items-center justify-center gap-1 pt-0.5 text-[12px] font-bold text-amber-300">
-              <Star className="h-3 w-3" /> {gift.price} звёзд
-            </p>
-            {gift.nft && gift.img && (
-              <div className="mt-3 rounded-2xl border border-white/8 bg-white/[0.03] p-3">
+
+            {hasNft && (
+              <div className="rounded-2xl border border-white/8 bg-white/[0.03] p-3">
                 <p className="pb-2 text-[11px] font-semibold tracking-wide text-white/40 uppercase">
-                  Расцветка · {NFT_VARIANTS.length} вариантов
+                  Расцветка NFT · {NFT_VARIANTS.length} вариантов
                 </p>
                 <div className="flex items-center gap-1.5">
                   {NFT_VARIANTS.map((v, i) => (
@@ -564,7 +604,12 @@ function GiftPicker({
                       }`}
                     >
                       {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img src={gift.img} alt={v.name} className="h-9 w-9 rounded-lg object-cover" style={{ filter: v.filter }} />
+                      <img
+                        src={selected.find((g) => g.nft && g.img)?.img}
+                        alt={v.name}
+                        className="h-9 w-9 rounded-lg object-cover"
+                        style={{ filter: v.filter }}
+                      />
                     </button>
                   ))}
                   <button
@@ -579,19 +624,15 @@ function GiftPicker({
                     <Dices className="h-3.5 w-3.5" /> Рандом
                   </button>
                 </div>
-                <p className="pt-1.5 text-[11px] text-white/35">
-                  {variantChoice === "random"
-                    ? "Расцветка выпадет случайно при отправке"
-                    : `Выбрано: ${NFT_VARIANTS[variantChoice as number].name}`}
-                </p>
               </div>
             )}
+
             <textarea
               value={message}
               onChange={(e) => setMessage(e.target.value)}
               maxLength={140}
               rows={2}
-              placeholder="Сообщение к подарку (необязательно)…"
+              placeholder="Сообщение к подаркам (необязательно)…"
               className="ring-focus mt-3 w-full resize-none rounded-xl border border-white/10 bg-white/[0.05] px-3 py-2.5 text-sm"
             />
             <button
@@ -608,7 +649,7 @@ function GiftPicker({
               </span>
               <span className="min-w-0 flex-1">
                 <span className="block text-[13px] font-medium">Скрыть моё имя</span>
-                <span className="block text-[11px] text-white/35">{name} увидит подарок от «Анонима»</span>
+                <span className="block text-[11px] text-white/35">{name} увидит подарки от «Анонима»</span>
               </span>
             </button>
             {error && <p className="pt-2 text-[12px] text-rose-300">{error}</p>}
@@ -624,11 +665,13 @@ function GiftPicker({
               className="btn-gradient mt-3 flex w-full items-center justify-center gap-2 rounded-2xl py-3 text-sm font-semibold text-white disabled:opacity-40"
             >
               {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Gift className="h-4 w-4" />}
-              Подарить за {gift.price} звёзд
+              {selected.length === 1
+                ? `Подарить за ${totalPrice} звёзд`
+                : `Подарить ${selected.length} шт за ${totalPrice} звёзд`}
             </button>
           </>
         ) : (
-          /* ── Шаг 1: каталог подарков ── */
+          /* ── Шаг 1: каталог — можно выбрать несколько подарков ── */
           <>
             <div className="mb-3 flex items-center justify-between">
               <p className="font-display text-lg font-bold">Подарок для {name}</p>
@@ -644,43 +687,66 @@ function GiftPicker({
               <span className="font-bold text-amber-300">{mePremium ? "∞ · Premium" : "0 · нужен Premium"}</span>
             </div>
             <div className="grid grid-cols-4 gap-2">
-              {GIFTS.map((g) => (
-                <button
-                  key={g.key}
-                  onClick={() => {
-                    setPicked(g.key);
-                    setVariantChoice(0);
-                  }}
-                  title={`${g.name} · ${g.price} звёзд${g.nft ? " · NFT" : ""}`}
-                  className={`relative flex flex-col items-center gap-1 rounded-2xl border p-2.5 transition-all hover:bg-white/8 ${
-                    g.nft ? "border-amber-300/40 hover:border-amber-300/70" : "border-white/10 hover:border-amber-300/50"
-                  } bg-white/[0.03]`}
-                >
-                  {(g.nft || g.live) && (
-                    <span className={`absolute top-1 right-1 rounded-full bg-black/60 px-1.5 py-px text-[8px] font-bold tracking-wider uppercase backdrop-blur ${g.live ? "text-rose-300" : "text-amber-300"}`}>
-                      {g.live ? "LIVE" : "NFT"}
-                    </span>
-                  )}
-                  <span className={`grid h-12 w-12 place-items-center overflow-hidden rounded-xl bg-gradient-to-br ${g.bg}`}>
-                    {g.img ? (
-                      <NftFigure gift={g} size={48} rounded="rounded-xl" />
-                    ) : (
-                      <span
-                        className="gift-anim h-9 w-9 [&>svg]:h-full [&>svg]:w-full"
-                        dangerouslySetInnerHTML={{ __html: g.icon }}
-                      />
+              {GIFTS.map((g) => {
+                const on = picked.includes(g.key);
+                return (
+                  <button
+                    key={g.key}
+                    onClick={() => toggle(g.key)}
+                    title={`${g.name} · ${g.price} звёзд${g.nft ? " · NFT" : ""}${g.live ? " · LIVE" : ""}`}
+                    className={`relative flex flex-col items-center gap-1 rounded-2xl border p-2.5 transition-all hover:bg-white/8 ${
+                      on
+                        ? "border-amber-300 bg-amber-300/10 ring-1 ring-amber-300"
+                        : g.nft
+                          ? "border-amber-300/40 hover:border-amber-300/70 bg-white/[0.03]"
+                          : "border-white/10 hover:border-amber-300/50 bg-white/[0.03]"
+                    }`}
+                  >
+                    {on && (
+                      <span className="absolute -top-1 -left-1 z-10 grid h-4.5 w-4.5 place-items-center rounded-full bg-amber-300 text-black shadow">
+                        <Check className="h-3 w-3" />
+                      </span>
                     )}
-                  </span>
-                  <span className="text-[10px] text-white/55">{g.name}</span>
-                  <span className="flex items-center gap-0.5 text-[10px] font-bold text-amber-300 tabular-nums">
-                    <Star className="h-2.5 w-2.5" /> {g.price}
-                  </span>
-                </button>
-              ))}
+                    {(g.nft || g.live) && (
+                      <span className={`absolute top-1 right-1 rounded-full bg-black/60 px-1.5 py-px text-[8px] font-bold tracking-wider uppercase backdrop-blur ${g.live ? "text-rose-300" : "text-amber-300"}`}>
+                        {g.live ? "LIVE" : "NFT"}
+                      </span>
+                    )}
+                    <span className={`grid h-12 w-12 place-items-center overflow-hidden rounded-xl bg-gradient-to-br ${g.bg}`}>
+                      {g.img ? (
+                        <NftFigure gift={g} size={48} rounded="rounded-xl" />
+                      ) : (
+                        <span
+                          className={`${g.anim ?? "gift-anim"} h-9 w-9 [&>svg]:h-full [&>svg]:w-full`}
+                          dangerouslySetInnerHTML={{ __html: g.icon }}
+                        />
+                      )}
+                    </span>
+                    <span className="text-[10px] text-white/55">{g.name}</span>
+                    <span className="flex items-center gap-0.5 text-[10px] font-bold text-amber-300 tabular-nums">
+                      <Star className="h-2.5 w-2.5" /> {g.price}
+                    </span>
+                  </button>
+                );
+              })}
             </div>
-            <p className="pt-3 text-[11px] leading-snug text-white/35">
-              Выберите подарок — дальше можно добавить подпись и решить, показывать ли ваше имя.
-            </p>
+            {error && <p className="pt-2 text-[12px] text-rose-300">{error}</p>}
+            {/* Плашка выбора: сколько выбрано и на какую сумму */}
+            <div className="sticky bottom-0 -mx-5 mt-3 border-t border-white/8 bg-black/45 px-5 py-3 backdrop-blur-md">
+              {picked.length === 0 ? (
+                <p className="text-[11px] leading-snug text-white/35">
+                  Можно выбрать сразу несколько подарков — они придут одним набором.
+                </p>
+              ) : (
+                <button
+                  onClick={() => setStep2(true)}
+                  className="btn-gradient flex w-full items-center justify-center gap-2 rounded-2xl py-3 text-sm font-semibold text-white"
+                >
+                  <Gift className="h-4 w-4" />
+                  Далее · {picked.length} {picked.length === 1 ? "подарок" : picked.length < 5 ? "подарка" : "подарков"} · {totalPrice} ⭐
+                </button>
+              )}
+            </div>
           </>
         )}
       </div>

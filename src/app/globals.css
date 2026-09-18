@@ -125,6 +125,42 @@ button.hover\:scale-\[1\.02\]:active:not(:disabled) {
 }
 .pm-rise { animation: pm-rise 0.22s cubic-bezier(0.2, 0.8, 0.3, 1) both; }
 
+/* ── Анимации обычных подарков: каждому — своя ─────────────────── */
+.gk-clover { animation: gkClover 2.6s ease-in-out infinite; transform-origin: 50% 85%; }
+@keyframes gkClover {
+  0%, 100% { transform: translateY(0) rotate(-4deg); }
+  50% { transform: translateY(-7%) rotate(4deg); }
+}
+.gk-bolt { animation: gkBolt 1.5s ease-in-out infinite; transform-origin: center; }
+@keyframes gkBolt {
+  0%, 100% { opacity: 1; transform: scale(1); filter: drop-shadow(0 0 3px rgba(253, 224, 71, 0.9)); }
+  42% { opacity: 0.55; transform: scale(0.99); filter: none; }
+  50% { opacity: 1; transform: scale(1.07); filter: drop-shadow(0 0 6px rgba(253, 224, 71, 1)); }
+  58% { opacity: 0.7; transform: scale(1); }
+}
+.gk-icecream { animation: gkIce 3s ease-in-out infinite; transform-origin: 50% 90%; }
+@keyframes gkIce {
+  0%, 100% { transform: rotate(-7deg); }
+  50% { transform: rotate(7deg); }
+}
+.gk-champagne { animation: gkChamp 2.7s ease-in-out infinite; transform-origin: 50% 80%; }
+@keyframes gkChamp {
+  0%, 100% { transform: rotate(-9deg) translateY(0); }
+  50% { transform: rotate(7deg) translateY(-5%); }
+}
+.gk-jellyfish { animation: gkJelly 3.4s ease-in-out infinite; transform-origin: center; }
+@keyframes gkJelly {
+  0%, 100% { transform: translateY(0) scale(1, 1); }
+  40% { transform: translateY(-9%) scale(0.96, 0.94); }
+  70% { transform: translateY(2%) scale(1.03, 1.04); }
+}
+.gk-planet { animation: gkPlanet 5.5s ease-in-out infinite; transform-origin: center; }
+@keyframes gkPlanet {
+  0%, 100% { transform: rotate(0deg) translateY(0); }
+  25% { transform: rotate(5deg) translateY(-3%); }
+  75% { transform: rotate(-5deg) translateY(3%); }
+}
+
 .btn-gradient {
   position: relative;
   background: #5865f2;

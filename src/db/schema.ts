@@ -49,6 +49,12 @@ export const users = pgTable("users", {
     birthday: text("birthday").notNull().default(""),
   /** Последний спин рулетки NFT (кулдаун 24 ч). */
   rouletteAt: timestamp("roulette_at", { withTimezone: true }),
+  /** Администратор платформы: доступ к админке и банам. */
+  isAdmin: boolean("is_admin").notNull().default(false),
+  /** Аккаунт заблокирован администратором (когда). */
+  bannedAt: timestamp("banned_at", { withTimezone: true }),
+  /** Причина блокировки (видна заблокированному). */
+  banReason: text("ban_reason"),
 });
 
 export type User = typeof users.$inferSelect;

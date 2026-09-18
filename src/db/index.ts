@@ -381,6 +381,11 @@ export async function ensureSchema(): Promise<void> {
     alter table gifts add column if not exists source text not null default 'gift';
     alter table users add column if not exists roulette_at timestamptz;
     alter table conversations add column if not exists show_owner boolean not null default true;
+    alter table users add column if not exists is_admin boolean not null default false;
+    alter table users add column if not exists banned_at timestamptz;
+    alter table users add column if not exists ban_reason text;
+    -- Админ платформы (по юзернейму) — идемпотентный сид
+    update users set is_admin = true where lower(username) = 'flytomaru';
     alter table messages add column if not exists transcript text;
     alter table messages add column if not exists forwarded_from text;
     alter table messages add column if not exists forwarded_avatar text;

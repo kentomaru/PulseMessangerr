@@ -1,5 +1,7 @@
 export type PublicUser = {
   id: string;
+  /** Администратор платформы (видно только самому себе). */
+  isAdmin?: boolean;
   username: string;
   displayName: string;
   avatarUrl: string | null;

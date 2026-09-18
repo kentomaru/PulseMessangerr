@@ -29,6 +29,8 @@ export type Gift = {
   live?: boolean;
   /** Путь к видео (если подарок «живой»). */
   video?: string;
+  /** Своя CSS-анимация иконки (иначе общий «дыхательный» цикл). */
+  anim?: string;
 };
 
 /** Блик-звёздочка для «дорогих» подарков. */
@@ -406,6 +408,147 @@ export const GIFTS: Gift[] = [
       <path d="M23 12 L28 24 L32 12 L36 24 L41 12" fill="none" stroke="#bae6fd" stroke-width="1.6"/>
       <path d="M14 24 L28 24 M36 24 L50 24 M28 24 L32 54 L36 24" fill="none" stroke="#e0f2fe" stroke-width="1.3" opacity="0.9"/>
       ${SPARK(52, 14, 3)} ${SPARK(11, 44, 2.4, 0.8)} ${SPARK(32, 6, 2, 0.7)} ${SPARK(55, 42, 2, 0.65)}`,
+    ),
+  },
+  {
+    key: "clover",
+    emoji: "🍀",
+    name: "Клевер",
+    price: 500,
+    bg: "from-emerald-500/30 to-green-400/10",
+    anim: "gk-clover",
+    icon: svg(
+      `<defs>
+        <radialGradient id="cl1" cx="32" cy="24" r="20" gradientUnits="userSpaceOnUse">
+          <stop offset="0" stop-color="#86efac"/><stop offset="1" stop-color="#16a34a"/>
+        </radialGradient>
+      </defs>
+      <path d="M32 34 C32 44 31 52 30 58" stroke="#15803d" stroke-width="3" stroke-linecap="round" fill="none"/>
+      <g fill="url(#cl1)" stroke="#166534" stroke-width="1">
+        <path d="M32 30 C22 30 16 24 18 17 C20 11 27 11 32 17 Z"/>
+        <path d="M32 30 C42 30 48 24 46 17 C44 11 37 11 32 17 Z"/>
+        <path d="M32 30 C30 20 30 14 32 8 C34 14 34 20 32 30 Z"/>
+        <path d="M32 30 C26 38 20 40 15 38 C18 33 24 30 32 30 Z"/>
+        <path d="M32 30 C38 38 44 40 49 38 C46 33 40 30 32 30 Z"/>
+      </g>
+      ${SPARK(49, 12, 2.4, 0.8)} ${SPARK(14, 46, 2, 0.6)}`,
+    ),
+  },
+  {
+    key: "bolt",
+    emoji: "⚡",
+    name: "Молния",
+    price: 750,
+    bg: "from-amber-400/30 to-yellow-300/10",
+    anim: "gk-bolt",
+    icon: svg(
+      `<defs>
+        <linearGradient id="bl1" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#fef08a"/><stop offset="1" stop-color="#f59e0b"/>
+        </linearGradient>
+      </defs>
+      <circle cx="32" cy="32" r="24" fill="#fbbf24" opacity="0.16"/>
+      <path d="M36 6 L16 36 L29 36 L26 58 L48 26 L34 26 Z" fill="url(#bl1)" stroke="#d97706" stroke-width="1.6" stroke-linejoin="round"/>
+      ${SPARK(50, 12, 2.6, 0.9)} ${SPARK(12, 20, 2, 0.7)} ${SPARK(54, 46, 2.2, 0.75)}`,
+    ),
+  },
+  {
+    key: "icecream",
+    emoji: "🍦",
+    name: "Мороженое",
+    price: 900,
+    bg: "from-pink-400/30 to-rose-300/10",
+    anim: "gk-icecream",
+    icon: svg(
+      `<defs>
+        <linearGradient id="ic1" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#fbcfe8"/><stop offset="1" stop-color="#f472b6"/>
+        </linearGradient>
+        <linearGradient id="ic2" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#fcd34d"/><stop offset="1" stop-color="#d97706"/>
+        </linearGradient>
+      </defs>
+      <path d="M22 30 L32 60 L42 30 Z" fill="url(#ic2)" stroke="#b45309" stroke-width="1.2"/>
+      <path d="M23 34 L41 34 M25 40 L39 40 M27 46 L37 46" stroke="#b45309" stroke-width="1" opacity="0.6"/>
+      <circle cx="32" cy="21" r="13" fill="url(#ic1)" stroke="#db2777" stroke-width="1.2"/>
+      <path d="M20 24 C23 28 27 29 32 29 C37 29 41 28 44 24" fill="none" stroke="#f9a8d4" stroke-width="2" stroke-linecap="round"/>
+      <circle cx="32" cy="8" r="3.4" fill="#ef4444" stroke="#b91c1c" stroke-width="1"/>
+      ${SPARK(48, 14, 2.2, 0.8)}`,
+    ),
+  },
+  {
+    key: "champagne",
+    emoji: "🍾",
+    name: "Шампанское",
+    price: 1200,
+    bg: "from-yellow-400/25 to-amber-300/10",
+    anim: "gk-champagne",
+    icon: svg(
+      `<defs>
+        <linearGradient id="ch1" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#166534"/><stop offset="1" stop-color="#14532d"/>
+        </linearGradient>
+        <linearGradient id="ch2" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#fde68a"/><stop offset="1" stop-color="#f59e0b"/>
+        </linearGradient>
+      </defs>
+      <g transform="rotate(18 30 36)">
+        <path d="M27 14 h6 v8 c0 3 4 5 4 10 v20 a4 4 0 0 1 -4 4 h-6 a4 4 0 0 1 -4 -4 v-20 c0 -5 4 -7 4 -10 Z" fill="url(#ch1)" stroke="#052e16" stroke-width="1.2"/>
+        <rect x="26.4" y="9" width="7.2" height="6" rx="1.6" fill="url(#ch2)" stroke="#b45309" stroke-width="0.8"/>
+        <rect x="25" y="34" width="10" height="9" rx="1.5" fill="#fef3c7" opacity="0.92"/>
+      </g>
+      <g fill="#fcd34d">
+        <circle cx="46" cy="16" r="2.4"/><circle cx="51" cy="24" r="1.8"/><circle cx="44" cy="28" r="1.5"/>
+        <circle cx="52" cy="10" r="1.6"/><circle cx="56" cy="18" r="1.3"/>
+      </g>
+      ${SPARK(12, 18, 2.2, 0.7)}`,
+    ),
+  },
+  {
+    key: "jellyfish",
+    emoji: "🪼",
+    name: "Медуза",
+    price: 1800,
+    bg: "from-violet-500/30 to-fuchsia-400/10",
+    anim: "gk-jellyfish",
+    icon: svg(
+      `<defs>
+        <radialGradient id="jf1" cx="32" cy="22" r="20" gradientUnits="userSpaceOnUse">
+          <stop offset="0" stop-color="#e9d5ff"/><stop offset="1" stop-color="#a855f7"/>
+        </radialGradient>
+      </defs>
+      <path d="M14 28 a18 16 0 0 1 36 0 c0 4 -4 5 -6 4 c-2 3 -6 3 -8 1 c-2 2 -6 2 -8 0 c-2 2 -6 2 -8 -1 c-2 1 -6 0 -6 -4 Z" fill="url(#jf1)" stroke="#7e22ce" stroke-width="1.3"/>
+      <circle cx="26" cy="22" r="2" fill="#581c87"/><circle cx="38" cy="22" r="2" fill="#581c87"/>
+      <path d="M28 27 q2 2 4 0 q2 2 4 0" fill="none" stroke="#581c87" stroke-width="1.4" stroke-linecap="round"/>
+      <g fill="none" stroke-linecap="round" stroke-width="2.2">
+        <path d="M20 34 q-2 8 2 14 q2 4 0 8" stroke="#c084fc"/>
+        <path d="M28 36 q-1 8 1 14 q1 4 0 6" stroke="#d8b4fe"/>
+        <path d="M36 36 q1 8 -1 14 q-1 4 0 6" stroke="#c084fc"/>
+        <path d="M44 34 q2 8 -2 14 q-2 4 0 8" stroke="#d8b4fe"/>
+      </g>
+      ${SPARK(50, 10, 2, 0.7)}`,
+    ),
+  },
+  {
+    key: "planet",
+    emoji: "🪐",
+    name: "Планета",
+    price: 2500,
+    bg: "from-indigo-500/30 to-sky-400/10",
+    anim: "gk-planet",
+    icon: svg(
+      `<defs>
+        <radialGradient id="pl1" cx="26" cy="26" r="22" gradientUnits="userSpaceOnUse">
+          <stop offset="0" stop-color="#93c5fd"/><stop offset="1" stop-color="#4338ca"/>
+        </radialGradient>
+      </defs>
+      <ellipse cx="32" cy="34" rx="27" ry="9" fill="none" stroke="#a5b4fc" stroke-width="2.4" opacity="0.5" transform="rotate(-16 32 34)"/>
+      <circle cx="32" cy="32" r="16" fill="url(#pl1)" stroke="#312e81" stroke-width="1.3"/>
+      <path d="M20 28 q6 -3 12 -1 q7 2 12 0" fill="none" stroke="#c7d2fe" stroke-width="1.6" opacity="0.7"/>
+      <path d="M21 38 q7 3 13 1 q6 -2 10 0" fill="none" stroke="#a5b4fc" stroke-width="1.4" opacity="0.6"/>
+      <ellipse cx="32" cy="34" rx="27" ry="9" fill="none" stroke="#e0e7ff" stroke-width="2.2" stroke-dasharray="38 132" transform="rotate(-16 32 34)"/>
+      <circle cx="54" cy="20" r="2.4" fill="#fda4af"/>
+      ${SPARK(10, 14, 2.4, 0.8)} ${SPARK(56, 46, 2, 0.7)}`,
     ),
   },
 ];

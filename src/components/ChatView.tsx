@@ -4550,7 +4550,7 @@ function GiftCard({
           <NftFigure gift={gift} size={80} rounded="rounded-2xl" variant={variant} />
         ) : (
           <span
-            className="gift-anim h-20 w-20 [&>svg]:h-full [&>svg]:w-full"
+            className={`${gift.anim ?? "gift-anim"} h-20 w-20 [&>svg]:h-full [&>svg]:w-full`}
             dangerouslySetInnerHTML={{ __html: gift.icon }}
           />
         )}

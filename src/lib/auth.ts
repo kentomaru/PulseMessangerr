@@ -67,12 +67,37 @@ export async function getSessionUser(): Promise<User | null> {
       .where(eq(users.id, user.id))
       .catch((err) => log.warn("Не удалось обновить lastSeenAt", { err: err instanceof Error ? err.message : String(err) }));
   }
+  if (user.bannedAt) return null; // заблокирован админом — доступ закрыт
   return user;
+}
+
+/**
+ * Если текущая сессия принадлежит заблокированному аккаунту — снести её
+ * и вернуть причину бана (для экрана входа). Иначе — null.
+ */
+export async function checkBannedSession(): Promise<string | null> {
+  try {
+    const store = await cookies();
+    const token = store.get(SESSION_COOKIE)?.value;
+    if (!token) return null;
+    const [row] = await db
+      .select({ userId: sessions.userId, bannedAt: users.bannedAt, banReason: users.banReason })
+      .from(sessions)
+      .innerJoin(users, eq(users.id, sessions.userId))
+      .where(eq(sessions.token, token))
+      .limit(1);
+    if (!row || !row.bannedAt) return null;
+    await db.delete(sessions).where(eq(sessions.token, token));
+    return row.banReason || "Нарушение правил сервиса";
+  } catch {
+    return null;
+  }
 }
 
 export function publicUser(u: User) {
   const online = Date.now() - new Date(u.lastSeenAt).getTime() < 45_000;
   return {
+    isAdmin: !!u.isAdmin,
     id: u.id,
     username: u.username,
     displayName: u.displayName,
