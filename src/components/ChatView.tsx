@@ -17,6 +17,10 @@ import {
   CornerUpLeft,
   Copy,
   ArrowDown,
+  FileCode2,
+  Braces,
+  ClipboardList,
+  AlarmClock,
   Download,
   Eraser,
   Flag,
@@ -59,6 +63,8 @@ import {
   PhoneMissed,
   PhoneOutgoing,
   Pin,
+  PenLine,
+  Zap,
   PinOff,
   Play,
   Radio,
@@ -84,6 +90,9 @@ import { audioConstraints } from "@/lib/audioSettings";
 import { claimPlayback, releasePlayback } from "@/lib/playback";
 import { EMOJI_CATEGORIES, STICKERS } from "@/lib/emojis";
 import { renderRichText } from "@/lib/richText";
+import { stripDiscussionMarker } from "@/lib/discussionMarker";
+import { getNickname, onNicknames } from "@/lib/nicknames";
+import { isDndActiveNow, getAutoReply } from "@/lib/dnd";
 import { addScheduled, readScheduled, removeScheduled, type ScheduledMsg } from "@/lib/scheduledStore";
 import { parseStoryQuote, type StoryQuoteInfo } from "@/lib/storyQuote";
 import { setCachedTranscript } from "@/lib/transcribe";
@@ -210,7 +219,7 @@ type DraftFile = {
  * дожидаются пользователя; текст дополнительно переживает перезагрузку
  * страницы (localStorage).
  */
-type SavedDraft = { text: string; files: DraftFile[] };
+type SavedDraft = { text: string; files: DraftFile[]; replyToId?: string | null };
 const draftStore = new Map<string, SavedDraft>();
 const TEXT_DRAFTS_KEY = "pulse_text_drafts_v1";
 
@@ -238,10 +247,34 @@ function writeTextDraft(convId: string, text: string): void {
 function getStoredDraft(convId: string): SavedDraft {
   let d = draftStore.get(convId);
   if (!d) {
-    d = { text: readTextDrafts()[convId] ?? "", files: [] };
+    let replyToId: string | null = null;
+    try {
+      const replies = JSON.parse(localStorage.getItem("pulse_draft_replies_v1") ?? "{}") as Record<
+        string,
+        string
+      >;
+      replyToId = replies[convId] ?? null;
+    } catch {
+      /* ignore */
+    }
+    d = { text: readTextDrafts()[convId] ?? "", files: [], replyToId };
     draftStore.set(convId, d);
   }
   return d;
+}
+function writeDraftReply(convId: string, replyToId: string | null): void {
+  try {
+    const all = JSON.parse(localStorage.getItem("pulse_draft_replies_v1") ?? "{}") as Record<
+      string,
+      string
+    >;
+    if (replyToId) all[convId] = replyToId;
+    else delete all[convId];
+    localStorage.setItem("pulse_draft_replies_v1", JSON.stringify(all));
+  } catch {
+    /* ignore */
+  }
+  if (draftStore.has(convId)) draftStore.set(convId, { ...draftStore.get(convId)!, replyToId });
 }
 
 type ContextMenuState = {
@@ -252,6 +285,25 @@ type ContextMenuState = {
 
 /** Быстрые реакции (те же, что в белом списке сервера). */
 const QUICK_EMOJIS = ["👍", "❤️", "😂", "🔥", "😮", "😢", "🎉", "🤔", "👀", "💯"];
+/** Свои быстрые реакции: пользователь сам выбирает набор (до 10). */
+const CUSTOM_REACTIONS_KEY = "pulse_quick_reactions_v1";
+function loadQuickReactions(): string[] {
+  try {
+    const v = JSON.parse(localStorage.getItem(CUSTOM_REACTIONS_KEY) ?? "") as unknown;
+    if (Array.isArray(v) && v.length >= 2 && v.every((x) => typeof x === "string")) return v.slice(0, 10);
+  } catch {
+    /* стандартный набор */
+  }
+  return QUICK_EMOJIS;
+}
+function saveQuickReactions(list: string[]): void {
+  try {
+    localStorage.setItem(CUSTOM_REACTIONS_KEY, JSON.stringify(list));
+  } catch {
+    /* ignore */
+  }
+  window.dispatchEvent(new Event("pulse-reactions"));
+}
 /** Дополнительный набор реакций — открывается по «+». */
 const EXTRA_REACTIONS = [
   "😀","😅","😊","😍","😘","😜","🤗","😎","🥳","😇",
@@ -410,6 +462,10 @@ export default function ChatView({
   const [chatMembers, setChatMembers] = useState<{ id: string; username: string; displayName: string; avatarUrl: string | null }[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [replyTo, setReplyTo] = useState<ChatMessage | null>(null);
+  /** Выделенный фрагмент для «ответить с цитатой» (уходит в quoteText). */
+  const [quoteSel, setQuoteSel] = useState<string>("");
+  /** Плавающая кнопка над выделенным текстом. */
+  const [selBtn, setSelBtn] = useState<{ x: number; y: number; msg: ChatMessage; text: string } | null>(null);
   // Кнопка «вниз» + счётчик новых сообщений, пока читаешь историю
   const [showJump, setShowJump] = useState(false);
   const [newBelow, setNewBelow] = useState(0);
@@ -464,6 +520,59 @@ export default function ChatView({
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
+
+  /** Сообщение, для которого выбирают время напоминания. */
+  const [remindFor, setRemindFor] = useState<ChatMessage | null>(null);
+  /** Модалка «Вложения»: все фото/видео/файлы чата. */
+  const [filesOpen, setFilesOpen] = useState(false);
+  /** Подпись автора к постам канала (включается в меню отправки). */
+  const [signedPost, setSignedPost] = useState(() => {
+    try {
+      return localStorage.getItem(`pulse_signed_${conversationId}`) === "1";
+    } catch {
+      return false;
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem(`pulse_signed_${conversationId}`, signedPost ? "1" : "0");
+    } catch {
+      /* ignore */
+    }
+  }, [conversationId, signedPost]);
+
+  /** Выделили текст сообщения — предлагаем «Ответить с цитатой». */
+  const onSelectionUp = () => {
+    const sel = window.getSelection();
+    const txt = sel?.toString().trim() ?? "";
+    if (!sel || sel.isCollapsed || txt.length < 2 || txt.length > 500) {
+      setSelBtn(null);
+      return;
+    }
+    let node = sel.anchorNode as HTMLElement | null;
+    while (node && node !== scrollRef.current && !(node instanceof HTMLElement && node.dataset.mid)) {
+      node = node.parentElement;
+    }
+    const mid = node instanceof HTMLElement ? node.dataset.mid : undefined;
+    if (!mid) {
+      setSelBtn(null);
+      return;
+    }
+    const msg = messages.find((m) => m.id === mid);
+    if (!msg) {
+      setSelBtn(null);
+      return;
+    }
+    const rect = sel.getRangeAt(0).getBoundingClientRect();
+    const host = scrollRef.current?.getBoundingClientRect();
+    if (!host) return;
+    setSelBtn({
+      x: Math.min(Math.max(rect.left + rect.width / 2 - host.left, 70), host.width - 70),
+      y: rect.top - host.top + (scrollRef.current?.scrollTop ?? 0) - 40,
+      msg,
+      text: txt,
+    });
+  };
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const lastTypingSent = useRef(0);
   /** Что сейчас «записывает/отправляет» пользователь для индикатора. */
@@ -500,6 +609,8 @@ export default function ChatView({
   /** Отпечаток последнего ответа — не перерисовываем ленту, если всё то же
       (опрос каждые 2.5 с иначе каждый раз гонял весь список сообщений). */
   const msgFingerprintRef = useRef("");
+  /** id сообщений на прошлом опросе — чтобы ловить только НОВЫЕ входящие. */
+  const prevMsgIdsRef = useRef<Set<string> | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -521,8 +632,34 @@ export default function ChatView({
       if (changed) {
         // Страховка от дублей (повторная доставка/кэш) — уникальный список по id
         const seen = new Set<string>();
-        setMessages(d.messages.filter((m) => (seen.has(m.id) ? false : (seen.add(m.id), true))));
+        const fresh = d.messages.filter((m) => (seen.has(m.id) ? false : (seen.add(m.id), true)));
+        setMessages(fresh);
         setPinned(d.pinned ?? []);
+
+        // Автоответ в режиме «Не беспокоить»: один раз на чат за сессию
+        if (kind === "direct" && isDndActiveNow()) {
+          const replyText = getAutoReply();
+          if (replyText && prevMsgIdsRef.current && !autoRepliedConvs.has(conversationId)) {
+            const incoming = fresh.filter(
+              (m) => m.senderId !== me.id && !prevMsgIdsRef.current!.has(m.id),
+            );
+            if (incoming.length > 0) {
+              autoRepliedConvs.add(conversationId);
+              api("/api/messages", {
+                method: "POST",
+                body: JSON.stringify({
+                  conversationId,
+                  type: "text",
+                  content: replyText,
+                  silent: true,
+                }),
+              }).catch(() => {
+                autoRepliedConvs.delete(conversationId);
+              });
+            }
+          }
+        }
+        prevMsgIdsRef.current = new Set(fresh.map((m) => m.id));
       }
       if (typeof d.postCount === "number") setPostCount(d.postCount);
       setMeta(d.conversation);
@@ -621,8 +758,47 @@ export default function ChatView({
     };
   }, [conversationId]);
 
+  // Страховка черновика: свежие значения в рефе, сохраняем при закрытии
+  // вкладки и при размонтировании (переход между чатами с key=...).
+  const draftLatest = useRef({ text, files: draftFiles });
+  draftLatest.current = { text, files: draftFiles };
+  const replyRef = useRef<ChatMessage | null>(null);
+  replyRef.current = replyTo;
+  /** Восстановить черновик-ответ после первой загрузки сообщений. */
+  const draftReplyRestored = useRef(false);
+  useEffect(() => {
+    if (draftReplyRestored.current || messages.length === 0 || replyTo) return;
+    const rid = getStoredDraft(conversationId).replyToId;
+    if (!rid) {
+      draftReplyRestored.current = true;
+      return;
+    }
+    const target = messages.find((m) => m.id === rid);
+    if (target) setReplyTo(target);
+    draftReplyRestored.current = true;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [messages]);
+  useEffect(() => {
+    const save = () => {
+      draftStore.set(conversationId, draftLatest.current);
+      writeTextDraft(conversationId, draftLatest.current.text);
+      writeDraftReply(conversationId, replyRef.current?.id ?? null);
+    };
+    window.addEventListener("beforeunload", save);
+    return () => {
+      window.removeEventListener("beforeunload", save);
+      save();
+    };
+  }, [conversationId]);
+
   const kind = meta?.kind ?? initialKind;
-  const title = meta?.title ?? initialTitle;
+  // Псевдоним контакта перекрывает имя в шапке личного чата
+  const [nickTick, setNickTick] = useState(0);
+  useEffect(() => onNicknames(() => setNickTick((v) => v + 1)), []);
+  const peerNick =
+    kind === "direct" ? getNickname(peerState?.id ?? peer?.id) : null;
+  void nickTick;
+  const title = peerNick ?? meta?.title ?? initialTitle;
   const verifiedChat = !!(meta as { verified?: boolean } | null)?.verified;
   const avatar = kind === "direct" ? (peerState?.avatarUrl ?? initialAvatar) : (meta?.avatarUrl ?? initialAvatar);
   const isSpace = kind !== "direct";
@@ -731,8 +907,12 @@ export default function ChatView({
 
     // Редактирование своего сообщения
     if (editing) {
-      const content = emojify(text).trim();
+      let content = emojify(text).trim();
       if (!content) return;
+      // «Подпись автора» в канале: имя админа мелкой строкой под постом
+      if (kind === "channel" && signedPost) {
+        content = `${content}\n✍️ ${me.displayName}`;
+      }
       setSending(true);
       const target = editing;
       setEditing(null);
@@ -839,6 +1019,7 @@ export default function ChatView({
           type: "text",
           content,
           replyToId: commentFilter?.postId ?? reply?.id ?? null,
+          quoteText: quoteSel.trim() || undefined,
           silent: opts?.silent ?? false,
         }),
       });
@@ -1430,6 +1611,69 @@ export default function ChatView({
         .replace(/:D/g, "😄"),
     );
 
+  /** «Кто прочитал»: список участников, уже видевших сообщение. */
+  const [readersFor, setReadersFor] = useState<ChatMessage | null>(null);
+  const [readers, setReaders] = useState<PublicUser[] | null>(null);
+  useEffect(() => {
+    if (!readersFor) {
+      setReaders(null);
+      return;
+    }
+    let dead = false;
+    api<{ readers: PublicUser[] }>(`/api/messages/${readersFor.id}/readers`)
+      .then((d) => {
+        if (!dead) setReaders(d.readers);
+      })
+      .catch(() => {
+        if (!dead) setReaders([]);
+      });
+    return () => {
+      dead = true;
+    };
+  }, [readersFor]);
+
+  /** Напомнить о сообщении: локальный будильник + браузерное уведомление. */
+  const remindAbout = (m: ChatMessage, hours: number) => {
+    try {
+      const list = JSON.parse(localStorage.getItem("pulse_reminders_v1") ?? "[]") as {
+        messageId: string;
+        conversationId: string;
+        at: number;
+        text: string;
+      }[];
+      list.push({
+        messageId: m.id,
+        conversationId,
+        at: Date.now() + hours * 3600_000,
+        text: m.content.slice(0, 80),
+      });
+      localStorage.setItem("pulse_reminders_v1", JSON.stringify(list));
+      if (typeof Notification !== "undefined" && Notification.permission === "default") {
+        void Notification.requestPermission();
+      }
+      notify(`Напомню через ${hours === 24 ? "24 часа" : hours + " ч"}`);
+    } catch {
+      notify("Не удалось создать напоминание");
+    }
+  };
+
+  /** Скопировать сообщение вместе с автором и временем. */
+  const copyFull = async (m: ChatMessage) => {
+    const who = m.senderId === me.id ? "Вы" : (m.sender?.displayName ?? "");
+    const when = new Date(m.createdAt).toLocaleString("ru-RU", {
+      day: "2-digit",
+      month: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+    try {
+      await navigator.clipboard.writeText(`[${when}] ${who}: ${m.content}`);
+      notify("Скопировано с автором и временем");
+    } catch {
+      notify("Буфер обмена недоступен");
+    }
+  };
+
   /** Пожаловаться на сообщение — уйдёт администраторам. */
   const reportMessage = async (m: ChatMessage) => {
     try {
@@ -1464,18 +1708,41 @@ export default function ChatView({
   };
 
   /** Скачать историю чата простым текстовым файлом. */
-  const exportHistory = () => {
-    const lines = messages.map((m) => {
-      const who = m.senderId === me.id ? "Вы" : m.sender?.displayName || "…";
-      const when = new Date(m.createdAt).toLocaleString("ru-RU");
-      const attached = m.type !== "text" ? " [вложение]" : "";
-      const body = (m.content || "") + attached;
-      return `${when} — ${who}: ${body}`;
-    });
-    const blob = new Blob([lines.join("\n")], { type: "text/plain;charset=utf-8" });
+  /** Экспорт истории: txt (простой), json (полный), html (красивый). */
+  const exportHistory = (fmt: "txt" | "json" | "html" = "txt") => {
+    const base = title.replace(/\s+/g, "_").slice(0, 40) || "chat";
+    let blob: Blob;
+    if (fmt === "json") {
+      blob = new Blob([JSON.stringify({ chat: title, exportedAt: new Date().toISOString(), messages }, null, 2)], {
+        type: "application/json;charset=utf-8",
+      });
+    } else if (fmt === "html") {
+      const esc = (t: string) =>
+        t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+      const rows = messages
+        .map((m) => {
+          const who = esc(m.senderId === me.id ? "Вы" : m.sender?.displayName || "…");
+          const when = new Date(m.createdAt).toLocaleString("ru-RU");
+          return `<p><b>[${when}] ${who}:</b> ${esc(m.content || "")}${m.type !== "text" ? " <i>[вложение]</i>" : ""}</p>`;
+        })
+        .join("\n");
+      blob = new Blob(
+        [`<!doctype html><meta charset="utf-8"><title>${esc(title)}</title><body style="font:14px/1.5 system-ui;max-width:760px;margin:24px auto"><h2>${esc(title)}</h2>${rows}</body>`],
+        { type: "text/html;charset=utf-8" },
+      );
+    } else {
+      const lines = messages.map((m) => {
+        const who = m.senderId === me.id ? "Вы" : m.sender?.displayName || "…";
+        const when = new Date(m.createdAt).toLocaleString("ru-RU");
+        const attached = m.type !== "text" ? " [вложение]" : "";
+        const body = (m.content || "") + attached;
+        return `${when} — ${who}: ${body}`;
+      });
+      blob = new Blob([lines.join("\n")], { type: "text/plain;charset=utf-8" });
+    }
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
-    a.download = `pulse-${title.replace(/\s+/g, "_").slice(0, 40) || "chat"}.txt`;
+    a.download = `pulse-${base}.${fmt}`;
     a.click();
     URL.revokeObjectURL(a.href);
   };
@@ -1771,7 +2038,7 @@ export default function ChatView({
 
         <button
           onClick={kind === "direct" ? onViewPeer : onOpenInfo}
-          title={meta?.about ? `Описание: ${meta.about}` : undefined}
+          title={meta?.about ? `Описание: ${stripDiscussionMarker(meta.about)}` : undefined}
           className="flex min-w-0 items-center gap-3 text-left"
         >
           <span
@@ -1814,6 +2081,20 @@ export default function ChatView({
                   <BadgeCheck className="h-4 w-4 text-sky-400" />
                 </span>
               )}
+              {/* Тортик: у собеседника сегодня день рождения */}
+              {kind === "direct" &&
+                peerState?.birthday &&
+                (() => {
+                  const m = /^(\d{1,2})\.(\d{1,2})/.exec(peerState.birthday.trim());
+                  if (!m) return null;
+                  const now = new Date();
+                  if (Number(m[1]) !== now.getDate() || Number(m[2]) !== now.getMonth() + 1) return null;
+                  return (
+                    <span title="Сегодня день рождения!" className="shrink-0 animate-pulse-dot text-[15px]">
+                      🎂
+                    </span>
+                  );
+                })()}
               {/* Звезда Premium — как в ТГ */}
               {kind === "direct" && peerState?.premium && (
                 <Star className="h-3.5 w-3.5 shrink-0 fill-amber-300 text-amber-300" />
@@ -1947,7 +2228,41 @@ export default function ChatView({
                       label="Скачать историю (.txt)"
                       onClick={() => {
                         setMenuOpen(false);
-                        exportHistory();
+                        exportHistory("txt");
+                      }}
+                    />
+                    <MenuItem
+                      icon={<Paperclip className="h-4 w-4" />}
+                      label="Вложения чата"
+                      onClick={() => {
+                        setMenuOpen(false);
+                        setFilesOpen(true);
+                      }}
+                    />
+                    {kind === "direct" && (
+                      <MenuItem
+                        icon={<Zap className="h-4 w-4 text-amber-300" />}
+                        label="Пнуть собеседника 💫"
+                        onClick={() => {
+                          setMenuOpen(false);
+                          void send("nudge:");
+                        }}
+                      />
+                    )}
+                    <MenuItem
+                      icon={<Braces className="h-4 w-4" />}
+                      label="Экспорт в JSON"
+                      onClick={() => {
+                        setMenuOpen(false);
+                        exportHistory("json");
+                      }}
+                    />
+                    <MenuItem
+                      icon={<FileCode2 className="h-4 w-4" />}
+                      label="Экспорт в HTML"
+                      onClick={() => {
+                        setMenuOpen(false);
+                        exportHistory("html");
                       }}
                     />
                     <MenuItem
@@ -2152,6 +2467,7 @@ export default function ChatView({
           if (atBottomRef.current) setNewBelow(0);
           setShowJump(gap > 400);
         }}
+        onMouseUp={onSelectionUp}
         onDragOver={(e) => {
           if (!canPost) return;
           e.preventDefault();
@@ -2168,6 +2484,21 @@ export default function ChatView({
           if (files.length > 0) addDraftFiles(files);
         }}
       >
+        {selBtn && (
+          <button
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => {
+              setReplyTo(selBtn.msg);
+              setQuoteSel(selBtn.text);
+              setSelBtn(null);
+              inputRef.current?.focus();
+            }}
+            style={{ left: selBtn.x, top: selBtn.y }}
+            className="absolute z-30 -translate-x-1/2 rounded-full border border-white/10 bg-[#1b1e24] px-3 py-1.5 text-[12px] font-semibold text-white shadow-xl transition-transform hover:scale-105"
+          >
+            💬 Ответить с цитатой
+          </button>
+        )}
         {dragOver && (
           <div className="pointer-events-none absolute inset-2 z-20 flex items-center justify-center rounded-3xl border-2 border-dashed border-[#5865f2]/60 bg-[#5865f2]/10 backdrop-blur-sm">
             <p className="rounded-2xl bg-black/60 px-5 py-3 text-sm font-medium text-white/90">
@@ -2628,10 +2959,14 @@ export default function ChatView({
                           : (replyTo!.sender?.displayName ?? "Сообщение")}
                     </p>
                     <p className="truncate text-xs text-white/45">
-                      <PreviewLabel
-                        type={editing ? editing.type : replyTo!.type}
-                        content={editing ? editing.content : replyTo!.content}
-                      />
+                      {quoteSel && !editing ? (
+                        <>Цитата: «{quoteSel.slice(0, 60)}{quoteSel.length > 60 ? "…" : ""}»</>
+                      ) : (
+                        <PreviewLabel
+                          type={editing ? editing.type : replyTo!.type}
+                          content={editing ? editing.content : replyTo!.content}
+                        />
+                      )}
                     </p>
                   </div>
                   <button
@@ -2833,6 +3168,19 @@ export default function ChatView({
                       >
                         <MessageSquareText className="h-4 w-4 text-white/45" /> Быстрые ответы
                       </button>
+                      {kind === "channel" && (
+                        <button
+                          onClick={() => {
+                            setSendMenu(false);
+                            setSignedPost((v) => !v);
+                            notify(signedPost ? "Подпись автора выключена" : "Посты будут с вашей подписью");
+                          }}
+                          className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-left text-[13px] text-white/75 hover:bg-white/10"
+                        >
+                          <PenLine className={`h-4 w-4 ${signedPost ? "text-emerald-300" : "text-white/45"}`} />
+                          {signedPost ? "Подпись автора: вкл" : "Подпись автора: выкл"}
+                        </button>
+                      )}
                       {canPost && (
                         <button
                           onClick={() => {
@@ -3268,6 +3616,151 @@ export default function ChatView({
 
       {/* Контекстное меню сообщения (ПКМ / долгое нажатие) */}
       <AnimatePresence>
+        {/* «Кто прочитал» — список участников, видевших сообщение */}
+        {readersFor && (
+          <div
+            className="fixed inset-0 z-[90] grid place-items-center bg-black/60 p-4 backdrop-blur-sm"
+            onClick={() => setReadersFor(null)}
+          >
+            <div
+              className="pm-rise w-full max-w-xs rounded-3xl border border-white/10 bg-[#1b1e24] p-4 shadow-2xl"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <p className="flex items-center gap-2 text-[14px] font-bold">
+                <Eye className="h-4 w-4 text-sky-300" /> Кто прочитал
+              </p>
+              <p className="line-clamp-1 pt-1 text-[11px] text-white/35">
+                «{readersFor.content.slice(0, 60) || "медиа"}»
+              </p>
+              <div className="nice-scroll mt-3 max-h-60 space-y-1 overflow-y-auto">
+                {readers === null ? (
+                  <p className="py-4 text-center text-[12px] text-white/40">Считаем…</p>
+                ) : readers.length === 0 ? (
+                  <p className="py-4 text-center text-[12px] text-white/40">Пока никто не прочитал</p>
+                ) : (
+                  readers.map((u) => (
+                    <div key={u.id} className="flex items-center gap-2.5 rounded-xl bg-white/[0.04] px-2.5 py-1.5">
+                      <Avatar name={u.displayName} src={u.avatarUrl} size={26} />
+                      <span className="truncate text-[13px] font-medium">{u.displayName}</span>
+                      <CheckCheck className="ml-auto h-3.5 w-3.5 shrink-0 text-sky-300" />
+                    </div>
+                  ))
+                )}
+              </div>
+              <button
+                onClick={() => setReadersFor(null)}
+                className="mt-3 w-full rounded-2xl bg-white/8 py-2 text-[13px] font-medium text-white/70 hover:bg-white/12"
+              >
+                Закрыть
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Напоминание: выбор времени */}
+        {remindFor && (
+          <div
+            className="fixed inset-0 z-[90] grid place-items-center bg-black/60 p-4 backdrop-blur-sm"
+            onClick={() => setRemindFor(null)}
+          >
+            <div
+              className="pm-rise w-full max-w-xs rounded-3xl border border-white/10 bg-[#1b1e24] p-4 shadow-2xl"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <p className="flex items-center gap-2 text-[14px] font-bold">
+                <AlarmClock className="h-4 w-4 text-violet-300" /> Напомнить о сообщении
+              </p>
+              <p className="line-clamp-2 pt-1 text-[11px] text-white/35">«{remindFor.content.slice(0, 80) || "медиа"}»</p>
+              <div className="grid grid-cols-2 gap-1.5 pt-3">
+                {([[1, "Через 1 час"], [3, "Через 3 часа"], [8, "Через 8 часов"], [24, "Завтра"]] as const).map(
+                  ([h, label]) => (
+                    <button
+                      key={h}
+                      onClick={() => {
+                        remindAbout(remindFor, h);
+                        setRemindFor(null);
+                      }}
+                      className="rounded-xl bg-white/6 px-3 py-2.5 text-[13px] font-medium text-white/80 transition-colors hover:bg-violet-500/20 hover:text-white"
+                    >
+                      {label}
+                    </button>
+                  ),
+                )}
+              </div>
+              <button
+                onClick={() => setRemindFor(null)}
+                className="mt-2 w-full rounded-2xl bg-white/8 py-2 text-[13px] font-medium text-white/70 hover:bg-white/12"
+              >
+                Отмена
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Вложения чата: фото, видео и файлы одной лентой */}
+        {filesOpen && (
+          <div
+            className="fixed inset-0 z-[88] grid place-items-center bg-black/60 p-4 backdrop-blur-sm"
+            onClick={() => setFilesOpen(false)}
+          >
+            <div
+              className="pm-rise flex max-h-[80vh] w-full max-w-lg flex-col rounded-3xl border border-white/10 bg-[#1b1e24] shadow-2xl"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center gap-2 border-b border-white/8 px-5 py-3.5">
+                <Paperclip className="h-4 w-4 text-white/50" />
+                <p className="text-[14px] font-bold">Вложения чата</p>
+                <button
+                  onClick={() => setFilesOpen(false)}
+                  className="ml-auto rounded-full bg-white/10 p-1.5 text-white/70 hover:bg-white/20"
+                  title="Закрыть"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
+              <div className="nice-scroll grid flex-1 grid-cols-3 gap-1.5 overflow-y-auto p-3">
+                {(() => {
+                  const items = messages
+                    .map((m) => ({ m, att: parseAttachment(m.type, m.content) }))
+                    .filter((x): x is { m: ChatMessage; att: NonNullable<ReturnType<typeof parseAttachment>> } => !!x.att);
+                  if (items.length === 0)
+                    return (
+                      <p className="col-span-3 py-8 text-center text-[13px] text-white/40">
+                        В этом чате пока нет вложений
+                      </p>
+                    );
+                  return items.map(({ m, att }) => {
+                    const isImg = att.mimeType?.startsWith("image/") || m.type === "image";
+                    const isVid = att.mimeType?.startsWith("video/") || m.type === "video_note";
+                    return (
+                      <a
+                        key={m.id}
+                        href={att.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="group relative aspect-square overflow-hidden rounded-xl bg-white/5"
+                        title={`${att.name ?? "файл"} · ${new Date(m.createdAt).toLocaleDateString("ru-RU")}`}
+                      >
+                        {isImg ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img src={att.url} alt={att.name ?? ""} className="h-full w-full object-cover transition-transform group-hover:scale-105" />
+                        ) : isVid ? (
+                          <video src={att.url} muted className="h-full w-full object-cover" />
+                        ) : (
+                          <span className="flex h-full w-full flex-col items-center justify-center gap-1 px-2 text-center">
+                            <FileText className="h-6 w-6 text-white/50" />
+                            <span className="line-clamp-2 text-[10px] text-white/55">{att.name ?? "Файл"}</span>
+                          </span>
+                        )}
+                      </a>
+                    );
+                  });
+                })()}
+              </div>
+            </div>
+          </div>
+        )}
+
         {ctxMenu && (
           <MessageContextMenu
             restricted={!!meta?.restricted}
@@ -3309,6 +3802,22 @@ export default function ChatView({
             }}
             onReport={() => {
               void reportMessage(ctxMenu.message);
+              setCtxMenu(null);
+            }}
+            onReaders={
+              ctxMenu.message.senderId === me.id
+                ? () => {
+                    setReadersFor(ctxMenu.message);
+                    setCtxMenu(null);
+                  }
+                : undefined
+            }
+            onRemind={() => {
+              setRemindFor(ctxMenu.message);
+              setCtxMenu(null);
+            }}
+            onCopyFull={() => {
+              void copyFull(ctxMenu.message);
               setCtxMenu(null);
             }}
             onCopyLink={() => {
@@ -3395,6 +3904,49 @@ function MenuItem({
 
 /* ─────────────────────────── меню сообщения ─────────────────────────── */
 
+/** Настройка набора быстрых реакций: галочки по эмодзи, сохраняется локально. */
+function ReactionCustomizer({ onDone }: { onDone: () => void }) {
+  const [sel, setSel] = useState<string[]>(loadQuickReactions);
+  const toggle = (e: string) => {
+    setSel((cur) => {
+      if (cur.includes(e)) return cur.filter((x) => x !== e);
+      if (cur.length >= 10) return cur;
+      return [...cur, e];
+    });
+  };
+  return (
+    <div className="border-b border-white/8 p-1.5">
+      <p className="px-1 pb-1 text-[11px] font-semibold tracking-wide text-white/40 uppercase">
+        Свои быстрые реакции · {sel.length}/10
+      </p>
+      <div className="nice-scroll grid max-h-40 grid-cols-8 gap-0.5 overflow-y-auto">
+        {[...new Set([...QUICK_EMOJIS, ...EXTRA_REACTIONS])].map((e) => (
+          <button
+            key={e}
+            onClick={() => toggle(e)}
+            className={`rounded-lg py-1 text-base transition-all ${
+              sel.includes(e) ? "bg-[#5865f2]/25 ring-1 ring-[#5865f2]/60" : "hover:bg-white/8"
+            }`}
+            title={e}
+          >
+            {e}
+          </button>
+        ))}
+      </div>
+      <button
+        onClick={() => {
+          if (sel.length >= 2) saveQuickReactions(sel);
+          onDone();
+        }}
+        disabled={sel.length < 2}
+        className="btn-gradient mt-1.5 w-full rounded-xl py-1.5 text-[12px] font-semibold text-white disabled:opacity-40"
+      >
+        Сохранить набор
+      </button>
+    </div>
+  );
+}
+
 function MessageContextMenu({
   state,
   meId,
@@ -3411,6 +3963,9 @@ function MessageContextMenu({
   onSave,
   onCopyLink,
   onReport,
+  onReaders,
+  onRemind,
+  onCopyFull,
   onDelete,
 }: {
   state: ContextMenuState;
@@ -3428,6 +3983,12 @@ function MessageContextMenu({
   onForward: () => void;
   /** Пожаловаться на сообщение (не свои). */
   onReport?: () => void;
+  /** «Кто прочитал» — только для своих сообщений. */
+  onReaders?: () => void;
+  /** Напомнить о сообщении позже. */
+  onRemind?: () => void;
+  /** Скопировать с автором и временем. */
+  onCopyFull?: () => void;
   /** Быстрое сохранение в «Избранное». */
   onSave: () => void;
   /** Скопировать ссылку на сообщение. */
@@ -3438,6 +3999,9 @@ function MessageContextMenu({
   const own = m.senderId === meId;
   /** Развёрнутый набор реакций («+»). */
   const [moreEmoji, setMoreEmoji] = useState(false);
+  /** Свои быстрые реакции: набор + режим настройки. */
+  const [quicks, setQuicks] = useState<string[]>(loadQuickReactions);
+  const [customizing, setCustomizing] = useState(false);
   const att = parseAttachment(m.type, m.content);
   // Правка по ПКМ — только для текстовых сообщений. Гифку/картинку/файл
   // редактировать «как текст» нельзя (это ломало вложение).
@@ -3465,9 +4029,17 @@ function MessageContextMenu({
         className="glass-strong fixed z-[85] w-[236px] overflow-hidden rounded-2xl p-1.5 shadow-2xl"
         style={{ left: x, top: y }}
       >
-      {/* быстрые реакции */}
+      {/* быстрые реакции (набор настраивается по шестерёнке) */}
+      {customizing ? (
+        <ReactionCustomizer
+          onDone={() => {
+            setCustomizing(false);
+            setQuicks(loadQuickReactions());
+          }}
+        />
+      ) : (
       <div className="grid grid-cols-5 gap-0.5 border-b border-white/8 p-1">
-        {QUICK_EMOJIS.map((e) => (
+        {quicks.slice(0, 8).map((e) => (
           <button
             key={e}
             onClick={onReact.bind(null, e)}
@@ -3487,7 +4059,16 @@ function MessageContextMenu({
         >
           +
         </button>
+        {/* шестерёнка: настройка набора реакций */}
+        <button
+          onClick={() => setCustomizing(true)}
+          className="rounded-lg py-1.5 text-base text-white/40 transition-colors hover:bg-white/8 hover:text-white/80"
+          title="Настроить реакции"
+        >
+          ⚙️
+        </button>
       </div>
+      )}
       {moreEmoji && (
         <div className="nice-scroll grid max-h-36 grid-cols-8 gap-0.5 overflow-y-auto border-b border-white/8 p-1">
           {EXTRA_REACTIONS.map((e) => (
@@ -3553,6 +4134,15 @@ function MessageContextMenu({
           label="В Избранное"
           onClick={onSave}
         />
+      )}
+      {onReaders && (
+        <ContextItem icon={<Eye className="h-4 w-4 text-sky-300" />} label="Кто прочитал" onClick={onReaders} />
+      )}
+      {onRemind && (
+        <ContextItem icon={<AlarmClock className="h-4 w-4 text-violet-300" />} label="Напомнить…" onClick={onRemind} />
+      )}
+      {onCopyFull && (
+        <ContextItem icon={<ClipboardList className="h-4 w-4 text-slate-400" />} label="Копировать с автором" onClick={onCopyFull} />
       )}
       {state.message.senderId !== meId && onReport && (
         <ContextItem icon={<Flag className="h-4 w-4 text-orange-300" />} label="Пожаловаться" onClick={onReport} />
@@ -4400,6 +4990,13 @@ function MessageBubble({
             </button>
           )}
 
+          {/* Цитата выделенного фрагмента («ответить с цитатой») */}
+          {message.quoteText && (
+            <div className="mb-1.5 max-w-full rounded-xl border-l-2 border-amber-400/70 bg-amber-400/10 px-2.5 py-1.5 text-[12px] leading-snug text-white/70">
+              <span className="line-clamp-3">«{message.quoteText}»</span>
+            </div>
+          )}
+
           {/* Цитата (ответ на сообщение) */}
           {message.replyTo && (
             <button
@@ -4411,7 +5008,7 @@ function MessageBubble({
                 <span className="block truncate text-[11px] font-semibold text-slate-300">
                   {message.replyTo.senderId === meId ? "Вы" : message.replyTo.senderName}
                 </span>
-                <span className="block truncate text-[12px] text-white/50">
+                <span className="line-clamp-3 block text-[12px] leading-snug break-words text-white/50">
                   {message.replyTo.deleted ? (
                     "Сообщение удалено"
                   ) : (
@@ -4483,6 +5080,21 @@ function MessageBubble({
                 const c = JSON.parse(message.content.slice(8)) as { name?: string; username?: string; avatar?: string };
                 return <ContactCard name={c.name ?? "Контакт"} username={c.username ?? ""} avatar={c.avatar ?? ""} onOpenUsername={onOpenUsername} />;
               } catch { /* мусор — покажем как текст */ }
+            }
+            if (message.type === "text" && message.content === "nudge:") {
+              return (
+                <div className="flex justify-center py-1">
+                  <motion.div
+                    initial={{ scale: 0.6, opacity: 0 }}
+                    animate={{ scale: 1, opacity: 1 }}
+                    transition={{ type: "spring", stiffness: 300, damping: 14 }}
+                    className="flex items-center gap-2 rounded-full border border-amber-300/25 bg-amber-400/10 px-4 py-2 text-[13px] font-semibold text-amber-200"
+                  >
+                    <span className="animate-pulse-dot">💫</span>
+                    {message.senderId === meId ? "Вы пнули собеседника" : `${message.sender?.displayName ?? ""} пинает вас`}
+                  </motion.div>
+                </div>
+              );
             }
             if (message.type === "text" && message.content.startsWith("location:")) {
               try {
@@ -5134,6 +5746,9 @@ function parsePoll(content: string): { q: string; opts: string[]; multi?: boolea
   }
   return null;
 }
+
+/** Чаты, которым за сессию уже ушёл автоответ «не беспокоить». */
+const autoRepliedConvs = new Set<string>();
 
 /** Кэш превью ссылок на сессию, чтобы не дёргать сервер повторно. */
 const linkPreviewCache = new Map<string, LinkPreviewData | null>();

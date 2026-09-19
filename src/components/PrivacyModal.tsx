@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   CircleDot,
   Eye,
@@ -10,11 +10,13 @@ import {
   PhoneOff,
   Shield,
   ShieldCheck,
+  MoonStar,
   UsersRound,
   X,
 } from "lucide-react";
 import { ModalShell, Toggle } from "./ProfileModal";
 import { api } from "@/lib/api";
+import { getDndSchedule, setDndSchedule, isDndScheduleActive, getAutoReply, setAutoReply } from "@/lib/dnd";
 import type { PublicUser } from "@/lib/types";
 
 type Props = {
@@ -124,6 +126,9 @@ export function PrivacySettings({
       {/* Второй пароль (2ФА) — как в ТГ: при входе запрашивается дополнительно */}
       <SecondPassBlock />
 
+      {/* «Не беспокоить» по расписанию + автоответ */}
+      <DndBlock />
+
       <button
         onClick={() => void save()}
         disabled={!dirty || saving}
@@ -132,6 +137,87 @@ export function PrivacySettings({
         {saving && <Loader2 className="h-4 w-4 animate-spin" />}
         Сохранить приватность
       </button>
+    </div>
+  );
+}
+
+/** «Не беспокоить» по часам + автоответ: тишина ночью, людям — вежливый ответ. */
+function DndBlock() {
+  const [sched, setSched] = useState(getDndSchedule);
+  const [reply, setReply] = useState(getAutoReply);
+  const [, force] = useState(0);
+  useEffect(() => {
+    const on = () => force((v) => v + 1);
+    window.addEventListener("pulse-dnd", on);
+    return () => window.removeEventListener("pulse-dnd", on);
+  }, []);
+  return (
+    <div className="rounded-2xl border border-white/8 bg-white/[0.03] p-3.5">
+      <p className="flex items-center gap-2 text-[13px] font-semibold">
+        <MoonStar className="h-4 w-4 text-violet-300" />
+        «Не беспокоить» по расписанию
+        <button
+          onClick={() => {
+            const next = { ...sched, on: !sched.on };
+            setSched(next);
+            setDndSchedule(next);
+          }}
+          className={`ml-auto rounded-full px-2.5 py-0.5 text-[10px] font-bold uppercase transition-colors ${
+            sched.on ? "bg-violet-500/25 text-violet-200" : "bg-white/10 text-white/40"
+          }`}
+        >
+          {sched.on ? "вкл" : "выкл"}
+        </button>
+      </p>
+      <p className="pt-1 text-[11px] leading-snug text-white/35">
+        В эти часы уведомления приходят без звука и всплывающих окон.
+      </p>
+      <div className="flex items-center gap-2 pt-2.5 text-[12px] text-white/55">
+        с
+        <input
+          type="time"
+          value={sched.from}
+          onChange={(e) => {
+            const next = { ...sched, from: e.target.value };
+            setSched(next);
+            setDndSchedule(next);
+          }}
+          className="ring-focus rounded-lg border border-white/10 bg-white/[0.05] px-2 py-1 text-[12px] text-white"
+        />
+        до
+        <input
+          type="time"
+          value={sched.to}
+          onChange={(e) => {
+            const next = { ...sched, to: e.target.value };
+            setSched(next);
+            setDndSchedule(next);
+          }}
+          className="ring-focus rounded-lg border border-white/10 bg-white/[0.05] px-2 py-1 text-[12px] text-white"
+        />
+        {isDndScheduleActive() && <span className="text-[10px] font-bold text-violet-300 uppercase">сейчас тихо</span>}
+      </div>
+      <div className="pt-2.5">
+        <p className="text-[11px] font-semibold tracking-wide text-white/40 uppercase">
+          Автоответ в личку (во время «не беспокоить»)
+        </p>
+        <div className="flex gap-1.5 pt-1.5">
+          <input
+            value={reply}
+            onChange={(e) => setReply(e.target.value)}
+            maxLength={200}
+            placeholder="Например: Я сейчас занят(а), отвечу позже 🙌"
+            className="ring-focus min-w-0 flex-1 rounded-xl border border-white/10 bg-white/[0.05] px-3 py-2 text-[12px]"
+          />
+          <button
+            onClick={() => setAutoReply(reply)}
+            className="rounded-xl bg-violet-500/80 px-3 py-2 text-[12px] font-semibold text-white hover:bg-violet-500"
+          >
+            ОК
+          </button>
+        </div>
+        <p className="pt-1 text-[10px] text-white/30">Отправится один раз на чат, только в личные сообщения.</p>
+      </div>
     </div>
   );
 }

@@ -39,6 +39,9 @@ import {
   Video,
   Volume2,
   VolumeX,
+  ArrowDownAZ,
+  Clock,
+  Eye,
 } from "lucide-react";
 import Avatar from "./Avatar";
 import { getAccounts, removeAccount, MAX_ACCOUNTS, type SavedAccount } from "@/lib/accounts";
@@ -48,6 +51,7 @@ import StoriesRow from "./StoriesRow";
 import { api } from "@/lib/api";
 import { timeHHmm, cleanSnippet } from "@/lib/format";
 import type { ConversationListItem, DiscoverItem, PublicUser, StoryGroup } from "@/lib/types";
+import { getNickname, onNicknames } from "@/lib/nicknames";
 
 type Props = {
   me: PublicUser;
@@ -275,6 +279,11 @@ export default function Sidebar({
       ),
     );
   };
+  // Псевдонимы контактов: живой ререндер при изменении
+  const [nickTick, setNickTick] = useState(0);
+  useEffect(() => onNicknames(() => setNickTick((v) => v + 1)), []);
+  void nickTick; // ререндер при смене псевдонимов
+
   // Черновики: красный ярлык в списке чатов, обновляется на лету
   const [draftTick, setDraftTick] = useState(0);
   useEffect(() => {
@@ -297,6 +306,45 @@ export default function Sidebar({
       return {} as Record<string, string>;
     }
   }, [draftTick, conversations]);
+  /** Сортировка списка: по времени / по имени / по непрочитанным. */
+  const [sortMode, setSortMode] = useState<"time" | "name" | "unread">(() => {
+    try {
+      const v = localStorage.getItem("pulse_sort_v1");
+      if (v === "name" || v === "unread") return v;
+    } catch {
+      /* ignore */
+    }
+    return "time";
+  });
+  const cycleSort = () => {
+    setSortMode((cur) => {
+      const next = cur === "time" ? "name" : cur === "name" ? "unread" : "time";
+      try {
+        localStorage.setItem("pulse_sort_v1", next);
+      } catch {
+        /* ignore */
+      }
+      return next;
+    });
+  };
+  const sortConvs = useCallback(
+    (list: ConversationListItem[]) => {
+      const arr = [...list];
+      if (sortMode === "name") {
+        arr.sort((a, b) => a.title.localeCompare(b.title, "ru"));
+      } else if (sortMode === "unread") {
+        arr.sort(
+          (a, b) =>
+            b.unreadCount - a.unreadCount ||
+            Date.parse(b.lastMessage?.createdAt ?? 0 as unknown as string) -
+              Date.parse(a.lastMessage?.createdAt ?? (0 as unknown as string)),
+        );
+      }
+      return arr; // time: сервер уже отсортировал по последнему сообщению
+    },
+    [sortMode],
+  );
+
   /** Папки чатов: фильтр списка по типу (как вкладки в мессенджерах). */
   const [folder, setFolder] = useState<"all" | "direct" | "group" | "channel" | "unread">(() => {
     try {
@@ -466,10 +514,13 @@ export default function Sidebar({
     [conversations, pinnedIds, inFolder, inArchiveView],
   );
   const unpinnedSpaces = useMemo(
-    () => spaces.filter((c) => !pinnedIds.has(c.id)),
-    [spaces, pinnedIds],
+    () => sortConvs(spaces.filter((c) => !pinnedIds.has(c.id))),
+    [spaces, pinnedIds, sortConvs],
   );
-  const unpinnedDms = useMemo(() => dms.filter((c) => !pinnedIds.has(c.id)), [dms, pinnedIds]);
+  const unpinnedDms = useMemo(
+    () => sortConvs(dms.filter((c) => !pinnedIds.has(c.id))),
+    [dms, pinnedIds, sortConvs],
+  );
 
   // Мультиаккаунт: список сохранённых аккаунтов + переключение по токену
   const [accOpen, setAccOpen] = useState(false);
@@ -809,7 +860,7 @@ export default function Sidebar({
       </div>
 
       {/* Папки чатов — быстрый фильтр по типу; не влезают — горизонтальная прокрутка */}
-      <div className="no-scrollbar flex w-full gap-1.5 overflow-x-auto px-3 pb-2">
+      <div className="no-scrollbar flex w-full items-center gap-1.5 overflow-x-auto px-3 pb-2">
         {(
           [
             ["all", "Все"],
@@ -845,6 +896,26 @@ export default function Sidebar({
             </button>
           );
         })}
+        <button
+          onClick={cycleSort}
+          title={
+            sortMode === "time"
+              ? "Сортировка: по времени · нажмите для смены"
+              : sortMode === "name"
+                ? "Сортировка: по имени · нажмите для смены"
+                : "Сортировка: непрочитанные сверху · нажмите для смены"
+          }
+          className="ml-auto flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full bg-white/[0.05] px-2.5 py-1 text-[11px] font-medium text-white/45 transition-colors hover:bg-white/10 hover:text-white/70"
+        >
+          {sortMode === "time" ? (
+            <Clock className="h-3 w-3" />
+          ) : sortMode === "name" ? (
+            <ArrowDownAZ className="h-3 w-3" />
+          ) : (
+            <Eye className="h-3 w-3" />
+          )}
+          {sortMode === "time" ? "По времени" : sortMode === "name" ? "По имени" : "Непрочит."}
+        </button>
       </div>
 
       {/* Истории */}
@@ -1077,7 +1148,9 @@ function ConvRow({
       <div className="min-w-0 flex-1">
         <div className="flex items-baseline justify-between gap-2">
           <p className={`flex min-w-0 items-center gap-1.5 truncate text-[15px] ${markedUnread ? "font-bold" : "font-semibold"}`}>
-            <span className="truncate">{conv.title}</span>
+            <span className="truncate">
+              {conv.kind === "direct" && getNickname(conv.peer.id) ? getNickname(conv.peer.id) : conv.title}
+            </span>
             {conv.verified && (
               <span title="Официальный" className="shrink-0">
                 <BadgeCheck className="h-3.5 w-3.5 text-sky-400" />
@@ -1198,8 +1271,14 @@ function ConvRow({
             </p>
           ) : (
             <p className="min-w-0 flex-1 truncate text-[13px] text-white/40">
-              {draft && <span className="font-semibold text-rose-400">Черновик: </span>}
-              <PreviewNode conv={conv} meId={meId} />
+              {draft ? (
+                <>
+                  <span className="font-semibold text-rose-400">Черновик: </span>
+                  <span className="text-white/55">{draft}</span>
+                </>
+              ) : (
+                <PreviewNode conv={conv} meId={meId} />
+              )}
             </p>
           )}
           {conv.unreadCount > 0 ? (

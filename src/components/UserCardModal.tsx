@@ -27,6 +27,7 @@ import { bannerStyle, isFileBanner } from "@/lib/wallpapers";
 import { api } from "@/lib/api";
 import type { PublicUser } from "@/lib/types";
 import { lastSeenLabel } from "@/lib/format";
+import { getNickname, setNickname } from "@/lib/nicknames";
 import { GIFTS, findGift, NFT_VARIANTS, type GiftItem } from "@/lib/gifts";
 import GiftDetailModal from "./GiftDetailModal";
 import GiftsPanel from "./GiftsPanel";
@@ -43,6 +44,34 @@ type Props = {
 };
 
 export default function UserCardModal({ user, onClose, onMessage, myId, onBack }: Props) {
+  /** Псевдоним контакта: «своё» имя, видно только вам. */
+  const [nick, setNick] = useState(() => getNickname(user.id) ?? "");
+  useEffect(() => {
+    setNick(getNickname(user.id) ?? "");
+  }, [user.id]);
+  /** Общие группы и каналы. */
+  const [common, setCommon] = useState<{ id: string; title: string; kind: string }[] | null>(null);
+  useEffect(() => {
+    if (user.id === myId) return;
+    let dead = false;
+    api<{ common: { id: string; title: string; kind: string }[] }>(`/api/users/${user.id}/common`)
+      .then((d) => {
+        if (!dead) setCommon(d.common);
+      })
+      .catch(() => {
+        if (!dead) setCommon([]);
+      });
+    return () => {
+      dead = true;
+    };
+  }, [user.id, myId]);
+  /** Сегодня день рождения? */
+  const birthdayToday = (() => {
+    const m = /^(\d{1,2})\.(\d{1,2})/.exec(user.birthday?.trim() ?? "");
+    if (!m) return false;
+    const now = new Date();
+    return Number(m[1]) === now.getDate() && Number(m[2]) === now.getMonth() + 1;
+  })();
   /** Своя карточка («как меня видят другие») — без действий над собой. */
   const isSelf = myId != null && user.id === myId;
   // Баннер мог не дожить до текущего запуска (битый файл) — тогда градиент
@@ -274,6 +303,64 @@ export default function UserCardModal({ user, onClose, onMessage, myId, onBack }
               return <span className="text-white/60">· {age} лет</span>;
             })()}
           </p>
+        )}
+
+        {birthdayToday && (
+          <p className="mx-auto mt-2 flex w-fit items-center gap-1.5 rounded-full border border-pink-300/30 bg-pink-500/15 px-3 py-1 text-[12px] font-semibold text-pink-200">
+            🎂 Сегодня день рождения — поздравьте!
+          </p>
+        )}
+
+        {/* Псевдоним: как вы видите этого человека */}
+        {user.id !== myId && (
+          <div className="mx-auto mt-3 w-full max-w-xs rounded-2xl border border-white/8 bg-white/[0.03] p-2.5">
+            <p className="px-1 pb-1.5 text-[10px] font-semibold tracking-widest text-white/30 uppercase">
+              Псевдоним (видно только вам)
+            </p>
+            <div className="flex gap-1.5">
+              <input
+                value={nick}
+                onChange={(e) => setNick(e.target.value)}
+                maxLength={48}
+                placeholder={user.displayName}
+                className="ring-focus min-w-0 flex-1 rounded-xl border border-white/10 bg-white/[0.05] px-3 py-1.5 text-[13px]"
+              />
+              <button
+                onClick={() => setNickname(user.id, nick)}
+                className="rounded-xl bg-[#5865f2]/80 px-3 py-1.5 text-[12px] font-semibold text-white hover:bg-[#5865f2]"
+              >
+                ОК
+              </button>
+              {(nick || getNickname(user.id)) && (
+                <button
+                  onClick={() => {
+                    setNickname(user.id, "");
+                    setNick("");
+                  }}
+                  title="Сбросить псевдоним"
+                  className="rounded-xl bg-white/8 px-2.5 py-1.5 text-[12px] text-white/60 hover:bg-rose-500/15 hover:text-rose-300"
+                >
+                  ✕
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Общие группы и каналы */}
+        {common !== null && common.length > 0 && (
+          <div className="mx-auto mt-3 w-full max-w-xs rounded-2xl border border-white/8 bg-white/[0.03] p-2.5">
+            <p className="px-1 pb-1.5 text-[10px] font-semibold tracking-widest text-white/30 uppercase">
+              Общие чаты · {common.length}
+            </p>
+            <div className="nice-scroll max-h-28 space-y-1 overflow-y-auto">
+              {common.map((c) => (
+                <p key={c.id} className="truncate rounded-lg bg-white/[0.04] px-2.5 py-1.5 text-[12px] text-white/70">
+                  {c.kind === "channel" ? "📢" : "👥"} {c.title || "Без названия"}
+                </p>
+              ))}
+            </div>
+          </div>
         )}
 
         <p className="mt-4 flex items-center justify-center gap-1.5 text-[11px] text-white/25">

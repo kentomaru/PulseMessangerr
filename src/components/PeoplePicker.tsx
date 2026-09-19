@@ -57,10 +57,37 @@ export default function PeoplePicker({
     setSearching(true);
     const t = setTimeout(async () => {
       try {
-        const d = await api<{ users: PublicUser[] }>(
-          `/api/users/search?q=${encodeURIComponent(q)}`,
-        );
-        setResults(d.users);
+        // Массовый поиск: вставили список «@имя1, имя2, имя3» — ищем каждого
+        const names = q
+          .split(/[,\n;]+/)
+          .map((x) => x.trim().replace(/^@/, ""))
+          .filter(Boolean)
+          .slice(0, 10);
+        if (names.length > 1) {
+          const lists = await Promise.all(
+            names.map((n) =>
+              api<{ users: PublicUser[] }>(`/api/users/search?q=${encodeURIComponent(n)}`).catch(
+                () => ({ users: [] as PublicUser[] }),
+              ),
+            ),
+          );
+          const seen = new Set<string>();
+          const merged: PublicUser[] = [];
+          lists.forEach((d, i) => {
+            const hit =
+              d.users.find((u) => u.username.toLowerCase() === names[i].toLowerCase()) ?? d.users[0];
+            if (hit && !seen.has(hit.id)) {
+              seen.add(hit.id);
+              merged.push(hit);
+            }
+          });
+          setResults(merged);
+        } else {
+          const d = await api<{ users: PublicUser[] }>(
+            `/api/users/search?q=${encodeURIComponent(q)}`,
+          );
+          setResults(d.users);
+        }
       } catch {
         setResults([]);
       } finally {

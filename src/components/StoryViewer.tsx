@@ -144,8 +144,12 @@ export default function StoryViewer({
   };
 
   /** Ответить на историю: создаём/находим личку с автором и шлём цитату + текст. */
-  const sendReply = async () => {
-    if (!group || !story || replyBusy || !replyText.trim()) return;
+  /** Быстрая реакция: эмодзи улетает ответом одним нажатием. */
+  const [reactBurst, setReactBurst] = useState<string | null>(null);
+
+  const sendReply = async (override?: string) => {
+    const text = (override ?? replyText).trim();
+    if (!group || !story || replyBusy || !text) return;
     setReplyBusy(true);
     try {
       const conv = await api<{ conversation: { id: string } }>("/api/conversations", {
@@ -164,10 +168,10 @@ export default function StoryViewer({
         body: JSON.stringify({
           conversationId: conv.conversation.id,
           type: "text",
-          content: encodeStoryQuote(quote, replyText.trim()),
+          content: encodeStoryQuote(quote, text),
         }),
       });
-      setReplyText("");
+      if (override === undefined) setReplyText("");
       setReplySent(true);
       onReplied?.();
     } catch {
@@ -400,7 +404,29 @@ export default function StoryViewer({
         {/* Ответ на историю — как в ТГ: строка ввода под кадром */}
         {!isMine && (
           <div className="flex items-center gap-2 px-4 pt-1 pb-4">
-            <button
+                        {/* Быстрые реакции на историю — эмодзи улетает сразу */}
+            <div className="absolute bottom-[calc(100%+6px)] left-1/2 flex -translate-x-1/2 items-center gap-1">
+              {["❤️", "🔥", "😂", "😮", "👍", "🎉"].map((e) => (
+                <button
+                  key={e}
+                  onClick={() => {
+                    setReactBurst(e);
+                    setTimeout(() => setReactBurst(null), 700);
+                    void sendReply(e);
+                  }}
+                  className="emoji-ios rounded-full bg-black/35 px-1.5 py-1 text-[17px] backdrop-blur-sm transition-transform hover:scale-125 active:scale-90"
+                  title={`Реакция ${e}`}
+                >
+                  {e}
+                </button>
+              ))}
+              {reactBurst && (
+                <span className="pointer-events-none absolute -top-6 left-1/2 -translate-x-1/2 animate-ping text-[22px]">
+                  {reactBurst}
+                </span>
+              )}
+            </div>
+<button
               onClick={() => replyRef.current?.focus()}
               title="Ответить на историю"
               className="glass-strong grid h-10 w-10 shrink-0 place-items-center rounded-full text-white/70 hover:text-white"

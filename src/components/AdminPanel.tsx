@@ -295,6 +295,8 @@ export default function AdminPanel({ onClose, notify }: { onClose: () => void; n
       </div>
 
       {/* Подтверждение: способ + основание (шаблоны или свой текст) */}
+      <ConvBanSection notify={notify} />
+
       {confirmFor && (
         <div className="fixed inset-0 z-[96] grid place-items-center bg-black/70 p-4 backdrop-blur-sm" onClick={() => setConfirmFor(null)}>
           <div className="glass-strong w-full max-w-sm rounded-[1.6rem] p-5 shadow-2xl" onClick={(e) => e.stopPropagation()}>
@@ -375,5 +377,206 @@ export default function AdminPanel({ onClose, notify }: { onClose: () => void; n
         </div>
       )}
     </ModalShell>
+  );
+}
+
+
+type AdminConv = {
+  id: string;
+  kind: string;
+  name: string;
+  avatarUrl: string | null;
+  bannedAt: string | null;
+  banReason: string | null;
+  createdAt: string;
+};
+
+/** Раздел админки: блокировка и удаление групп и каналов (как пользователей). */
+function ConvBanSection({ notify }: { notify: (m: string) => void }) {
+  const [q, setQ] = useState("");
+  const [rows, setRows] = useState<AdminConv[] | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [confirm, setConfirm] = useState<{ conv: AdminConv; mode: "ban" | "delete" } | null>(null);
+  const [reason, setReason] = useState("");
+
+  const load = useCallback(async (query: string) => {
+    try {
+      const d = await api<{ conversations: AdminConv[] }>(
+        `/api/admin/conversations?q=${encodeURIComponent(query)}`,
+      );
+      setRows(d.conversations);
+    } catch {
+      setRows([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    const t = setTimeout(() => void load(q.trim()), 350);
+    return () => clearTimeout(t);
+  }, [q, load]);
+
+  const act = async (conv: AdminConv, mode: "ban" | "unban" | "delete") => {
+    setBusy(conv.id);
+    try {
+      await api("/api/admin/conversations", {
+        method: "POST",
+        body: JSON.stringify({ conversationId: conv.id, mode, reason }),
+      });
+      notify(
+        mode === "ban"
+          ? `«${conv.name}» заблокирован`
+          : mode === "unban"
+            ? `«${conv.name}» разблокирован`
+            : `«${conv.name}» удалён`,
+      );
+      setConfirm(null);
+      setReason("");
+      await load(q.trim());
+    } catch (e) {
+      notify(e instanceof Error ? e.message : "Не удалось выполнить действие");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <>
+      <div className="px-6 pt-4">
+        <p className="mb-2 text-[11px] font-semibold tracking-widest text-white/30 uppercase">Чаты и каналы</p>
+        <div className="flex items-center gap-2 rounded-2xl border border-white/10 bg-white/[0.04] px-3.5 py-2.5">
+          <Search className="h-4 w-4 text-white/35" />
+          <input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Поиск группы или канала…"
+            className="w-full bg-transparent text-sm outline-none placeholder:text-white/30"
+          />
+        </div>
+      </div>
+      <div className="nice-scroll max-h-[34vh] space-y-1.5 overflow-y-auto px-6 py-3">
+        {rows === null ? (
+          <div className="grid place-items-center py-6 text-white/40">
+            <Loader2 className="h-5 w-5 animate-spin" />
+          </div>
+        ) : rows.length === 0 ? (
+          <p className="py-6 text-center text-sm text-white/40">Группы и каналы не найдены</p>
+        ) : (
+          rows.map((c) => (
+            <div
+              key={c.id}
+              className={`pm-rise flex items-center gap-3 rounded-2xl border px-3.5 py-2.5 ${
+                c.bannedAt ? "border-rose-400/30 bg-rose-500/[0.06]" : "border-white/8 bg-white/[0.03]"
+              }`}
+            >
+              <Avatar name={c.name || "Без названия"} src={c.avatarUrl} size={40} />
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-[14px] font-semibold">
+                  {c.name || "Без названия"}
+                  <span className="ml-1.5 rounded-full bg-white/8 px-1.5 py-0.5 text-[10px] font-medium text-white/45">
+                    {c.kind === "channel" ? "канал" : "группа"}
+                  </span>
+                </p>
+                {c.bannedAt ? (
+                  <p className="flex items-center gap-1 pt-0.5 text-[11px] text-rose-300">
+                    <Ban className="h-3 w-3" />
+                    Заблокирован {new Date(c.bannedAt).toLocaleDateString("ru-RU")} · {c.banReason || "без причины"}
+                  </p>
+                ) : (
+                  <p className="truncate text-[12px] text-white/40">
+                    с {new Date(c.createdAt).toLocaleDateString("ru-RU")}
+                  </p>
+                )}
+              </div>
+              <div className="flex shrink-0 items-center gap-1.5">
+                {busy === c.id ? (
+                  <Loader2 className="h-4 w-4 animate-spin text-white/40" />
+                ) : c.bannedAt ? (
+                  <button
+                    onClick={() => void act(c, "unban")}
+                    className="flex items-center gap-1.5 rounded-xl bg-emerald-500/15 px-3 py-1.5 text-[12px] font-medium text-emerald-300 hover:bg-emerald-500/25"
+                  >
+                    <Unlock className="h-3.5 w-3.5" /> Разблокировать
+                  </button>
+                ) : (
+                  <>
+                    <button
+                      onClick={() => setConfirm({ conv: c, mode: "ban" })}
+                      className="flex items-center gap-1.5 rounded-xl bg-rose-500/15 px-3 py-1.5 text-[12px] font-medium text-rose-300 hover:bg-rose-500/25"
+                    >
+                      <Ban className="h-3.5 w-3.5" /> Заблокировать
+                    </button>
+                    <button
+                      onClick={() => setConfirm({ conv: c, mode: "delete" })}
+                      className="flex items-center gap-1.5 rounded-xl bg-white/8 px-3 py-1.5 text-[12px] font-medium text-white/60 hover:bg-rose-500/15 hover:text-rose-300"
+                      title="Удалить чат навсегда"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </>
+                )}
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+
+      {confirm && (
+        <div className="fixed inset-0 z-[95] grid place-items-center bg-black/70 p-4 backdrop-blur-sm" onClick={() => setConfirm(null)}>
+          <div
+            className="pm-rise w-full max-w-sm rounded-3xl border border-white/10 bg-[#1b1e24] p-5 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <p className="text-[15px] font-bold">
+              {confirm.mode === "delete" ? "Удалить чат навсегда?" : "Заблокировать чат?"}
+            </p>
+            <p className="pt-1.5 text-[13px] leading-relaxed text-white/50">
+              {confirm.mode === "delete"
+                ? `«${confirm.conv.name}» будет удалён вместе со всей историей. Действие необратимо.`
+                : `Участники больше не смогут открыть «${confirm.conv.name}» и писать туда. Чат исчезнет из списков.`}
+            </p>
+            {confirm.mode === "ban" && (
+              <div className="pt-3">
+                <div className="flex flex-wrap gap-1.5">
+                  {REASON_TEMPLATES.map((t) => (
+                    <button
+                      key={t}
+                      onClick={() => setReason(t)}
+                      className={`rounded-full px-2.5 py-1 text-[11px] font-medium transition-colors ${
+                        reason === t ? "btn-gradient text-white" : "bg-white/8 text-white/60 hover:bg-white/15"
+                      }`}
+                    >
+                      {t}
+                    </button>
+                  ))}
+                </div>
+                <textarea
+                  value={reason}
+                  onChange={(e) => setReason(e.target.value)}
+                  maxLength={200}
+                  rows={2}
+                  placeholder="Причина блокировки…"
+                  className="ring-focus mt-2 w-full resize-none rounded-xl border border-white/10 bg-white/[0.05] px-3 py-2 text-[13px]"
+                />
+              </div>
+            )}
+            <div className="flex gap-2 pt-3">
+              <button
+                onClick={() => setConfirm(null)}
+                className="flex-1 rounded-2xl bg-white/10 py-2.5 text-sm font-medium text-white/70 hover:bg-white/15"
+              >
+                Отмена
+              </button>
+              <button
+                onClick={() => void act(confirm.conv, confirm.mode)}
+                disabled={busy !== null}
+                className="flex-1 rounded-2xl bg-rose-500/80 py-2.5 text-sm font-semibold text-white hover:bg-rose-500 disabled:opacity-40"
+              >
+                {confirm.mode === "delete" ? "Удалить" : "Заблокировать"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   );
 }

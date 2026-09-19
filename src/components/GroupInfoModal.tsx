@@ -35,6 +35,7 @@ import { ModalShell } from "./ProfileModal";
 import { api, copyToClipboard, uploadFile } from "@/lib/api";
 import { timeAgo } from "@/lib/format";
 import type { ConversationInfo, ConversationMemberItem, MemberRole, PublicUser } from "@/lib/types";
+import { stripDiscussionMarker } from "@/lib/discussionMarker";
 
 type Props = {
   me: PublicUser;
@@ -100,15 +101,8 @@ export default function GroupInfoModal({
       setInfo(d.conversation);
       setMembers(d.conversation.members);
       setName(d.conversation.name ?? "");
-      // Маркер «обсуждение канала» — служебная первая строка, её не показываем
-      const rawAbout = d.conversation.about ?? "";
-      setAbout(
-        rawAbout.startsWith("pulse-discussion-of:")
-          ? rawAbout.slice(rawAbout.indexOf("\n") + 1).replace(/^\n/, "") === rawAbout
-            ? ""
-            : rawAbout.slice(rawAbout.indexOf("\n") === -1 ? rawAbout.length : rawAbout.indexOf("\n") + 1)
-          : rawAbout,
-      );
+      // Маркер «обсуждение канала» — служебный, его не показываем
+      setAbout(stripDiscussionMarker(d.conversation.about));
       setIsPrivate(d.conversation.isPrivate);
       setRestricted(!!(d.conversation as { restricted?: boolean }).restricted);
       setShowOwner((d.conversation as { showOwner?: boolean }).showOwner !== false);
@@ -238,7 +232,7 @@ export default function GroupInfoModal({
         body: JSON.stringify({
           name,
           about: (info?.about ?? "").startsWith("pulse-discussion-of:")
-            ? (info?.about ?? "").slice(0, (info?.about ?? "").indexOf("\n") === -1 ? undefined : (info?.about ?? "").indexOf("\n")).concat(about.trim() ? "\n" + about.trim() : "")
+            ? (info?.about ?? "").slice(0, (info?.about ?? "").match(/^pulse-discussion-of:[0-9a-f-]+/i)?.[0]?.length ?? 0).concat(about.trim() ? "\n" + about.trim() : "")
             : about,
           isPrivate,
           avatarUrl,
@@ -497,7 +491,7 @@ export default function GroupInfoModal({
                 onClick={() => {
                   setEdit(false);
                   setName(info.name ?? "");
-                  setAbout(info.about);
+                  setAbout(stripDiscussionMarker(info.about));
                   setIsPrivate(info.isPrivate);
                   setRestricted(!!info.restricted);
                   setShowOwner(info.showOwner !== false);
@@ -607,8 +601,8 @@ export default function GroupInfoModal({
         </div>
       )}
 
-      {info.about && !edit && (
-        <p className="px-6 pt-4 text-sm leading-relaxed text-white/55">{info.about}</p>
+      {stripDiscussionMarker(info.about) && !edit && (
+        <p className="px-6 pt-4 text-sm leading-relaxed text-white/55">{stripDiscussionMarker(info.about)}</p>
       )}
 
       {/* Участники */}

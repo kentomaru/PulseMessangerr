@@ -22,6 +22,16 @@ export const GET = withApi<{ id: string }>("conversations:get", async ({ params,
   const { id } = params;
   if (!isUuid(id)) return NextResponse.json({ error: "Чат не найден" }, { status: 404 });
 
+  // Чат, заблокированный администрацией, не открывается
+  const [bannedCheck] = await db
+    .select({ bannedAt: conversations.bannedAt })
+    .from(conversations)
+    .where(eq(conversations.id, id))
+    .limit(1);
+  if (bannedCheck?.bannedAt) {
+    return NextResponse.json({ error: "Этот чат заблокирован администрацией" }, { status: 403 });
+  }
+
   const access = await requireMember(id, me.id);
   if (!access) return NextResponse.json({ error: "Нет доступа" }, { status: 403 });
 

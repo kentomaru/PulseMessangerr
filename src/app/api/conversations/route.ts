@@ -30,10 +30,11 @@ export const GET = withApi("conversations", async ({ me }) => {
   const convIds = myMemberships.map((m) => m.conversationId);
   const myRoleById = new Map(myMemberships.map((m) => [m.conversationId, normalizeRole(m.role)]));
 
+  // Заблокированные администрацией чаты исчезают из списка
   const convs = await db
     .select()
     .from(conversations)
-    .where(inArray(conversations.id, convIds));
+    .where(and(inArray(conversations.id, convIds), isNull(conversations.bannedAt)));
 
   const allMembers = await db
     .select({ member: conversationMembers, user: users })

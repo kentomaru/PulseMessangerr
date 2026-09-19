@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { CheckCircle2, PanelLeftOpen, Keyboard, MessageSquareText } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
+import { isDndScheduleActive, getReminders, saveReminders } from "@/lib/dnd";
 import { readScheduled, removeScheduled } from "@/lib/scheduledStore";
 import { messagePreview } from "@/lib/format";
 import { playNotifySound } from "@/lib/notify";
@@ -562,13 +563,41 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
       notif = null;
     }
     if (beep) {
-      if (soundOnRef.current && Date.now() >= (dndUntilRef.current ?? 0)) playNotifySound();
-      if (notif) pushBrowserNotification(notif.title, notif.body, notif.conversationId);
+      // «Не беспокоить»: ручной режим + расписание по часам
+      const quiet = Date.now() < (dndUntilRef.current ?? 0) || isDndScheduleActive();
+      if (soundOnRef.current && !quiet) playNotifySound();
+      if (notif && !quiet) pushBrowserNotification(notif.title, notif.body, notif.conversationId);
     }
   }, [conversations, me.id, pushBrowserNotification]);
 
   conversationsRef.current = conversations;
   const activeConv = conversations.find((c) => c.id === activeId) ?? null;
+
+  /* ── Напоминания о сообщениях: локальный диспетчер ── */
+  useEffect(() => {
+    const tick = () => {
+      const list = getReminders();
+      if (list.length === 0) return;
+      const due = list.filter((r) => r.at <= Date.now());
+      if (due.length === 0) return;
+      saveReminders(list.filter((r) => r.at > Date.now()));
+      for (const r of due) {
+        notify(`⏰ Напоминание: «${r.text || "сообщение"}»`);
+        setActiveId(r.conversationId);
+        try {
+          if (typeof Notification !== "undefined" && Notification.permission === "granted") {
+            new Notification("Pulse · напоминание", { body: r.text || "Пора вернуться к сообщению" });
+          }
+        } catch {
+          /* уведомления недоступны */
+        }
+      }
+    };
+    tick();
+    const iv = setInterval(tick, 15_000);
+    return () => clearInterval(iv);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   /** Клик по @юзернейму в сообщении: чат/канал или личный чат с человеком. */
   const openUsername = async (name: string) => {

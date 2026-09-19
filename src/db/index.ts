@@ -403,6 +403,9 @@ export async function ensureSchema(): Promise<void> {
       primary key (post_id, user_id)
     );
     alter table users add column if not exists second_pass_hash text;
+    alter table messages add column if not exists quote_text text;
+    alter table conversations add column if not exists banned_at timestamptz;
+    alter table conversations add column if not exists ban_reason text;
     -- Дубли «Избранного»: оставляем самый старый свой личный чат,
     -- сообщения из дублей переносим в него, дубли удаляем.
     DO $dedupe$

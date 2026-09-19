@@ -5,6 +5,7 @@ import { motion } from "framer-motion";
 import { modalEnter, isTopModal } from "@/lib/modals";
 import {
   ArrowLeft,
+  BarChart3,
   Pin,
   Ban,
   Camera,
@@ -92,6 +93,8 @@ export default function ProfileModal({
 }: Props) {
   /** Вкладки: профиль, приватность, оформление (с превью), друзья. */
   const [tab, setTab] = useState<"profile" | "privacy" | "appearance" | "friends">("profile");
+  /** Модалка личной статистики. */
+  const [statsOpen, setStatsOpen] = useState(false);
   const [displayName, setDisplayName] = useState(me.displayName);
   const [username, setUsername] = useState(me.username);
   const [copiedName, setCopiedName] = useState(false);
@@ -544,7 +547,20 @@ export default function ProfileModal({
               <ChevronRight className="h-4 w-4 text-white/30" />
             </button>
           )}
+          <button
+            onClick={() => setStatsOpen(true)}
+            className="flex w-full items-center gap-3 rounded-2xl px-2 py-2 text-left transition-colors hover:bg-white/5"
+            title="Личная статистика"
+          >
+            <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-gradient-to-br from-sky-500/80 to-cyan-400/70 text-white">
+              <BarChart3 className="h-4 w-4" />
+            </span>
+            <span className="min-w-0 flex-1 text-[14px] font-medium text-white/85">Статистика</span>
+            <ChevronRight className="h-4 w-4 text-white/30" />
+          </button>
         </div>
+
+        {statsOpen && <StatsModal onClose={() => setStatsOpen(false)} />}
 
         {/* Подарки — отдельная плашка с листанием */}
         {myGifts && myGifts.length > 0 && (
@@ -896,6 +912,70 @@ const THEMES: Record<string, { bg: string; panel: string; label: string }> = {
   light: { bg: "#eef1f5", panel: "#ffffff", label: "Светлая" },
   auto: { bg: "linear-gradient(135deg,#20232a 50%,#12202f 50%)", panel: "#2a2e36", label: "Авто" },
 };
+
+/** Личная статистика: стаж, чаты, сообщения, полученные реакции. */
+function StatsModal({ onClose }: { onClose: () => void }) {
+  const [stats, setStats] = useState<{
+    days: number;
+    chats: number;
+    sent: number;
+    reactions: number;
+    premium: boolean;
+  } | null>(null);
+  useEffect(() => {
+    let dead = false;
+    api<{ stats: { days: number; chats: number; sent: number; reactions: number; premium: boolean } }>(
+      "/api/auth/me/stats",
+    )
+      .then((d) => {
+        if (!dead) setStats(d.stats);
+      })
+      .catch(() => {
+        if (!dead) setStats({ days: 0, chats: 0, sent: 0, reactions: 0, premium: false });
+      });
+    return () => {
+      dead = true;
+    };
+  }, []);
+  return (
+    <div className="fixed inset-0 z-[92] grid place-items-center bg-black/60 p-4 backdrop-blur-sm" onClick={onClose}>
+      <div
+        className="pm-rise w-full max-w-sm rounded-3xl border border-white/10 bg-[#1b1e24] p-5 shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <p className="flex items-center gap-2 text-[15px] font-bold">
+          <BarChart3 className="h-4 w-4 text-sky-300" /> Моя статистика
+        </p>
+        {!stats ? (
+          <p className="py-8 text-center text-[13px] text-white/40">Считаем…</p>
+        ) : (
+          <div className="grid grid-cols-2 gap-2 pt-4">
+            {[
+              [stats.days, "дней в Pulse"],
+              [stats.chats, "чатов"],
+              [stats.sent, "сообщений отправлено"],
+              [stats.reactions, "реакций на ваших сообщениях"],
+            ].map(([n, label]) => (
+              <div key={String(label)} className="rounded-2xl border border-white/8 bg-white/[0.04] px-3 py-3 text-center">
+                <p className="text-[20px] font-extrabold text-sky-300 tabular-nums">{n}</p>
+                <p className="pt-0.5 text-[11px] leading-tight text-white/45">{label}</p>
+              </div>
+            ))}
+          </div>
+        )}
+        {stats?.premium && (
+          <p className="pt-3 text-center text-[12px] font-semibold text-amber-300">⭐ У вас Pulse Premium</p>
+        )}
+        <button
+          onClick={onClose}
+          className="mt-4 w-full rounded-2xl bg-white/8 py-2.5 text-[13px] font-medium text-white/70 hover:bg-white/12"
+        >
+          Закрыть
+        </button>
+      </div>
+    </div>
+  );
+}
 
 /**
  * Вкладка «Оформление» — все настройки вида переехали из сайдбара.

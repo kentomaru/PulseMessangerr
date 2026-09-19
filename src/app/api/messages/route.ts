@@ -123,6 +123,7 @@ async function serializeMessages(list: MessageRow[], meId: string): Promise<Chat
       type: m.type as ChatMessage["type"],
       content: m.content,
       replyToId: m.replyToId,
+      quoteText: (m as { quoteText?: string | null }).quoteText ?? null,
       silent: !!(m as { silent?: boolean }).silent,
       views: (m as { views?: number }).views ?? 0,
       createdAt: new Date(m.createdAt).toISOString(),
@@ -362,6 +363,8 @@ export const POST = withApi("messages:send", async ({ req, me, log }) => {
   const ALLOWED_TYPES = ["text", "image", "voice", "video_note", "file", "gift"] as const;
   const type = ALLOWED_TYPES.includes(body.type) ? (body.type as (typeof ALLOWED_TYPES)[number]) : "text";
   const replyToId = typeof body.replyToId === "string" && isUuid(body.replyToId) ? body.replyToId : null;
+  const quoteText =
+    typeof body.quoteText === "string" && body.quoteText.trim() ? body.quoteText.trim().slice(0, 500) : null;
   const silent = body.silent === true;
   /** Расшифровка голосового, собранная прямо во время записи (до 2000 симв.). */
   const transcript =
@@ -385,6 +388,21 @@ export const POST = withApi("messages:send", async ({ req, me, log }) => {
     return NextResponse.json({ error: "Чат не найден" }, { status: 404 });
   const content = String(body.content ?? "").trim();
 
+  // Заблокированный администрацией чат/канал — писать нельзя
+  if (conversationId && isUuid(conversationId)) {
+    const [bannedConv] = await db
+      .select({ bannedAt: conversations.bannedAt })
+      .from(conversations)
+      .where(eq(conversations.id, conversationId))
+      .limit(1);
+    if (bannedConv?.bannedAt) {
+      return NextResponse.json(
+        { error: "Этот чат заблокирован администрацией" },
+        { status: 403 },
+      );
+    }
+  }
+
   // Чёрный список: в личном чате заблокированные не переписываются
   if (conversationId && isUuid(conversationId)) {
     const [convRow] = await db
@@ -401,6 +419,18 @@ export const POST = withApi("messages:send", async ({ req, me, log }) => {
       ).map((m) => m.userId);
       const peerId = memberIds.find((id) => id !== me.id);
       if (peerId) {
+        // Удалённому или заблокированному аккаунту писать нельзя (как и звонить)
+        const [peerRow] = await db
+          .select({ bannedAt: users.bannedAt, deletedAt: users.deletedAt })
+          .from(users)
+          .where(eq(users.id, peerId))
+          .limit(1);
+        if (peerRow && (peerRow.bannedAt || peerRow.deletedAt)) {
+          return NextResponse.json(
+            { error: "Этот аккаунт удалён или заблокирован — написать нельзя" },
+            { status: 403 },
+          );
+        }
         const [block] = await db
           .select()
           .from(userBlocks)
@@ -515,6 +545,7 @@ export const POST = withApi("messages:send", async ({ req, me, log }) => {
       type,
       content,
       replyToId,
+      quoteText,
       silent,
       transcript: type === "voice" ? transcript : null,
       forwardedFrom,

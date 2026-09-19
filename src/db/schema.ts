@@ -110,6 +110,9 @@ export const conversations = pgTable(
     verified: boolean("verified").notNull().default(false),
     /** «Запретить копирование/сохранение» — как ограниченные каналы в ТГ. */
     restricted: boolean("restricted").notNull().default(false),
+    /** Блокировка чата/канала администрацией. */
+    bannedAt: timestamp("banned_at", { withTimezone: true }),
+    banReason: text("ban_reason"),
   // Минимальная пауза между сообщениями участников (сек, 0 — выключен)
   slowMode: integer("slow_mode").notNull().default(0),
     ownerId: uuid("owner_id").references(() => users.id, { onDelete: "set null" }),
@@ -285,6 +288,8 @@ export const messages = pgTable(
     silent: boolean("silent").notNull().default(false),
     /** Сколько раз просмотрели пост канала (как в ТГ — «глазик»). */
     views: integer("views").notNull().default(0),
+    /** Текст цитаты при «ответить с цитатой выделенного». */
+    quoteText: text("quote_text"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
     editedAt: timestamp("edited_at", { withTimezone: true }),

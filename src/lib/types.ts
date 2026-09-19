@@ -157,6 +157,8 @@ export type ChatMessage = {
   silent?: boolean;
   /** Просмотры поста канала («глазик» как в ТГ). */
   views?: number;
+  /** Выделенный текст, к которому относится ответ («ответить с цитатой»). */
+  quoteText?: string | null;
   createdAt: string;
   deletedAt: string | null;
   /** Когда сообщение отредактировано. */
