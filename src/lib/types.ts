@@ -26,7 +26,7 @@ export type PublicUser = {
   premium: boolean;
 };
 
-export type Peer = PublicUser & { lastReadAt?: string | null; typingAt?: string | null; recordingAt?: string | null };
+export type Peer = PublicUser & { lastReadAt?: string | null; typingAt?: string | null; recordingAt?: string | null; recordingKind?: string | null };
 
 export type ConversationKind = "direct" | "group" | "channel";
 export type MemberRole = "owner" | "admin" | "member";
@@ -39,6 +39,8 @@ export type ConversationInfo = {
   avatarUrl: string | null;
   about: string;
   isPrivate: boolean;
+  /** Официальный канал/группа — синяя галочка. */
+  verified?: boolean;
   restricted?: boolean;
   slowMode?: number;
   /** Показывать ли участникам, кто владелец (канал). */
@@ -61,6 +63,7 @@ export type ConversationMemberItem = {
   typingAt: string | null;
   /** Записывает голосовое прямо сейчас (для индикатора у собеседника). */
   recordingAt?: string | null;
+  recordingKind?: string | null;
   joinedAt: string;
 };
 
@@ -82,6 +85,7 @@ export type ConversationListItem = {
   name: string | null;
   avatarUrl: string | null;
   isPrivate: boolean;
+  verified?: boolean;
   memberCount: number;
   myRole: MemberRole;
   title: string;

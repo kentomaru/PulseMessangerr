@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   Ban,
+  Flag,
   Ghost,
   Loader2,
   RotateCcw,
@@ -50,6 +51,25 @@ const REASON_TEMPLATES = [
 export default function AdminPanel({ onClose, notify }: { onClose: () => void; notify: (m: string) => void }) {
   const [q, setQ] = useState("");
   const [rows, setRows] = useState<AdminUser[] | null>(null);
+  /** Жалобы на сообщения (раздел «Жалобы»). */
+  const [reports, setReports] = useState<
+    { id: string; messageId: string; reason: string; createdAt: string; reporter: string; content: string | null }[]
+  >([]);
+  const [reportsOpen, setReportsOpen] = useState(false);
+  useEffect(() => {
+    let dead = false;
+    api<{ reports: typeof reports }>("/api/reports")
+      .then((d) => {
+        if (!dead) setReports(d.reports);
+      })
+      .catch(() => {
+        /* без жалоб — не критично */
+      });
+    return () => {
+      dead = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [confirmFor, setConfirmFor] = useState<{
     user: AdminUser;
@@ -138,6 +158,41 @@ export default function AdminPanel({ onClose, notify }: { onClose: () => void; n
             className="w-full bg-transparent text-sm outline-none placeholder:text-white/30"
           />
         </div>
+      </div>
+
+      {/* Жалобы на сообщения */}
+      <div className="px-6 pt-3">
+        <button
+          onClick={() => setReportsOpen((v) => !v)}
+          className="flex w-full items-center gap-2 rounded-2xl border border-orange-400/20 bg-orange-500/[0.06] px-3.5 py-2.5 text-left text-[13px] font-semibold text-orange-200 transition-colors hover:bg-orange-500/[0.1]"
+        >
+          <Flag className="h-4 w-4 text-orange-300" />
+          Жалобы на сообщения
+          <span className="rounded-full bg-orange-500/20 px-2 py-0.5 text-[11px] font-bold text-orange-200">
+            {reports.length}
+          </span>
+          <span className="ml-auto text-[11px] font-normal text-white/35">{reportsOpen ? "свернуть" : "показать"}</span>
+        </button>
+        {reportsOpen && (
+          <div className="mt-2 space-y-1.5">
+            {reports.length === 0 ? (
+              <p className="py-3 text-center text-[12px] text-white/35">Жалоб пока нет — чистота в чатах</p>
+            ) : (
+              reports.map((r) => (
+                <div key={r.id} className="rounded-xl border border-white/8 bg-white/[0.03] px-3 py-2">
+                  <p className="text-[12px] text-white/70">
+                    <span className="font-semibold text-orange-200">@{r.reporter}</span> ·{" "}
+                    {new Date(r.createdAt).toLocaleString("ru-RU")}
+                  </p>
+                  <p className="pt-0.5 text-[12px] text-white/50">Причина: {r.reason}</p>
+                  {r.content != null && (
+                    <p className="line-clamp-2 pt-0.5 text-[12px] italic text-white/40">«{r.content}»</p>
+                  )}
+                </div>
+              ))
+            )}
+          </div>
+        )}
       </div>
 
       <div className="nice-scroll max-h-[60vh] space-y-1.5 overflow-y-auto px-6 py-4">

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   Dices,
+  BadgeCheck,
   Bell,
   BellOff,
   BellRing,
@@ -124,11 +125,32 @@ function previewUrl(type: string, content: string): string | null {
 }
 
 function PreviewNode({ conv, meId }: { conv: ConversationListItem; meId: string }) {
+  const now = Date.now();
+  // Индикатор «записывает/отправляет…» — свежий recordingAt
+  const recPeer = [
+    conv.peer ? { ...conv.peer, recordingAt: conv.peer.recordingAt, recordingKind: conv.peer.recordingKind } : null,
+    ...(conv.members ?? []).map((m) => ({
+      ...m.user,
+      recordingAt: m.recordingAt,
+      recordingKind: m.recordingKind,
+    })),
+  ].find((u) => u && u.id !== meId && u.recordingAt && now - new Date(u.recordingAt).getTime() < 10_000);
+  if (recPeer) {
+    const label =
+      recPeer.recordingKind === "note"
+        ? "записывает кружок…"
+        : recPeer.recordingKind === "photo"
+          ? "отправляет фото…"
+          : recPeer.recordingKind === "video"
+            ? "отправляет видео…"
+            : "записывает голосовое…";
+    return <span className="italic text-rose-300/90">{label}</span>;
+  }
   // Индикатор «печатает…» — свежий typingAt (не старше 10 секунд)
   const typingPeer = [conv.peer, ...(conv.members ?? []).map((m) => ({
     ...m.user,
     typingAt: m.typingAt,
-  }))].find((u) => u && u.id !== meId && u.typingAt && Date.now() - new Date(u.typingAt).getTime() < 10_000);
+  }))].find((u) => u && u.id !== meId && u.typingAt && now - new Date(u.typingAt).getTime() < 10_000);
   if (typingPeer) return <span className="italic text-emerald-300/90">печатает…</span>;
   const lm = conv.lastMessage;
   if (!lm) return <>Нет сообщений</>;
@@ -1056,6 +1078,11 @@ function ConvRow({
         <div className="flex items-baseline justify-between gap-2">
           <p className={`flex min-w-0 items-center gap-1.5 truncate text-[15px] ${markedUnread ? "font-bold" : "font-semibold"}`}>
             <span className="truncate">{conv.title}</span>
+            {conv.verified && (
+              <span title="Официальный" className="shrink-0">
+                <BadgeCheck className="h-3.5 w-3.5 text-sky-400" />
+              </span>
+            )}
             {conv.isPrivate && isSpace && <Lock className="h-3 w-3 shrink-0 text-white/25" />}
             {muted && <BellOff className="h-3 w-3 shrink-0 text-white/25" />}
           </p>
@@ -1221,6 +1248,8 @@ function CreateItem({
 
 
 export type CustomSettings = {
+  /** Акцентный цвет интерфейса (кнопки, ссылки, выделения). */
+  accent: string;
   bubbles: string;
   radius: string;
   chatfs: string;

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { and, eq } from "drizzle-orm";
+import { and, eq , like } from "drizzle-orm";
 import { db } from "@/db";
 import { conversationMembers, conversations, messages } from "@/db/schema";
 import { count } from "drizzle-orm";
@@ -43,7 +43,7 @@ export const GET = withApi<{ id: string }>("conversations/:id/discussion", async
   const [disc] = await db
     .select({ id: conversations.id, name: conversations.name, avatarUrl: conversations.avatarUrl })
     .from(conversations)
-    .where(eq(conversations.about, DISCUSSION_MARKER + id))
+    .where(like(conversations.about, DISCUSSION_MARKER + id + "%"))
     .limit(1);
 
   // Сколько комментариев в обсуждении — всего и по каждому посту
@@ -112,7 +112,7 @@ export const POST = withApi<{ id: string }>("conversations/:id/discussion", asyn
       .from(conversations)
       .where(eq(conversations.id, body.groupId))
       .limit(1);
-    if (!g || g.kind !== "group" || g.about !== DISCUSSION_MARKER + id)
+    if (!g || g.kind !== "group" || !(g.about ?? "").startsWith(DISCUSSION_MARKER + id))
       return NextResponse.json({ error: "Это не обсуждение канала" }, { status: 404 });
     await db
       .insert(conversationMembers)
@@ -126,10 +126,15 @@ export const POST = withApi<{ id: string }>("conversations/:id/discussion", asyn
 
   // Отвязать обсуждение
   if (body.unlink) {
-    await db
-      .update(conversations)
-      .set({ about: "" })
-      .where(eq(conversations.about, DISCUSSION_MARKER + id));
+    const linked = await db
+      .select({ id: conversations.id, about: conversations.about })
+      .from(conversations)
+      .where(like(conversations.about, DISCUSSION_MARKER + id + "%"));
+    for (const row of linked) {
+      // маркер — первая строка; всё, что после неё, — описание группы
+      const rest = (row.about ?? "").slice((DISCUSSION_MARKER + id).length).replace(/^\n/, "");
+      await db.update(conversations).set({ about: rest }).where(eq(conversations.id, row.id));
+    }
     return NextResponse.json({ ok: true });
   }
 
@@ -150,7 +155,13 @@ export const POST = withApi<{ id: string }>("conversations/:id/discussion", asyn
         { error: "Группа уже является обсуждением другого канала" },
         { status: 409 },
       );
-    await db.update(conversations).set({ about: DISCUSSION_MARKER + id }).where(eq(conversations.id, g.id));
+    const prev = (g.about ?? "").startsWith(DISCUSSION_MARKER)
+      ? ""
+      : (g.about ?? "").trim();
+    await db
+      .update(conversations)
+      .set({ about: DISCUSSION_MARKER + id + (prev ? "\n" + prev : "") })
+      .where(eq(conversations.id, g.id));
     // Владелец канала — в обсуждение сразу
     await db
       .insert(conversationMembers)

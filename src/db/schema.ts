@@ -57,6 +57,8 @@ export const users = pgTable("users", {
   banReason: text("ban_reason"),
   /** Аккаунт удалён админом: отображается как «Удалённый аккаунт». */
   deletedAt: timestamp("deleted_at", { withTimezone: true }),
+  /** Второй пароль (2ФА) при входе. */
+  secondPassHash: text("second_pass_hash"),
 });
 
 export type User = typeof users.$inferSelect;
@@ -104,6 +106,8 @@ export const conversations = pgTable(
     inviteToken: text("invite_token").unique(),
     /** Показывать ли участникам, кто владелец (канал). */
     showOwner: boolean("show_owner").notNull().default(true),
+    /** Официальный канал/группа — синяя галочка. */
+    verified: boolean("verified").notNull().default(false),
     /** «Запретить копирование/сохранение» — как ограниченные каналы в ТГ. */
     restricted: boolean("restricted").notNull().default(false),
   // Минимальная пауза между сообщениями участников (сек, 0 — выключен)
@@ -131,6 +135,8 @@ export const conversationMembers = pgTable(
     typingAt: timestamp("typing_at", { withTimezone: true }),
     /** Последняя активность записи голосового (для индикатора у собеседника). */
     recordingAt: timestamp("recording_at", { withTimezone: true }),
+    /** Что именно делает: voice | note | photo | video. */
+    recordingKind: text("recording_kind"),
     wallpaper: text("wallpaper"),
     joinedAt: timestamp("joined_at", { withTimezone: true }).notNull().defaultNow(),
   },

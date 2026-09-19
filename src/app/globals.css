@@ -1030,3 +1030,63 @@ html[data-anims="0"] *::after {
   0%, 55% { left: -45%; }
   90%, 100% { left: 135%; }
 }
+
+/* ───────────────────  Акцентные цвета (кастомизация)  ─────────────────── */
+html[data-accent="violet"] { --accent: #7c3aed; --accent-h: #6d28d9; }
+html[data-accent="emerald"] { --accent: #059669; --accent-h: #047857; }
+html[data-accent="rose"] { --accent: #e11d48; --accent-h: #be123c; }
+html[data-accent="amber"] { --accent: #d97706; --accent-h: #b45309; }
+html[data-accent="cyan"] { --accent: #0891b2; --accent-h: #0e7490; }
+
+/* ───────────────────  Исправление светлой темы  ─────────────────── */
+/* Текст полей ввода и плейсхолдеры: в светлой теме были белыми на белом. */
+html[data-theme="light"] input,
+html[data-theme="light"] textarea {
+  color: #111827;
+}
+html[data-theme="light"] input::placeholder,
+html[data-theme="light"] textarea::placeholder {
+  color: #94a3b8;
+}
+/* Текст сообщений, заголовки и подписи — тёмные. */
+html[data-theme="light"] .msg-text {
+  color: #1f2937;
+}
+html[data-theme="light"] .text-white\/35,
+html[data-theme="light"] .text-white\/40,
+html[data-theme="light"] .text-white\/45 {
+  color: rgb(71 85 105 / 0.9) !important;
+}
+/* Белые полупрозрачные подложки становятся светло-серыми, чтобы были видны. */
+html[data-theme="light"] .bg-white\/\[0\.03\],
+html[data-theme="light"] .bg-white\/\[0\.04\] {
+  background-color: rgb(15 23 42 / 0.04) !important;
+}
+html[data-theme="light"] .bg-white\/\[0\.05\],
+html[data-theme="light"] .bg-white\/\[0\.06\] {
+  background-color: rgb(15 23 42 / 0.06) !important;
+}
+html[data-theme="light"] .hover\:bg-white\/\[0\.06\]:hover,
+html[data-theme="light"] .hover\:bg-white\/\[0\.08\]:hover {
+  background-color: rgb(15 23 42 / 0.08) !important;
+}
+/* Тонкие белые бордеры видны как светло-серые. */
+html[data-theme="light"] .border-white\/8,
+html[data-theme="light"] .border-white\/10 {
+  border-color: #e2e8f0 !important;
+}
+/* Оверлей звонка остаётся тёмным даже в светлой теме (крупные белые иконки). */
+html[data-theme="light"] .bg-\[\#16181c\]\/97,
+html[data-theme="light"] .bg-\[\#16181c\]\/80,
+html[data-theme="light"] .bg-\[\#16181c\]\/70 {
+  background-color: rgb(22 24 28 / 0.97) !important;
+}
+/* Кнопки-«таблетки» с белым текстом на прозрачном — оставляем текст белым,
+   но фон у кнопок управления звонком должен читаться. */
+html[data-theme="light"] .bg-white\/10 {
+  background-color: rgb(15 23 42 / 0.08) !important;
+}
+/* Скроллбары в светлой теме. */
+html[data-theme="light"] .nice-scroll::-webkit-scrollbar-thumb {
+  background: rgb(15 23 42 / 0.15);
+}

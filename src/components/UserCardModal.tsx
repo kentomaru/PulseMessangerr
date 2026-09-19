@@ -38,9 +38,11 @@ type Props = {
   onMessage: () => void;
   /** Id текущего пользователя — чтобы карточка себя не предлагала действия. */
   myId?: string;
+  /** «Назад» — вернуться в окно, из которого открыли карточку. */
+  onBack?: () => void;
 };
 
-export default function UserCardModal({ user, onClose, onMessage, myId }: Props) {
+export default function UserCardModal({ user, onClose, onMessage, myId, onBack }: Props) {
   /** Своя карточка («как меня видят другие») — без действий над собой. */
   const isSelf = myId != null && user.id === myId;
   // Баннер мог не дожить до текущего запуска (битый файл) — тогда градиент
@@ -145,6 +147,17 @@ export default function UserCardModal({ user, onClose, onMessage, myId }: Props)
 
   return (
     <ModalShell onClose={onClose}>
+      {onBack && (
+        <div className="px-5 pt-4">
+          <button
+            onClick={onBack}
+            className="flex items-center gap-1.5 rounded-xl bg-white/8 px-3 py-1.5 text-[13px] font-medium text-white/70 transition-colors hover:bg-white/12 hover:text-white"
+            title="Назад"
+          >
+            <ArrowLeft className="h-4 w-4" /> Назад
+          </button>
+        </div>
+      )}
       <div
         className={`relative h-32 w-full overflow-hidden ${
           showBanner && !bannerIsFile ? "" : showBanner ? "bg-black/40" : `bg-gradient-to-br ${paletteFor(user.username)}`
@@ -466,6 +479,8 @@ function GiftPicker({
   const [error, setError] = useState<string | null>(null);
   /** Расцветка NFT-подарков: 0–4 или «случайная». */
   const [variantChoice, setVariantChoice] = useState<number | "random">(0);
+  /** Праздничная заставка после успешной отправки. */
+  const [celebrate, setCelebrate] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -524,14 +539,36 @@ function GiftPicker({
           }),
         });
       }
+      setCelebrate(true);
       onSent();
-      onClose();
+      setTimeout(() => onClose(), 1300);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Не удалось отправить подарок");
-    } finally {
       setBusy(false);
     }
   };
+
+  if (celebrate) {
+    return (
+      <div className="fixed inset-0 z-[96] grid place-items-center bg-black/75 p-4 backdrop-blur-sm">
+        <div className="pm-rise flex flex-col items-center">
+          <div className="relative">
+            <span className="absolute -inset-6 animate-ping rounded-full bg-amber-300/20" />
+            <span className="absolute -inset-3 animate-pulse rounded-full bg-amber-300/20" />
+            <div className="gift-pop gift-shine relative grid h-32 w-32 place-items-center overflow-hidden rounded-3xl border border-amber-300/60 bg-gradient-to-br from-amber-400/25 to-fuchsia-400/15">
+              <Gift className="h-16 w-16 text-amber-300" />
+            </div>
+            <span className="absolute -top-3 -right-3 text-2xl">✨</span>
+            <span className="absolute -bottom-2 -left-3 text-xl">✨</span>
+          </div>
+          <p className="font-display pt-5 text-xl font-bold text-white">
+            {selected.length === 1 ? "Подарок отправлен!" : `Отправлено подарков: ${selected.length}!`}
+          </p>
+          <p className="pt-1 text-[13px] text-white/50">{name} уже получает ваш сюрприз</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="fixed inset-0 z-[95] grid place-items-center bg-black/70 p-4 backdrop-blur-sm" onClick={onClose}>

@@ -100,7 +100,15 @@ export default function GroupInfoModal({
       setInfo(d.conversation);
       setMembers(d.conversation.members);
       setName(d.conversation.name ?? "");
-      setAbout(d.conversation.about ?? "");
+      // Маркер «обсуждение канала» — служебная первая строка, её не показываем
+      const rawAbout = d.conversation.about ?? "";
+      setAbout(
+        rawAbout.startsWith("pulse-discussion-of:")
+          ? rawAbout.slice(rawAbout.indexOf("\n") + 1).replace(/^\n/, "") === rawAbout
+            ? ""
+            : rawAbout.slice(rawAbout.indexOf("\n") === -1 ? rawAbout.length : rawAbout.indexOf("\n") + 1)
+          : rawAbout,
+      );
       setIsPrivate(d.conversation.isPrivate);
       setRestricted(!!(d.conversation as { restricted?: boolean }).restricted);
       setShowOwner((d.conversation as { showOwner?: boolean }).showOwner !== false);
@@ -229,7 +237,9 @@ export default function GroupInfoModal({
         method: "PATCH",
         body: JSON.stringify({
           name,
-          about,
+          about: (info?.about ?? "").startsWith("pulse-discussion-of:")
+            ? (info?.about ?? "").slice(0, (info?.about ?? "").indexOf("\n") === -1 ? undefined : (info?.about ?? "").indexOf("\n")).concat(about.trim() ? "\n" + about.trim() : "")
+            : about,
           isPrivate,
           avatarUrl,
           ...(info?.myRole === "owner" ? { username, restricted, showOwner } : {}),

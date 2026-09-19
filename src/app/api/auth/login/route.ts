@@ -29,6 +29,18 @@ export const POST = withPublicApi("auth/login", async ({ req, log }) => {
     log.warn("Неудачный вход", { username });
     return NextResponse.json({ error: "Неверное имя пользователя или пароль" }, { status: 401 });
   }
+  // Двухфакторный вход: сначала основной пароль, потом второй
+  if ((user as { secondPassHash?: string | null }).secondPassHash) {
+    const second = String(body.secondPass ?? "");
+    if (!second)
+      return NextResponse.json(
+        { error: "Нужен второй пароль", needSecond: true },
+        { status: 403 },
+      );
+    if (!verifyPassword(second, (user as { secondPassHash?: string | null }).secondPassHash!))
+      return NextResponse.json({ error: "Неверный второй пароль" }, { status: 401 });
+  }
+
   // Блокировка администратором: вход закрыт, причина показывается
   if (user.bannedAt) {
     log.warn("Вход заблокированного аккаунта", { username });

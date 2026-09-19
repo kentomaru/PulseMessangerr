@@ -12,7 +12,7 @@ import {
   users,
 } from "@/db/schema";
 import { eq, or, sql } from "drizzle-orm";
-import { destroySession, getSessionUser, publicUser } from "@/lib/auth";
+import { destroySession, getSessionUser, hashPassword, publicUser } from "@/lib/auth";
 import { withApi } from "@/lib/api-helpers";
 import { cookies } from "next/headers";
 import { SESSION_COOKIE } from "@/lib/auth";
@@ -32,6 +32,16 @@ export const PATCH = withApi("auth/me", async ({ req, me, log }) => {
     patch.displayName = dn;
   }
   if (typeof body.bio === "string") patch.bio = body.bio.trim().slice(0, 70);
+  // Второй пароль (2ФА): установка и снятие
+  if (typeof body.setSecondPass === "string") {
+    const sp = body.setSecondPass;
+    if (sp === "") patch.secondPassHash = null;
+    else {
+      if (sp.length < 6)
+        return NextResponse.json({ error: "Второй пароль: минимум 6 символов" }, { status: 400 });
+      patch.secondPassHash = hashPassword(sp);
+    }
+  }
   // Pulse Premium: включается/выключается бесплатно в два клика.
   if (typeof body.premium === "boolean") patch.premium = body.premium;
   // Смена юзернейма: латиница/цифры/«_», 3–20 символов, уникальность

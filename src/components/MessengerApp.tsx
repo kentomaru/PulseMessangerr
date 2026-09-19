@@ -71,6 +71,7 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
     try {
       const c = JSON.parse(localStorage.getItem("pulse_custom_v1") ?? "{}") as Record<string, unknown>;
       return {
+        accent: (c.accent as string) ?? "default",
         bubbles: (c.bubbles as string) ?? "blue",
         radius: (c.radius as string) ?? "md",
         chatfs: (c.chatfs as string) ?? "m",
@@ -80,7 +81,7 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
         dndUntil: (c.dndUntil as number) ?? 0,
       };
     } catch {
-      return { bubbles: "blue", radius: "md", chatfs: "m", compact: false, font: "sys", anims: true, dndUntil: 0 };
+      return { accent: "default", bubbles: "blue", radius: "md", chatfs: "m", compact: false, font: "sys", anims: true, dndUntil: 0 };
     }
   });
   const [showProfile, setShowProfile] = useState(false);
@@ -91,6 +92,8 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
   const [addAccountOpen, setAddAccountOpen] = useState(false);
   /** PIN-замок: пока не введён код, приложение не показываем. */
   const [pinLocked, setPinLocked] = useState(false);
+  /** «Моя карточка» открыта из настроек — нужна стрелка «назад». */
+  const [myCardFromProfile, setMyCardFromProfile] = useState(false);
   useEffect(() => {
     try {
       setPinLocked(hasPin() && sessionStorage.getItem("pulse_unlocked") !== "1");
@@ -343,6 +346,7 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
 
   useEffect(() => {
     const h = document.documentElement;
+    h.dataset.accent = custom.accent;
     h.dataset.bubbles = custom.bubbles;
     h.dataset.bradius = custom.radius;
     h.dataset.chatfs = custom.chatfs;
@@ -1000,6 +1004,7 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
             onToggleNotify={toggleNotify}
             onOpenMyCard={() => {
               setShowProfile(false);
+              setMyCardFromProfile(true);
               setViewUser(me);
             }}
             onClose={() => setShowProfile(false)}
@@ -1021,7 +1026,19 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
             key="user-card"
             user={viewUser}
             myId={me.id}
-            onClose={() => setViewUser(null)}
+            onClose={() => {
+              setViewUser(null);
+              setMyCardFromProfile(false);
+            }}
+            onBack={
+              myCardFromProfile
+                ? () => {
+                    setViewUser(null);
+                    setMyCardFromProfile(false);
+                    setShowProfile(true);
+                  }
+                : undefined
+            }
             onMessage={() => {
               void openConversationWith(viewUser);
               setViewUser(null);

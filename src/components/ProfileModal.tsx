@@ -1006,6 +1006,37 @@ function AppearanceTab({
         </div>
       </div>
 
+      {/* Акцентный цвет — перекрашивает кнопки, ссылки и выделения */}
+      <div>
+        <p className="mb-2 text-xs font-semibold tracking-wide text-white/45 uppercase">Акцентный цвет</p>
+        <div className="flex items-center gap-2">
+          {(
+            [
+              ["default", "#5865f2", "Стандарт"],
+              ["violet", "#7c3aed", "Фиолет"],
+              ["emerald", "#059669", "Изумруд"],
+              ["rose", "#e11d48", "Роза"],
+              ["amber", "#d97706", "Янтарь"],
+              ["cyan", "#0891b2", "Бирюза"],
+            ] as const
+          ).map(([key, color, label]) => (
+            <button
+              key={key}
+              onClick={() => set({ accent: key })}
+              title={label}
+              className={`grid h-9 w-9 place-items-center rounded-full transition-transform hover:scale-110 ${
+                (custom?.accent ?? "default") === key ? "ring-2 ring-white/80 ring-offset-2 ring-offset-black/40" : ""
+              }`}
+              style={{ background: color }}
+            >
+              {(custom?.accent ?? "default") === key && (
+                <span className="text-[13px] font-bold text-white">✓</span>
+              )}
+            </button>
+          ))}
+        </div>
+      </div>
+
       {/* Размер интерфейса */}
       <div>
         <p className="mb-2 text-xs font-semibold tracking-wide text-white/45 uppercase">

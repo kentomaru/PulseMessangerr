@@ -8,6 +8,7 @@ import {
   Ban,
   BellOff,
   BellRing,
+  BadgeCheck,
   Bookmark,
   Check,
   CheckCheck,
@@ -17,6 +18,8 @@ import {
   Copy,
   ArrowDown,
   Download,
+  Eraser,
+  Flag,
   File as PendingFileIcon,
   File as FileIcon,
   FileText,
@@ -463,6 +466,8 @@ export default function ChatView({
   const fileRef = useRef<HTMLInputElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const lastTypingSent = useRef(0);
+  /** Что сейчас «записывает/отправляет» пользователь для индикатора. */
+  const recKindRef = useRef<"voice" | "note" | "photo" | "video">("voice");
   const lastCount = useRef(0);
   const loadedRef = useRef(false);
   /** Непрочитанные на момент открытия чата — замораживаем, чтобы опросы их не затирали. */
@@ -584,8 +589,24 @@ export default function ChatView({
   }, [conversationId]);
 
   // Черновик (текст + файлы) держим в общем хранилище, чтобы при переключении
-  // чатов он не пропадал. Синхронизируем на каждое изменение.
+  // чатов он не пропадал. При СМЕНЕ чата: сохраняем текст в СТАРЫЙ чат и
+  // подгружаем черновик НОВОГО (иначе текст «переезжал» между чатами).
+  const draftConvRef = useRef(conversationId);
   useEffect(() => {
+    const prev = draftConvRef.current;
+    if (prev !== conversationId) {
+      draftStore.set(prev, { text, files: draftFiles });
+      writeTextDraft(prev, text);
+      draftConvRef.current = conversationId;
+      const d = getStoredDraft(conversationId);
+      setText(d.text);
+      setDraftFiles(d.files);
+      window.dispatchEvent(new Event("pulse-drafts"));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [conversationId]);
+  useEffect(() => {
+    if (draftConvRef.current !== conversationId) return;
     draftStore.set(conversationId, { text, files: draftFiles });
     writeTextDraft(conversationId, text);
     window.dispatchEvent(new Event("pulse-drafts"));
@@ -602,6 +623,7 @@ export default function ChatView({
 
   const kind = meta?.kind ?? initialKind;
   const title = meta?.title ?? initialTitle;
+  const verifiedChat = !!(meta as { verified?: boolean } | null)?.verified;
   const avatar = kind === "direct" ? (peerState?.avatarUrl ?? initialAvatar) : (meta?.avatarUrl ?? initialAvatar);
   const isSpace = kind !== "direct";
   const canPost = kind !== "channel" || meta?.myRole === "owner" || meta?.myRole === "admin";
@@ -967,7 +989,8 @@ export default function ChatView({
       voiceRef.current = { recorder, stream, chunks, startedAt: Date.now() };
       setRecSecs(0);
       setVoiceRecActive(true);
-      sendTyping(true);
+      recKindRef.current = "voice";
+      sendTyping(true, "voice");
       // Параллельно с записью слушаем микрофон штатным движком браузера (ru-RU).
       // После отправки привяжем текст к сообщению — «В текст» сработает мгновенно.
       liveTranscriptRef.current = "";
@@ -1077,13 +1100,21 @@ export default function ChatView({
     const t = setInterval(() => setRecSecs((s) => s + 1), 1000);
     return () => clearInterval(t);
   }, [voiceRecActive]);
-  // Собеседник видит «записывает голосовое», пока запись идёт (пинг раз в 5 с)
+  // Собеседник видит «записывает…», пока запись идёт (пинг раз в 5 с)
   useEffect(() => {
-    if (!voiceRecActive) return;
-    const t = setInterval(() => sendTyping(true), 5000);
+    if (!voiceRecActive && !noteRecorder) return;
+    const t = setInterval(() => sendTyping(true, recKindRef.current), 5000);
     return () => clearInterval(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [voiceRecActive]);
+  }, [voiceRecActive, noteRecorder]);
+  // Кружок: пока открыт рекордер — «записывает кружок…»
+  useEffect(() => {
+    if (!noteRecorder) return;
+    recKindRef.current = "note";
+    sendTyping(true, "note");
+    return () => sendTyping(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [noteRecorder]);
   useEffect(() => {
     if (voiceRecActive && recSecs >= 300) stopVoiceRecording(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1334,14 +1365,14 @@ export default function ChatView({
     return () => window.removeEventListener("pointerdown", onDown);
   }, [emojiOpen]);
 
-  const sendTyping = (recording?: boolean) => {
+  const sendTyping = (recording?: boolean, kind?: "voice" | "note" | "photo" | "video") => {
     const now = Date.now();
     // Сигналы записи не троттлим: важно и «начал», и «закончил»
     if (recording === undefined && now - lastTypingSent.current < 2_500) return;
     lastTypingSent.current = now;
     void api(`/api/conversations/${conversationId}/typing`, {
       method: "POST",
-      body: JSON.stringify(recording === undefined ? {} : { recording }),
+      body: JSON.stringify(recording === undefined ? {} : { recording, ...(kind ? { kind } : {}) }),
     }).catch(() => {});
   };
 
@@ -1398,6 +1429,39 @@ export default function ChatView({
         .replace(/;\)/g, "😉")
         .replace(/:D/g, "😄"),
     );
+
+  /** Пожаловаться на сообщение — уйдёт администраторам. */
+  const reportMessage = async (m: ChatMessage) => {
+    try {
+      await api("/api/reports", {
+        method: "POST",
+        body: JSON.stringify({ messageId: m.id }),
+      });
+      notify("Жалоба отправлена администраторам");
+    } catch (e) {
+      notify(e instanceof Error ? e.message : "Не удалось отправить жалобу");
+    }
+  };
+
+  /** Очистить историю: админы стирают всё, участники — свои сообщения. */
+  const clearHistory = async () => {
+    const isMgr = meta?.myRole === "owner" || meta?.myRole === "admin";
+    const q = confirm(
+      isSpace
+        ? isMgr
+          ? "Очистить ВСЮ историю этого чата? Действие необратимо."
+          : "Удалить все ВАШИ сообщения в этом чате?"
+        : "Очистить переписку? Действие необратимо.",
+    );
+    if (!q) return;
+    try {
+      await api(`/api/conversations/${conversationId}/clear`, { method: "POST" });
+      notify("История очищена");
+      await load();
+    } catch (e) {
+      notify(e instanceof Error ? e.message : "Не удалось очистить");
+    }
+  };
 
   /** Скачать историю чата простым текстовым файлом. */
   const exportHistory = () => {
@@ -1614,7 +1678,7 @@ export default function ChatView({
     const recPeers =
       kind === "direct"
         ? peerState?.recordingAt && now - new Date(peerState.recordingAt).getTime() < 10_000
-          ? [peerState]
+          ? [{ user: peerState, kind: peerState.recordingKind }]
           : []
         : members
             .filter(
@@ -1623,13 +1687,13 @@ export default function ChatView({
                 m.recordingAt &&
                 now - new Date(m.recordingAt).getTime() < 10_000,
             )
-            .map((m) => m.user);
+            .map((m) => ({ user: m.user, kind: m.recordingKind }));
     if (recPeers.length > 0) {
-      const names = recPeers.map((u) => u.displayName.split(" ")[0]);
+      const names = recPeers.map((r) => r.user.displayName.split(" ")[0]);
       return {
         text:
           names.length === 1
-            ? `${names[0]} записывает голосовое…`
+            ? `${names[0]} ${recordingLabel(recPeers[0].kind)}`
             : `${names.slice(0, 2).join(", ")} записывают голосовое…`,
         accent: true,
       };
@@ -1745,6 +1809,11 @@ export default function ChatView({
               >
                 {commentFilter ? "Комментарии" : title}
               </span>
+              {verifiedChat && !commentFilter && (
+                <span title="Официальный канал" className="shrink-0">
+                  <BadgeCheck className="h-4 w-4 text-sky-400" />
+                </span>
+              )}
               {/* Звезда Premium — как в ТГ */}
               {kind === "direct" && peerState?.premium && (
                 <Star className="h-3.5 w-3.5 shrink-0 fill-amber-300 text-amber-300" />
@@ -1879,6 +1948,14 @@ export default function ChatView({
                       onClick={() => {
                         setMenuOpen(false);
                         exportHistory();
+                      }}
+                    />
+                    <MenuItem
+                      icon={<Eraser className="h-4 w-4" />}
+                      label="Очистить историю"
+                      onClick={() => {
+                        setMenuOpen(false);
+                        void clearHistory();
                       }}
                     />
                     <div className="my-1 h-px bg-white/8" />
@@ -2226,6 +2303,26 @@ export default function ChatView({
                       onMenu={openContextMenu}
                       onJump={jumpTo}
                       onViewUser={onViewUser}
+                      channelSender={
+                        kind === "channel" && !commentFilter
+                          ? ({
+                              id: conversationId,
+                              username: "channel",
+                              displayName: title,
+                              avatarUrl: meta?.avatarUrl ?? null,
+                              bannerUrl: null,
+                              bio: "",
+                              statusEmoji: "",
+                              lastSeenAt: null,
+                              createdAt: "",
+                              online: false,
+                              showOnline: false,
+                              allowCalls: false,
+                              allowMessages: false,
+                            } as PublicUser)
+                          : null
+                      }
+                      onOpenChannelInfo={onOpenInfo}
                     />
                   )}
                 </div>
@@ -2625,7 +2722,10 @@ export default function ChatView({
                 multiple
                 className="hidden"
                 onChange={(e) => {
-                  addDraftFiles(Array.from(e.target.files ?? []));
+                  const files = Array.from(e.target.files ?? []);
+                  if (files.some((f) => f.type.startsWith("image/"))) sendTyping(true, "photo");
+                  else if (files.some((f) => f.type.startsWith("video/"))) sendTyping(true, "video");
+                  addDraftFiles(files);
                   e.target.value = "";
                 }}
               />
@@ -3207,6 +3307,10 @@ export default function ChatView({
               void saveToSaved(ctxMenu.message);
               setCtxMenu(null);
             }}
+            onReport={() => {
+              void reportMessage(ctxMenu.message);
+              setCtxMenu(null);
+            }}
             onCopyLink={() => {
               const url = `${window.location.origin}${window.location.pathname}#msg=${ctxMenu.message.id}`;
               void navigator.clipboard.writeText(url).then(
@@ -3227,6 +3331,20 @@ export default function ChatView({
 }
 
 /* ─────────────────────────── мелкие иконки ─────────────────────────── */
+
+/** Подпись индикатора «записывает/отправляет…» по виду активности. */
+function recordingLabel(kind?: string | null): string {
+  switch (kind) {
+    case "note":
+      return "записывает кружок…";
+    case "photo":
+      return "отправляет фото…";
+    case "video":
+      return "отправляет видео…";
+    default:
+      return "записывает голосовое…";
+  }
+}
 
 /** Кнопка «кружок»: круг с треугольником записи. */
 function VideoNoteIcon() {
@@ -3292,6 +3410,7 @@ function MessageContextMenu({
   onForward,
   onSave,
   onCopyLink,
+  onReport,
   onDelete,
 }: {
   state: ContextMenuState;
@@ -3307,6 +3426,8 @@ function MessageContextMenu({
   onPin: () => void;
   onCopy: () => void;
   onForward: () => void;
+  /** Пожаловаться на сообщение (не свои). */
+  onReport?: () => void;
   /** Быстрое сохранение в «Избранное». */
   onSave: () => void;
   /** Скопировать ссылку на сообщение. */
@@ -3432,6 +3553,9 @@ function MessageContextMenu({
           label="В Избранное"
           onClick={onSave}
         />
+      )}
+      {state.message.senderId !== meId && onReport && (
+        <ContextItem icon={<Flag className="h-4 w-4 text-orange-300" />} label="Пожаловаться" onClick={onReport} />
       )}
       {canDelete && (
         <ContextItem icon={<Trash2 className="h-4 w-4 text-rose-300" />} label="Удалить" onClick={onDelete} danger />
@@ -4079,6 +4203,8 @@ function MessageBubble({
   onOpenUsername,
   onJump,
   onViewUser,
+  channelSender,
+  onOpenChannelInfo,
   onDoubleTap,
 }: {
   message: ChatMessage;
@@ -4112,10 +4238,13 @@ function MessageBubble({
   onOpenUsername?: (name: string) => void;
   onJump: (id: string) => void;
   onViewUser: (u: PublicUser) => void;
+  /** В канале посты идут «от имени канала» (как в ТГ). */
+  channelSender?: PublicUser | null;
+  onOpenChannelInfo?: () => void;
   /** Двойной клик по сообщению — быстрая реакция, как в Telegram. */
   onDoubleTap?: () => void;
 }) {
-  const sender = message.sender;
+  const sender = channelSender ?? message.sender;
   const alignRight = own && !space;
   // Редактируется только текст: у картинок/файлов/гифок-стикеров содержимое —
   // JSON-вложение, правка «как текста» ломала его (баг «изменено, но пусто»).
@@ -4220,9 +4349,9 @@ function MessageBubble({
       </div>
       {space && !alignRight && (
         <button
-          onClick={() => sender && onViewUser(sender)}
+          onClick={() => (channelSender ? onOpenChannelInfo?.() : sender && onViewUser(sender))}
           className="mt-1 shrink-0"
-          title={sender ? "Открыть профиль" : undefined}
+          title={channelSender ? "О канале" : sender ? "Открыть профиль" : undefined}
         >
           {grouped ? (
             <span className="block h-8 w-8" />
@@ -4235,7 +4364,7 @@ function MessageBubble({
       <div className={`relative max-w-[80%] min-w-0 sm:max-w-[72%] ${alignRight ? "order-1" : ""}`}>
         {space && !grouped && !alignRight && sender && (
           <button
-            onClick={() => onViewUser(sender)}
+            onClick={() => (channelSender ? onOpenChannelInfo?.() : onViewUser(sender))}
             className="mb-1 block text-left text-[12px] font-semibold text-slate-400/90 hover:text-slate-300"
             style={sender.nameColor ? { color: sender.nameColor } : undefined}
           >
@@ -5006,38 +5135,92 @@ function parsePoll(content: string): { q: string; opts: string[]; multi?: boolea
   return null;
 }
 
-/** Превью ссылки в тексте — карточка с доменом, как в ТГ. */
+/** Кэш превью ссылок на сессию, чтобы не дёргать сервер повторно. */
+const linkPreviewCache = new Map<string, LinkPreviewData | null>();
+type LinkPreviewData = { title: string; description: string; image: string | null; site: string };
+
+/** Превью ссылки в тексте — сервер достаёт og-теги: заголовок, описание, картинка (как в ТГ). */
 function LinkPreview({ text }: { text: string }) {
-  const m = text.match(/https?:\/\/[^\s<>"']+/i);
-  if (!m) return null;
-  let url: URL;
-  try {
-    url = new URL(m[0]);
-  } catch {
-    return null;
+  const url = useMemo(() => /https?:\/\/[^\s<>"']+/i.exec(text)?.[0] ?? null, [text]);
+  const [p, setP] = useState<LinkPreviewData | null>(() => (url ? linkPreviewCache.get(url) ?? null : null));
+  const [fallbackHost, setFallbackHost] = useState<string | null>(() => {
+    if (!url) return null;
+    try {
+      return new URL(url).hostname.replace(/^www\./, "");
+    } catch {
+      return null;
+    }
+  });
+  useEffect(() => {
+    if (!url) return;
+    let dead = false;
+    if (linkPreviewCache.has(url)) {
+      setP(linkPreviewCache.get(url) ?? null);
+      return;
+    }
+    api<{ preview: LinkPreviewData }>(`/api/preview?url=${encodeURIComponent(url)}`)
+      .then((d) => {
+        if (dead) return;
+        linkPreviewCache.set(url, d.preview);
+        setP(d.preview);
+      })
+      .catch(() => {
+        if (dead) return;
+        linkPreviewCache.set(url, null);
+        setP(null);
+      });
+    return () => {
+      dead = true;
+    };
+  }, [url]);
+  if (!url || !fallbackHost) return null;
+
+  // Пока сервер не ответил — сразу показываем компактную карточку с доменом
+  if (!p) {
+    return (
+      <a
+        href={url}
+        target="_blank"
+        rel="noopener noreferrer"
+        onClick={(e) => e.stopPropagation()}
+        className="mt-1.5 flex max-w-72 items-center gap-2.5 rounded-xl border-l-2 border-[#5865f2] bg-white/[0.05] px-3 py-2 transition-colors hover:bg-white/[0.09]"
+      >
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={`https://www.google.com/s2/favicons?domain=${encodeURIComponent(fallbackHost)}&sz=32`}
+          alt=""
+          className="h-7 w-7 shrink-0 rounded-md bg-white/10"
+          onError={(e) => {
+            e.currentTarget.style.display = "none";
+          }}
+        />
+        <span className="min-w-0">
+          <span className="block truncate text-[12px] font-semibold text-[#8ea1ff]">{fallbackHost}</span>
+          <span className="block truncate text-[11px] text-white/40">Ссылка</span>
+        </span>
+      </a>
+    );
   }
-  const host = url.hostname.replace(/^www\./, "");
+
   return (
     <a
-      href={m[0]}
+      href={url}
       target="_blank"
       rel="noopener noreferrer"
       onClick={(e) => e.stopPropagation()}
-      className="mt-1.5 flex max-w-72 items-center gap-2.5 rounded-xl border-l-2 border-[#5865f2] bg-white/[0.05] px-3 py-2 transition-colors hover:bg-white/[0.09]"
+      className="mt-1.5 flex max-w-80 items-stretch gap-2.5 overflow-hidden rounded-xl border-l-2 border-[#5865f2] bg-white/[0.05] p-2.5 transition-colors hover:bg-white/[0.09]"
     >
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img
-        src={`https://www.google.com/s2/favicons?domain=${encodeURIComponent(host)}&sz=32`}
-        alt=""
-        className="h-7 w-7 shrink-0 rounded-md bg-white/10"
-        onError={(e) => {
-          e.currentTarget.style.display = "none";
-        }}
-      />
-      <span className="min-w-0">
-        <span className="block truncate text-[12px] font-semibold text-[#8ea1ff]">{host}</span>
-        <span className="block truncate text-[11px] text-white/40">
-          {url.pathname !== "/" ? url.pathname : "Ссылка"}
+      {p.image && (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={p.image} alt="" className="h-14 w-14 shrink-0 self-center rounded-lg object-cover" />
+      )}
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-[12.5px] font-semibold text-[#8ea1ff]">{p.title || p.site}</span>
+        {p.description && (
+          <span className="mt-0.5 line-clamp-2 block text-[11.5px] leading-snug text-white/45">{p.description}</span>
+        )}
+        <span className="mt-0.5 block truncate text-[10.5px] font-medium uppercase tracking-wide text-white/30">
+          {p.site}
         </span>
       </span>
     </a>

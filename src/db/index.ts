@@ -387,6 +387,45 @@ export async function ensureSchema(): Promise<void> {
     alter table users add column if not exists deleted_at timestamptz;
     alter table sessions add column if not exists user_agent text;
     alter table sessions add column if not exists ip text;
+    alter table conversation_members add column if not exists recording_kind text;
+    alter table conversations add column if not exists verified boolean not null default false;
+    update conversations set verified = true where invite_token = 'pulsemessanger';
+    create table if not exists reports (
+      id uuid primary key default gen_random_uuid(),
+      message_id uuid not null,
+      reporter_id uuid not null references users(id) on delete cascade,
+      reason text not null default '',
+      created_at timestamptz not null default now()
+    );
+    create table if not exists post_views (
+      post_id uuid not null references messages(id) on delete cascade,
+      user_id uuid not null references users(id) on delete cascade,
+      primary key (post_id, user_id)
+    );
+    alter table users add column if not exists second_pass_hash text;
+    -- Дубли «Избранного»: оставляем самый старый свой личный чат,
+    -- сообщения из дублей переносим в него, дубли удаляем.
+    DO $dedupe$
+    DECLARE r record; extra uuid[]; keep_id uuid;
+    BEGIN
+      FOR r IN
+        SELECT cm.user_id AS uid, array_agg(c.id ORDER BY c.created_at) AS ids
+        FROM conversations c
+        JOIN conversation_members cm ON cm.conversation_id = c.id
+        WHERE c.kind = 'direct'
+          AND NOT EXISTS (
+            SELECT 1 FROM conversation_members m2
+            WHERE m2.conversation_id = c.id AND m2.user_id <> cm.user_id
+          )
+        GROUP BY cm.user_id
+        HAVING count(*) > 1
+      LOOP
+        keep_id := r.ids[1];
+        extra := r.ids[2:array_length(r.ids, 1)];
+        UPDATE messages SET conversation_id = keep_id WHERE conversation_id = ANY(extra);
+        DELETE FROM conversations WHERE id = ANY(extra);
+      END LOOP;
+    END $dedupe$;
     -- Админ платформы (по юзернейму) — идемпотентный сид
     update users set is_admin = true where lower(username) = 'flytomaru';
     alter table messages add column if not exists transcript text;

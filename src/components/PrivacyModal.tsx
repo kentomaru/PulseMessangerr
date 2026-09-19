@@ -9,6 +9,7 @@ import {
   MessageSquareLock,
   PhoneOff,
   Shield,
+  ShieldCheck,
   UsersRound,
   X,
 } from "lucide-react";
@@ -120,6 +121,9 @@ export function PrivacySettings({
         )}
       </div>
 
+      {/* Второй пароль (2ФА) — как в ТГ: при входе запрашивается дополнительно */}
+      <SecondPassBlock />
+
       <button
         onClick={() => void save()}
         disabled={!dirty || saving}
@@ -128,6 +132,83 @@ export function PrivacySettings({
         {saving && <Loader2 className="h-4 w-4 animate-spin" />}
         Сохранить приватность
       </button>
+    </div>
+  );
+}
+
+/** Настройка второго пароля (2ФА): установка, смена, отключение. */
+function SecondPassBlock() {
+  const [on, setOn] = useState(() => {
+    try {
+      return localStorage.getItem("pulse_2fa") === "1";
+    } catch {
+      return false;
+    }
+  });
+  const [pass, setPass] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState("");
+
+  const apply = async (value: string, okMsg: string) => {
+    setBusy(true);
+    setMsg("");
+    try {
+      await api("/api/auth/me", { method: "PATCH", body: JSON.stringify({ setSecondPass: value }) });
+      setOn(value !== "");
+      try {
+        localStorage.setItem("pulse_2fa", value !== "" ? "1" : "0");
+      } catch {
+        /* ignore */
+      }
+      setPass("");
+      setMsg(okMsg);
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message : "Не удалось");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="rounded-2xl border border-white/8 bg-white/[0.03] p-3.5">
+      <p className="flex items-center gap-2 text-[13px] font-semibold">
+        <ShieldCheck className="h-4 w-4 text-indigo-300" />
+        Второй пароль (2ФА)
+        <span className={`ml-auto rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${on ? "bg-emerald-500/20 text-emerald-300" : "bg-white/10 text-white/40"}`}>
+          {on ? "включён" : "выключен"}
+        </span>
+      </p>
+      <p className="pt-1 text-[11px] leading-snug text-white/35">
+        При входе, кроме основного пароля, нужно будет ввести второй. Защита от угона аккаунта.
+      </p>
+      <div className="flex gap-2 pt-2.5">
+        <input
+          value={pass}
+          onChange={(e) => setPass(e.target.value)}
+          type="password"
+          placeholder={on ? "Новый второй пароль" : "Придумайте второй пароль"}
+          className="ring-focus min-w-0 flex-1 rounded-xl border border-white/10 bg-white/[0.05] px-3 py-2 text-[13px]"
+        />
+        <button
+          onClick={() => pass.length >= 6 && void apply(pass, on ? "Второй пароль изменён" : "Второй пароль установлен")}
+          disabled={busy || pass.length < 6}
+          className="rounded-xl bg-indigo-500/80 px-3.5 py-2 text-[12px] font-semibold text-white hover:bg-indigo-500 disabled:opacity-40"
+        >
+          {on ? "Сменить" : "Включить"}
+        </button>
+        {on && (
+          <button
+            onClick={() => {
+              if (confirm("Отключить второй пароль?")) void apply("", "Второй пароль отключён");
+            }}
+            disabled={busy}
+            className="rounded-xl bg-white/8 px-3 py-2 text-[12px] font-medium text-white/60 hover:bg-rose-500/15 hover:text-rose-300 disabled:opacity-40"
+          >
+            Отключить
+          </button>
+        )}
+      </div>
+      {msg && <p className="pt-2 text-[11px] text-white/50">{msg}</p>}
     </div>
   );
 }

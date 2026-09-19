@@ -11,11 +11,14 @@ export const POST = withApi<{ id: string }>("conversations:typing", async ({ req
   const body = await req.json().catch(() => ({}));
   const recording = body.recording === true;
   const stopRecording = body.recording === false;
+  const kindRaw = String(body.kind ?? "");
+  const kind = ["voice", "note", "photo", "video"].includes(kindRaw) ? kindRaw : "voice";
   await db
     .update(conversationMembers)
     .set({
       typingAt: recording || stopRecording ? undefined : new Date(),
       recordingAt: recording ? new Date() : stopRecording ? null : undefined,
+      recordingKind: recording ? kind : stopRecording ? null : undefined,
     })
     .where(
       and(eq(conversationMembers.conversationId, id), eq(conversationMembers.userId, me.id)),

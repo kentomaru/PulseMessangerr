@@ -85,7 +85,8 @@ export const GET = withApi("conversations", async ({ me }) => {
   // Живые звонки (заодно убираем «мёртвые» комнаты)
   const activeCalls = await toCallSummaries(await sweepStaleCalls(convIds));
 
-  const userNameById = new Map(allMembers.map((r) => [r.user.id, r.user.displayName]));
+  // Имена через publicUser: удалённые аккаунты видны как «Удалённый аккаунт»
+  const userNameById = new Map(allMembers.map((r) => [r.user.id, publicUser(r.user).displayName]));
 
   const result: ConversationListItem[] = [];
   for (const conv of convs) {
@@ -109,6 +110,7 @@ export const GET = withApi("conversations", async ({ me }) => {
           recordingAt: peerRow.member.recordingAt
             ? new Date(peerRow.member.recordingAt).toISOString()
             : null,
+          recordingKind: (peerRow.member as { recordingKind?: string | null }).recordingKind ?? null,
         }
       : isSaved
         ? {
@@ -126,8 +128,9 @@ export const GET = withApi("conversations", async ({ me }) => {
       id: conv.id,
       kind,
       name: conv.name,
-      avatarUrl: conv.avatarUrl ?? peerRow?.user.avatarUrl ?? null,
+      avatarUrl: kind === "direct" ? (conv.avatarUrl ?? peerRow?.user.avatarUrl ?? null) : (conv.avatarUrl ?? null),
       isPrivate: !!conv.isPrivate,
+      verified: !!(conv as { verified?: boolean }).verified,
       memberCount: countByConv.get(conv.id) ?? rows.length,
       myRole: myRoleById.get(conv.id) ?? "member",
       title:
@@ -187,7 +190,9 @@ export const POST = withApi("conversations:create", async ({ req, me, log }) => 
     const isPrivate = body.isPrivate === undefined ? true : !!body.isPrivate;
 
     const memberIds = Array.isArray(body.memberIds) ? body.memberIds.map(String) : [];
-    const invited = (await findUsersByIds(memberIds)).filter((u) => u.id !== me.id);
+    const invited = (await findUsersByIds(memberIds)).filter(
+      (u) => u.id !== me.id && !u.deletedAt && !u.bannedAt,
+    );
     if (invited.length > 200)
       return NextResponse.json({ error: "Слишком много участников" }, { status: 400 });
     // Приватность: пользователи, запретившие добавление в группы, не приглашаются.
@@ -277,6 +282,11 @@ export const POST = withApi("conversations:create", async ({ req, me, log }) => 
   const peerRows = await db.select().from(users).where(eq(users.id, userId)).limit(1);
   const peer = peerRows[0];
   if (!peer) return NextResponse.json({ error: "Пользователь не найден" }, { status: 404 });
+  // Удалённые и заблокированные аккаунты недоступны для переписки
+  if (peer.deletedAt)
+    return NextResponse.json({ error: "Этот аккаунт удалён" }, { status: 403 });
+  if (peer.bannedAt)
+    return NextResponse.json({ error: "Этот аккаунт заблокирован" }, { status: 403 });
 
   // ищем существующий личный чат с этим человеком
   const shared = await db

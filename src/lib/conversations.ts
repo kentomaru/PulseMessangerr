@@ -107,6 +107,7 @@ export function memberItem(m: ConversationMember, u: User): ConversationMemberIt
     recordingAt: (m as { recordingAt?: Date | null }).recordingAt
       ? new Date((m as { recordingAt?: Date | null }).recordingAt as Date).toISOString()
       : null,
+    recordingKind: (m as { recordingKind?: string | null }).recordingKind ?? null,
     joinedAt: new Date(m.joinedAt).toISOString(),
   };
 }

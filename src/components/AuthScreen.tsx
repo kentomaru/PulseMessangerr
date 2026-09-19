@@ -14,6 +14,7 @@ import {
   Lock,
   MessagesSquare,
   PhoneCall,
+  ShieldCheck,
   Sparkles,
   User,
 } from "lucide-react";
@@ -44,6 +45,9 @@ export default function AuthScreen({
   const [avatarPrev, setAvatarPrev] = useState<string | null>(null);
   const [bannerFile, setBannerFile] = useState<File | null>(null);
   const [bannerPrev, setBannerPrev] = useState<string | null>(null);
+  /** Второй пароль (2ФА), если включён у аккаунта. */
+  const [needSecond, setNeedSecond] = useState(false);
+  const [secondPass, setSecondPass] = useState("");
 
   /** Подсказка надёжности пароля при регистрации. */
   const strength = (() => {
@@ -78,7 +82,7 @@ export default function AuthScreen({
         user?: { id: string; username: string; displayName: string; avatarUrl: string | null };
       }>(`/api/auth/${mode}`, {
         method: "POST",
-        body: JSON.stringify({ username, password, displayName }),
+        body: JSON.stringify({ username, password, displayName, secondPass }),
       });
       // Мультиаккаунт: сохраняем аккаунт для быстрого переключения (до 5)
       if (d.token && d.user) {
@@ -103,7 +107,9 @@ export default function AuthScreen({
       }
       window.location.reload();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Что-то пошло не так");
+      const msg = err instanceof Error ? err.message : "Что-то пошло не так";
+      if (msg.includes("второй пароль") || msg.includes("Нужен второй")) setNeedSecond(true);
+      setError(msg);
       setLoading(false);
     }
   }
@@ -301,6 +307,19 @@ export default function AuthScreen({
                 <p className="-mt-1 text-[11px] text-white/35">
                   Без юзернейма мы сгенерируем временный — задать свой можно потом в профиле.
                 </p>
+              )}
+
+              {mode === "login" && needSecond && (
+                <label className="ring-focus flex items-center gap-3 rounded-2xl border border-indigo-300/30 bg-indigo-500/10 px-4 py-3.5 transition-all">
+                  <ShieldCheck className="h-4.5 w-4.5 shrink-0 text-indigo-300" />
+                  <input
+                    value={secondPass}
+                    onChange={(e) => setSecondPass(e.target.value)}
+                    placeholder="Второй пароль (2ФА)"
+                    type={showPassword ? "text" : "password"}
+                    className="w-full bg-transparent text-[15px] placeholder:text-white/30"
+                  />
+                </label>
               )}
 
               <label className="ring-focus flex items-center gap-3 rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3.5 transition-all">
