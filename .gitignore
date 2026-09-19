@@ -10,3 +10,4 @@ out
 next-env.d.ts
 tsconfig.tsbuildinfo
 drizzle/meta
+.pgdata/

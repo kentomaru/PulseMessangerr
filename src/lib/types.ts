@@ -1,10 +1,15 @@
 export type PublicUser = {
   id: string;
+  /** Администратор платформы (видно только самому себе). */
+  isAdmin?: boolean;
   username: string;
   displayName: string;
   avatarUrl: string | null;
   bannerUrl: string | null;
   bio: string;
+  /** Кастомный статус-эмодзи: эмодзи или ссылка на анимированную гифку. */
+  statusEmoji: string;
+  nameColor?: string;
   /** null, если пользователь скрыл статус (приватность). */
   lastSeenAt: string | null;
   createdAt: string;
@@ -12,9 +17,16 @@ export type PublicUser = {
   showOnline: boolean;
   allowCalls: boolean;
   allowMessages: boolean;
+  allowGroupInvites: boolean;
+  /** Видно ли меня в глобальном поиске. Ссылка-инвайт работает всегда. */
+  discoverable: boolean;
+  /** Дата рождения (строка, необязательно). */
+  birthday: string;
+  /** Pulse Premium: длинные подписи к медиа и значок. */
+  premium: boolean;
 };
 
-export type Peer = PublicUser & { lastReadAt?: string | null; typingAt?: string | null };
+export type Peer = PublicUser & { lastReadAt?: string | null; typingAt?: string | null; recordingAt?: string | null; recordingKind?: string | null };
 
 export type ConversationKind = "direct" | "group" | "channel";
 export type MemberRole = "owner" | "admin" | "member";
@@ -27,6 +39,12 @@ export type ConversationInfo = {
   avatarUrl: string | null;
   about: string;
   isPrivate: boolean;
+  /** Официальный канал/группа — синяя галочка. */
+  verified?: boolean;
+  restricted?: boolean;
+  slowMode?: number;
+  /** Показывать ли участникам, кто владелец (канал). */
+  showOwner?: boolean;
   ownerId: string | null;
   createdAt: string;
   memberCount: number;
@@ -34,6 +52,8 @@ export type ConversationInfo = {
   myRole: MemberRole;
   /** Заголовок для шапки/списка: имя собеседника или название группы. */
   title: string;
+  /** Юзернейм/токен приглашения (@имя) — видят только владелец и админы. */
+  inviteToken?: string | null;
 };
 
 export type ConversationMemberItem = {
@@ -41,6 +61,9 @@ export type ConversationMemberItem = {
   role: MemberRole;
   lastReadAt: string | null;
   typingAt: string | null;
+  /** Записывает голосовое прямо сейчас (для индикатора у собеседника). */
+  recordingAt?: string | null;
+  recordingKind?: string | null;
   joinedAt: string;
 };
 
@@ -62,6 +85,7 @@ export type ConversationListItem = {
   name: string | null;
   avatarUrl: string | null;
   isPrivate: boolean;
+  verified?: boolean;
   memberCount: number;
   myRole: MemberRole;
   title: string;
@@ -76,6 +100,8 @@ export type ConversationListItem = {
     senderId: string;
     senderName: string | null;
     createdAt: string;
+    /** Тихое сообщение — без звука. */
+    silent?: boolean;
   } | null;
   unreadCount: number;
   activeCall: CallSummary | null;
@@ -106,6 +132,10 @@ export type AttachmentInfo = {
   /** Длительность в секундах (голосовые и кружки). */
   duration?: number;
   caption?: string;
+  /** Картинка-стикер: рисуется крупно и без пузыря (гифки в т.ч.). */
+  sticker?: boolean;
+  /** Спойлер: размыто до клика. */
+  spoiler?: boolean;
 };
 
 /** Реакция на сообщение (агрегированная по эмодзи). */
@@ -119,10 +149,16 @@ export type ChatMessage = {
   id: string;
   conversationId: string;
   senderId: string;
-  /** text | image (content = url или JSON) | voice | video_note | file | call. */
-  type: "text" | "image" | "voice" | "video_note" | "file" | "call";
+  /** text | image (content = url или JSON) | voice | video_note | file | call | gift. */
+  type: "text" | "image" | "voice" | "video_note" | "file" | "call" | "gift";
   content: string;
   replyToId: string | null;
+  /** Тихое сообщение — без звука у получателей. */
+  silent?: boolean;
+  /** Просмотры поста канала («глазик» как в ТГ). */
+  views?: number;
+  /** Выделенный текст, к которому относится ответ («ответить с цитатой»). */
+  quoteText?: string | null;
   createdAt: string;
   deletedAt: string | null;
   /** Когда сообщение отредактировано. */
@@ -135,6 +171,19 @@ export type ChatMessage = {
   replyTo?: ReplyPreview | null;
   /** Реакции (эмодзи → сколько и есть ли моя). */
   reactions?: MessageReaction[];
+  /** Голоса в опросе по вариантам (серверные) и мои выбранные варианты. */
+  pollVotes?: number[];
+  myPollVotes?: number[];
+  /** Расшифровка голосового (хранится на сервере — видна всем). */
+  transcript?: string | null;
+  /** «Переслано от …» — ник автора оригинала. */
+  forwardedFrom?: string | null;
+  /** Аватарка автора оригинала при пересылке. */
+  forwardedAvatar?: string | null;
+  /** Автор оригинала при пересылке (чтобы открыть его профиль). */
+  forwardedUser?: PublicUser | null;
+  /** Id автора оригинала (передаётся дальше по цепочке пересылок). */
+  forwardedUserId?: string | null;
 };
 
 export type CallMedia = "audio" | "video";

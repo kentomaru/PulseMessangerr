@@ -1,12 +1,14 @@
 "use client";
 
+import { useEffect, useState } from "react";
+
 const PALETTES = [
-  "from-violet-500 to-fuchsia-500",
-  "from-cyan-500 to-blue-600",
+  "from-[#5865f2] to-[#7289da]",
+  "from-[#5865f2] to-blue-600",
   "from-emerald-500 to-teal-600",
   "from-amber-500 to-orange-600",
   "from-rose-500 to-pink-600",
-  "from-indigo-500 to-violet-600",
+  "from-indigo-500 to-[#4752c4]",
 ];
 
 export function paletteFor(seed: string) {
@@ -40,16 +42,51 @@ export default function Avatar({
   online?: boolean;
   className?: string;
 }) {
+  // Если файл аватара побился (404) — показываем градиент с инициалами,
+  // а не «сломанную картинку». Сбрасывается при смене адреса картинки.
+  // «Аватарки не грузятся»: иногда браузер кэширует временный сбой сети —
+  // при ошибке делаем ОДНУ повторную попытку с новым параметром.
+  const [broken, setBroken] = useState(false);
+  const [retried, setRetried] = useState(false);
+  useEffect(() => {
+    setBroken(false);
+    setRetried(false);
+  }, [src]);
+  const showImg = !!src && !broken;
+  const imgSrc =
+    src && retried
+      ? `${src}${src.includes("?") ? "&" : "?"}r=1`
+      : src ?? undefined;
   return (
     <div className={`relative shrink-0 ${className}`} style={{ width: size, height: size }}>
-      {src ? (
+      {showImg ? (
         // eslint-disable-next-line @next/next/no-img-element
         <img
-          src={src}
+          src={imgSrc}
           alt={name}
+          loading="eager"
           className="h-full w-full rounded-full object-cover ring-1 ring-white/15"
           draggable={false}
+          onError={() => {
+            if (!retried) setRetried(true);
+            else setBroken(true);
+          }}
         />
+      ) : name === "Удалённый аккаунт" ? (
+        // «Аватар призрака» — так выглядит удалённый админом аккаунт
+        <div
+          className="flex h-full w-full items-center justify-center rounded-full bg-gradient-to-br from-zinc-600 to-zinc-800 text-white/70 ring-1 ring-white/15"
+          title="Удалённый аккаунт"
+        >
+          <svg
+            viewBox="0 0 24 24"
+            fill="currentColor"
+            style={{ width: size * 0.55, height: size * 0.55 }}
+            aria-hidden="true"
+          >
+            <path d="M12 2a8 8 0 0 0-8 8v10l2.5-2 2.5 2 3-2.4 3 2.4 2.5-2 2.5 2V10a8 8 0 0 0-8-8Zm-3 9.5A1.5 1.5 0 1 1 10.5 10 1.5 1.5 0 0 1 9 11.5Zm6 0A1.5 1.5 0 1 1 16.5 10 1.5 1.5 0 0 1 15 11.5Z" />
+          </svg>
+        </div>
       ) : (
         <div
           className={`flex h-full w-full items-center justify-center rounded-full bg-gradient-to-br ${paletteFor(
@@ -62,7 +99,7 @@ export default function Avatar({
       )}
       {online !== undefined && (
         <span
-          className={`absolute right-0 bottom-0 h-3 w-3 rounded-full border-2 border-[#0a0a14] ${
+          className={`absolute right-0 bottom-0 h-3 w-3 rounded-full border-2 border-[#16181c] ${
             online ? "bg-emerald-400 animate-pulse-dot" : "bg-zinc-500"
           }`}
           style={{ transform: "translate(2px, 2px)" }}

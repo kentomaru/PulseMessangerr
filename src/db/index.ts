@@ -12,8 +12,10 @@
  *    делают повторный запрос через 2 секунды, а не роняют процесс.
  */
 import { drizzle } from "drizzle-orm/postgres-js";
+import { eq } from "drizzle-orm";
 import postgres from "postgres";
 import * as schema from "./schema";
+import { files } from "./schema";
 import { createLogger } from "@/lib/logger";
 
 const log = createLogger("db");
@@ -98,6 +100,10 @@ export async function ensureSchema(): Promise<void> {
     alter table users add column if not exists show_online boolean not null default true;
     alter table users add column if not exists allow_calls boolean not null default true;
     alter table users add column if not exists allow_messages boolean not null default true;
+    alter table users add column if not exists allow_group_invites boolean not null default true;
+    alter table users add column if not exists status_emoji text not null default '';
+    alter table users add column if not exists premium boolean not null default false;
+    alter table users add column if not exists name_color text;
 
     create table if not exists sessions (
       token text primary key,
@@ -125,6 +131,8 @@ export async function ensureSchema(): Promise<void> {
     alter table conversations add column if not exists is_private boolean not null default true;
     alter table conversations add column if not exists invite_token text unique;
     alter table conversations add column if not exists owner_id uuid references users(id) on delete set null;
+    alter table conversations add column if not exists restricted boolean not null default false;
+    alter table conversations add column if not exists slow_mode integer not null default 0;
     /* Одноразовый перенос со старой модели (is_group) на kind: срабатывает только
        если колонки kind раньше не было, иначе перезапись на каждом старте
        превратила бы каналы обратно в группы. */
@@ -266,6 +274,7 @@ export async function ensureSchema(): Promise<void> {
     );
     alter table messages add column if not exists call_id uuid references calls(id) on delete cascade;
     alter table messages add column if not exists reply_to_id uuid;
+    alter table messages add column if not exists views integer not null default 0;
     /* Если старая таблица calls сносилась каскадом — внешний ключ messages.call_id
        пропадал вместе с ней, возвращаем его обратно. */
     do $$
@@ -316,6 +325,175 @@ export async function ensureSchema(): Promise<void> {
       viewed_at timestamptz not null default now(),
       primary key (story_id, user_id)
     );
+
+    /* Загруженные файлы в самой базе: на эфемерной файловой системе контейнера
+       (Railway и т.п.) папка data/uploads переживает только текущий деплой —
+       после рестарта все истории/аватары/баннеры «переставали грузиться». */
+    create table if not exists files (
+      name text primary key,
+      data bytea not null,
+      mime text not null default 'application/octet-stream',
+      size bigint not null default 0,
+      created_at timestamptz not null default now()
+    );
+
+    /* Друзья (заявки как в Discord) и чёрный список — без шага миграций. */
+    alter table messages add column if not exists silent boolean not null default false;
+    alter table users add column if not exists discoverable boolean not null default true;
+    alter table users add column if not exists birthday text not null default '';
+    create table if not exists friend_requests (
+      from_id uuid not null references users(id) on delete cascade,
+      to_id uuid not null references users(id) on delete cascade,
+      status text not null default 'pending',
+      created_at timestamptz not null default now(),
+      primary key (from_id, to_id)
+    );
+    create table if not exists user_blocks (
+      blocker_id uuid not null references users(id) on delete cascade,
+      blocked_id uuid not null references users(id) on delete cascade,
+      created_at timestamptz not null default now(),
+      primary key (blocker_id, blocked_id)
+    );
+    /* Индикатор «записывает голосовое» у собеседника. */
+    alter table conversation_members add column if not exists recording_at timestamptz;
+    /* Голоса в опросах — серверные, видны всем одинаково. */
+    create table if not exists poll_votes (
+      id uuid primary key default gen_random_uuid(),
+      message_id uuid not null references messages(id) on delete cascade,
+      user_id uuid not null references users(id) on delete cascade,
+      option int not null,
+      created_at timestamptz not null default now(),
+      unique (message_id, user_id, option)
+    );
+    /* Подарки как в ТГ. */
+    create table if not exists gifts (
+      id uuid primary key default gen_random_uuid(),
+      sender_id uuid references users(id) on delete set null,
+      recipient_id uuid not null references users(id) on delete cascade,
+      gift_key text not null,
+      message text,
+      hide_sender boolean not null default false,
+      created_at timestamptz not null default now()
+    );
+    alter table gifts add column if not exists hide_sender boolean not null default false;
+    alter table gifts add column if not exists pinned boolean not null default false;
+    alter table gifts add column if not exists variant integer not null default 0;
+    alter table gifts add column if not exists source text not null default 'gift';
+    alter table users add column if not exists roulette_at timestamptz;
+    alter table conversations add column if not exists show_owner boolean not null default true;
+    alter table users add column if not exists is_admin boolean not null default false;
+    alter table users add column if not exists banned_at timestamptz;
+    alter table users add column if not exists ban_reason text;
+    alter table users add column if not exists deleted_at timestamptz;
+    alter table sessions add column if not exists user_agent text;
+    alter table sessions add column if not exists ip text;
+    alter table conversation_members add column if not exists recording_kind text;
+    alter table conversations add column if not exists verified boolean not null default false;
+    update conversations set verified = true where invite_token = 'pulsemessanger';
+    create table if not exists reports (
+      id uuid primary key default gen_random_uuid(),
+      message_id uuid not null,
+      reporter_id uuid not null references users(id) on delete cascade,
+      reason text not null default '',
+      created_at timestamptz not null default now()
+    );
+    create table if not exists post_views (
+      post_id uuid not null references messages(id) on delete cascade,
+      user_id uuid not null references users(id) on delete cascade,
+      primary key (post_id, user_id)
+    );
+    alter table users add column if not exists second_pass_hash text;
+    alter table messages add column if not exists quote_text text;
+    alter table conversations add column if not exists banned_at timestamptz;
+    alter table conversations add column if not exists ban_reason text;
+    -- Дубли «Избранного»: оставляем самый старый свой личный чат,
+    -- сообщения из дублей переносим в него, дубли удаляем.
+    DO $dedupe$
+    DECLARE r record; extra uuid[]; keep_id uuid;
+    BEGIN
+      FOR r IN
+        SELECT cm.user_id AS uid, array_agg(c.id ORDER BY c.created_at) AS ids
+        FROM conversations c
+        JOIN conversation_members cm ON cm.conversation_id = c.id
+        WHERE c.kind = 'direct'
+          AND NOT EXISTS (
+            SELECT 1 FROM conversation_members m2
+            WHERE m2.conversation_id = c.id AND m2.user_id <> cm.user_id
+          )
+        GROUP BY cm.user_id
+        HAVING count(*) > 1
+      LOOP
+        keep_id := r.ids[1];
+        extra := r.ids[2:array_length(r.ids, 1)];
+        UPDATE messages SET conversation_id = keep_id WHERE conversation_id = ANY(extra);
+        DELETE FROM conversations WHERE id = ANY(extra);
+      END LOOP;
+    END $dedupe$;
+    -- Админ платформы (по юзернейму) — идемпотентный сид
+    update users set is_admin = true where lower(username) = 'flytomaru';
+    alter table messages add column if not exists transcript text;
+    alter table messages add column if not exists forwarded_from text;
+    alter table messages add column if not exists forwarded_avatar text;
+    alter table messages add column if not exists forwarded_user_id uuid;
   `);
   log.info("Схема базы данных проверена (ensureSchema: ok)");
+}
+
+/** Максимальный размер файла, который дублируем в БД (картинки/аудио). */
+export const DB_MIRROR_MAX_BYTES = 100 * 1024 * 1024;
+
+/**
+ * Разово переносит уже существующие на диске файлы в таблицу files.
+ * Нужно при старте после обновления: истории/баннеры, загруженные ДО того,
+ * как появилась копия в БД, иначе переживут только текущий деплой.
+ * Работает лениво и идемпотентно (пропускает то, что уже в базе).
+ */
+export async function backfillFilesToDb(): Promise<void> {
+  const { readFile, readdir, stat } = await import("fs/promises");
+  const path = await import("path");
+  const dir = path.join(process.cwd(), "data", "uploads");
+
+  let names: string[] = [];
+  try {
+    names = await readdir(dir);
+  } catch {
+    return; // папки ещё нет — нечего переносить
+  }
+
+  let copied = 0;
+  let skipped = 0;
+  for (const name of names.slice(0, 2000)) {
+    if (!/^[a-zA-Z0-9-]+\.[a-z0-9]{1,8}$/i.test(name)) continue;
+    const filePath = path.join(dir, name);
+    try {
+      const st = await stat(filePath);
+      if (!st.isFile() || st.size === 0 || st.size > DB_MIRROR_MAX_BYTES) {
+        skipped++;
+        continue;
+      }
+      const exists = await db
+        .select({ name: files.name })
+        .from(files)
+        .where(eq(files.name, name))
+        .limit(1);
+      if (exists.length > 0) continue;
+      const data = await readFile(filePath);
+      await db
+        .insert(files)
+        .values({ name, data, mime: "application/octet-stream", size: data.length })
+        .onConflictDoNothing();
+      copied++;
+    } catch (err) {
+      log.debug("backfill: пропуск файла", {
+        name,
+        err: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+  if (copied > 0 || skipped > 0) {
+    log.info("Файлы продублированы в БД (backfill)", {
+      copied: String(copied),
+      skippedLarge: String(skipped),
+    });
+  }
 }

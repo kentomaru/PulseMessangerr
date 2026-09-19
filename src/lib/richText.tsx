@@ -11,8 +11,10 @@
  * Безопасность: всё собирается в React-элементы, никакого HTML/innerHTML;
  * ссылки — только http/https и с rel="noopener noreferrer".
  */
+import { replaceCustomEmoji } from "./premiumContent";
 import { useState, type ReactNode } from "react";
 import { Check, Copy } from "lucide-react";
+import { findCustomEmoji } from "./premiumContent";
 
 /* ─────────────────────────── спойлер ─────────────────────────── */
 
@@ -66,12 +68,34 @@ function CodeBlock({ code }: { code: string }) {
 /* ─────────────────────────── инлайн-разметка ─────────────────────────── */
 
 type InlineRule = {
-  id: "code" | "bold" | "underline" | "strike" | "italic" | "spoiler" | "mention" | "link";
+  id: "customEmoji" | "code" | "bold" | "underline" | "strike" | "italic" | "spoiler" | "mention" | "link";
   re: RegExp;
-  render: (m: RegExpExecArray, me: string | undefined) => ReactNode;
+  render: (
+    m: RegExpExecArray,
+    me: string | undefined,
+    onMention?: (name: string) => void,
+  ) => ReactNode;
 };
 
 const INLINE_RULES: InlineRule[] = [
+  {
+    /* Кастом-эмодзи Pulse Premium: токены :ce_<id>: → анимированные SVG */
+    id: "customEmoji",
+    re: /:ce_([a-z0-9_]+):/,
+    render: (m) => {
+      const ce = findCustomEmoji(m[1]);
+      if (!ce) return <span key={`ce-${m.index}`}>{m[0]}</span>;
+      return (
+        <span
+          key={`ce-${m.index}`}
+          title={ce.title}
+          className="inline-block text-[1.3em] leading-none"
+          // SVG приходит из нашего доверенного модуля, не из пользовательского ввода
+          dangerouslySetInnerHTML={{ __html: ce.svg }}
+        />
+      );
+    },
+  },
   {
     id: "code",
     re: /`([^`\n]+)`/,
@@ -109,19 +133,24 @@ const INLINE_RULES: InlineRule[] = [
   {
     id: "mention",
     re: /(^|[^a-zA-Z0-9_])@([a-zA-Z0-9_]{2,32})/,
-    render: (m, meUsername) => {
+    render: (m, meUsername, onMention) => {
       const name = m[2].toLowerCase();
       const mine = !!meUsername && name === meUsername.toLowerCase();
       return (
         <span key={`m-${m.index}`} className="inline">
           {m[1]}
-          <span
-            className={`rounded-md px-1 py-px font-medium ${
-              mine ? "bg-violet-500/40 text-violet-100" : "bg-white/10 text-violet-200"
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onMention?.(name);
+            }}
+            title={mine ? "Это вы" : `Открыть @${name}`}
+            className={`rounded-md px-1 py-px font-medium underline-offset-2 hover:underline ${
+              mine ? "bg-white/15 text-slate-100" : "bg-white/10 text-slate-200"
             }`}
           >
             @{m[2]}
-          </span>
+          </button>
         </span>
       );
     },
@@ -136,7 +165,7 @@ const INLINE_RULES: InlineRule[] = [
         target="_blank"
         rel="noopener noreferrer"
         onClick={(e) => e.stopPropagation()}
-        className="text-cyan-300 underline decoration-cyan-300/40 underline-offset-2 hover:text-cyan-200"
+        className="text-sky-300 underline decoration-sky-300/40 underline-offset-2 hover:text-sky-200"
       >
         {m[1]}
       </a>
@@ -145,7 +174,12 @@ const INLINE_RULES: InlineRule[] = [
 ];
 
 /** Рекурсивный инлайн-парсер: находит самое левое правило и делит текст. */
-function parseInline(text: string, me: string | undefined, keyPrefix: string): ReactNode[] {
+function parseInline(
+  text: string,
+  me: string | undefined,
+  keyPrefix: string,
+  onMention?: (name: string) => void,
+): ReactNode[] {
   if (!text) return [];
   let best: { rule: InlineRule; m: RegExpExecArray } | null = null;
   for (const rule of INLINE_RULES) {
@@ -161,9 +195,9 @@ function parseInline(text: string, me: string | undefined, keyPrefix: string): R
   const after = text.slice(afterStart);
 
   const out: ReactNode[] = [];
-  if (before) out.push(...parseInline(before, me, `${keyPrefix}b`));
-  out.push(rule.render(m, me));
-  if (after) out.push(...parseInline(after, me, `${keyPrefix}a`));
+  if (before) out.push(...parseInline(before, me, `${keyPrefix}b`, onMention));
+  out.push(rule.render(m, me, onMention));
+  if (after) out.push(...parseInline(after, me, `${keyPrefix}a`, onMention));
   return out;
 }
 
@@ -171,25 +205,53 @@ function parseInline(text: string, me: string | undefined, keyPrefix: string): R
  * Разбор текста сообщения в React-элементы.
  * Сначала вынимаем ```блоки кода``` (многострочные), остальное — инлайн.
  */
-export function renderRichText(text: string, meUsername?: string): ReactNode {
+export function renderRichText(
+  text: string,
+  meUsername?: string,
+  onMention?: (name: string) => void,
+): ReactNode {
   const parts: ReactNode[] = [];
   const codeRe = /```([\s\S]*?)```/g;
   let last = 0;
   let m: RegExpExecArray | null;
   let i = 0;
   while ((m = codeRe.exec(text)) !== null) {
-    if (m.index > last) parts.push(...parseInline(text.slice(last, m.index), meUsername, `t${i}`));
+    if (m.index > last) parts.push(...parseInline(text.slice(last, m.index), meUsername, `t${i}`, onMention));
     parts.push(<CodeBlock key={`c${i}`} code={m[1].replace(/^\n|\n$/g, "")} />);
     last = m.index + m[0].length;
     i++;
   }
-  if (last < text.length) parts.push(...parseInline(text.slice(last), meUsername, `t${i}`));
+  if (last < text.length) parts.push(...parseInline(text.slice(last), meUsername, `t${i}`, onMention));
   return parts;
 }
 
 /** Убирает разметку — для превью в цитатах и сайдбаре. */
 export function stripMarkdown(text: string): string {
-  return text
+  if (text.startsWith("contact:")) {
+    try {
+      const c = JSON.parse(text.slice(8)) as { name?: unknown };
+      if (typeof c.name === "string" && c.name) return `Контакт · ${c.name.slice(0, 30)}`;
+    } catch { /* не распарсилось */ }
+    return "Контакт";
+  }
+  if (text.startsWith("location:")) return "Местоположение";
+  // Ответ на историю — показываем текст ответа, а не служебный JSON
+  if (text.startsWith("storyquote:")) {
+    const nl = text.indexOf("\n");
+    const rest = nl === -1 ? "" : text.slice(nl + 1);
+    return rest.trim() ? rest : "Ответ на историю";
+  }
+  // Опросы в превью — просто «Опрос», без сырого JSON
+  if (text.startsWith("poll:")) {
+    try {
+      const p = JSON.parse(text.slice(5)) as { q?: unknown };
+      if (typeof p.q === "string" && p.q) return `Опрос · ${p.q.slice(0, 40)}`;
+    } catch {
+      /* не распарсилось */
+    }
+    return "Опрос";
+  }
+  return replaceCustomEmoji(text)
     .replace(/```([\s\S]*?)```/g, "$1")
     .replace(/`([^`]+)`/g, "$1")
     .replace(/\*\*([^*]+)\*\*/g, "$1")

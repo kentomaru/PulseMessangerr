@@ -6,6 +6,7 @@ import { isUuid, withApi } from "@/lib/api-helpers";
 import {
   isManager,
   listMembers,
+  newInviteToken,
   normalizeKind,
   normalizeRole,
   requireMember,
@@ -20,6 +21,16 @@ import { findActiveCall } from "@/lib/calls";
 export const GET = withApi<{ id: string }>("conversations:get", async ({ params, me }) => {
   const { id } = params;
   if (!isUuid(id)) return NextResponse.json({ error: "Чат не найден" }, { status: 404 });
+
+  // Чат, заблокированный администрацией, не открывается
+  const [bannedCheck] = await db
+    .select({ bannedAt: conversations.bannedAt })
+    .from(conversations)
+    .where(eq(conversations.id, id))
+    .limit(1);
+  if (bannedCheck?.bannedAt) {
+    return NextResponse.json({ error: "Этот чат заблокирован администрацией" }, { status: 403 });
+  }
 
   const access = await requireMember(id, me.id);
   if (!access) return NextResponse.json({ error: "Нет доступа" }, { status: 403 });
@@ -67,18 +78,69 @@ export const PATCH = withApi<{ id: string }>("conversations:update", async ({ re
   const patch: Partial<typeof conversations.$inferInsert> = {};
 
   if (typeof body.name === "string") {
-    const name = body.name.trim().slice(0, 60);
-    if (name.length < 2)
-      return NextResponse.json({ error: "Название должно быть не короче 2 символов" }, { status: 400 });
+    const name = body.name.trim().slice(0, 32);
+    if (name.length < 5)
+      return NextResponse.json({ error: "Название: от 5 до 32 символов" }, { status: 400 });
     patch.name = name;
   }
-  if (typeof body.about === "string") patch.about = body.about.trim().slice(0, 280);
+  if (typeof body.about === "string") patch.about = body.about.trim().slice(0, 255);
   if (typeof body.avatarUrl === "string" || body.avatarUrl === null)
     patch.avatarUrl = body.avatarUrl && String(body.avatarUrl).startsWith("/api/files/") ? body.avatarUrl : null;
   if (typeof body.isPrivate === "boolean") patch.isPrivate = body.isPrivate;
+  // «Скрывать владельца канала» — переключает только владелец
+  if (typeof body.showOwner === "boolean") {
+    if (access.membership.role !== "owner")
+      return NextResponse.json({ error: "Это решает владелец" }, { status: 403 });
+    patch.showOwner = body.showOwner;
+  }
+  // Юзернейм чата/канала (@name): храним в invite_token — без новых колонок БД
+  if (typeof body.username === "string") {
+    if (access.membership.role !== "owner")
+      return NextResponse.json({ error: "Юзернейм задаёт владелец" }, { status: 403 });
+    const un = body.username.trim().toLowerCase().replace(/^@+/, "").slice(0, 32);
+    if (un === "") {
+      // очистить — вернём случайный токен ссылки
+      patch.inviteToken = null;
+    } else {
+      if (!/^[a-z0-9_]{5,32}$/.test(un))
+        return NextResponse.json(
+          { error: "Юзернейм: 5–32 символа, латиница, цифры и «_»" },
+          { status: 400 },
+        );
+      const [taken] = await db
+        .select({ id: conversations.id })
+        .from(conversations)
+        .where(eq(conversations.inviteToken, un))
+        .limit(1);
+      if (taken && taken.id !== id)
+        return NextResponse.json({ error: "Юзернейм уже занят" }, { status: 409 });
+      patch.inviteToken = un;
+    }
+  }
   if (body.kind === "group" || body.kind === "channel") {
     patch.kind = body.kind;
     patch.isGroup = body.kind === "group";
+  }
+
+  // «Запретить копирование/сохранение контента» — как ограниченные каналы в ТГ
+  if (typeof body.restricted === "boolean") {
+    if (access.membership.role !== "owner")
+      return NextResponse.json({ error: "Ограничения задаёт владелец" }, { status: 403 });
+    patch.restricted = body.restricted;
+  }
+
+  // Слоумод: минимальная пауза между сообщениями участников (как в ТГ)
+  if (typeof body.slowMode === "number") {
+    if (access.membership.role !== "owner" && access.membership.role !== "admin")
+      return NextResponse.json({ error: "Слоумод настраивают администраторы" }, { status: 403 });
+    patch.slowMode = Math.max(0, Math.min(3600, Math.round(body.slowMode)));
+  }
+
+  // Отозвать инвайт-ссылку: выпускаем новый случайный токен (старые перестают работать)
+  if (body.revokeInvite === true) {
+    if (access.membership.role !== "owner")
+      return NextResponse.json({ error: "Инвайт отзывает владелец" }, { status: 403 });
+    patch.inviteToken = newInviteToken();
   }
 
   if (Object.keys(patch).length === 0)
@@ -92,10 +154,15 @@ export const PATCH = withApi<{ id: string }>("conversations:update", async ({ re
 });
 
 /**
- * DELETE /api/conversations/[id] — выйти из группы/канала (владелец — удалить).
- * Личный чат удалить нельзя: он просто остаётся в списке.
+ * DELETE /api/conversations/[id] — удаление/выход из чата.
+ *
+ * Личный чат:
+ *   - без параметра — «удалить у себя»: выходите из диалога; если второй
+ *     участник тоже удалит — чат стирается полностью;
+ *   - ?forAll=1 — «удалить для всех»: чат и переписка удаляются целиком.
+ * Группа/канал: участник выходит, владелец удаляет целиком (как раньше).
  */
-export const DELETE = withApi<{ id: string }>("conversations:leave", async ({ params, me, log }) => {
+export const DELETE = withApi<{ id: string }>("conversations:leave", async ({ params, req, me, log }) => {
   const { id } = params;
   if (!isUuid(id)) return NextResponse.json({ error: "Чат не найден" }, { status: 404 });
 
@@ -103,14 +170,12 @@ export const DELETE = withApi<{ id: string }>("conversations:leave", async ({ pa
   if (!access) return NextResponse.json({ error: "Нет доступа" }, { status: 403 });
 
   const conv = access.conversation;
-  if (normalizeKind(conv.kind) === "direct")
-    return NextResponse.json({ error: "Личный чат нельзя удалить" }, { status: 400 });
-
-  const isOwner = conv.ownerId === me.id || normalizeRole(access.membership.role) === "owner";
+  const kind = normalizeKind(conv.kind);
 
   // Я в звонке этого диалога — выходим из комнаты
-  const active = await findActiveCall(id);
-  if (active) {
+  const leaveActiveCall = async () => {
+    const active = await findActiveCall(id);
+    if (!active) return;
     const inCall = await db
       .select()
       .from(callParticipants)
@@ -121,7 +186,39 @@ export const DELETE = withApi<{ id: string }>("conversations:leave", async ({ pa
         .delete(callParticipants)
         .where(and(eq(callParticipants.callId, active.id), eq(callParticipants.userId, me.id)));
     }
+  };
+
+  /* ── личный чат ── */
+  if (kind === "direct") {
+    const forAll = req.nextUrl.searchParams.get("forAll") === "1";
+    await leaveActiveCall();
+    if (forAll) {
+      // Удаляем переписку и сам диалог для обоих (каскады подчистят остальное)
+      await db.delete(conversations).where(eq(conversations.id, id));
+      log.info("Личный чат удалён для всех", { conversationId: id, by: me.id });
+      return NextResponse.json({ ok: true, deleted: true });
+    }
+    // «Удалить у себя»: просто выходим из диалога
+    await db
+      .delete(conversationMembers)
+      .where(and(eq(conversationMembers.conversationId, id), eq(conversationMembers.userId, me.id)));
+    // Если участников не осталось — убираем пустой диалог и переписку
+    const [{ n }] = await db
+      .select({ n: sql<number>`count(*)::int` })
+      .from(conversationMembers)
+      .where(eq(conversationMembers.conversationId, id));
+    if (Number(n) === 0) {
+      await db.delete(conversations).where(eq(conversations.id, id));
+      log.info("Личный чат удалён (последний участник вышел)", { conversationId: id });
+      return NextResponse.json({ ok: true, deleted: true });
+    }
+    log.info("Личный чат скрыт у себя", { conversationId: id, userId: me.id });
+    return NextResponse.json({ ok: true, left: true });
   }
+
+  const isOwner = conv.ownerId === me.id || normalizeRole(access.membership.role) === "owner";
+
+  await leaveActiveCall();
 
   if (!isOwner) {
     await db

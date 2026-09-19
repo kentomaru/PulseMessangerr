@@ -17,9 +17,10 @@ export const POST = withApi<{ id: string }>("conversations:wallpaper", async ({ 
   let value: string | null = null;
   if (typeof wallpaper === "string") {
     const v = wallpaper.trim().slice(0, 300);
-    // Разрешаем только ключи пресетов или собственные загруженные файлы
+    // Разрешаем только ключи пресетов (обычные «g…» и живые «live…»)
+    // или собственные загруженные файлы
     if (v === "" || v === "none") value = null;
-    else if (/^g\d{1,2}$/.test(v)) value = v;
+    else if (/^(g|live)\d{1,2}$/.test(v)) value = v;
     else if (v.startsWith("/api/files/")) value = v;
     else return NextResponse.json({ error: "Недопустимое значение обоев" }, { status: 400 });
   } else if (wallpaper !== null && wallpaper !== undefined) {

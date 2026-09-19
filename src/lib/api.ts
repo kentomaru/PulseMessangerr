@@ -16,6 +16,7 @@ export async function api<T = unknown>(
     throw new ApiError("Нет соединения с сервером", 0);
   }
   const data = await res.json().catch(() => ({}));
+
   if (!res.ok) {
     throw new ApiError(
       (data as { error?: string }).error ?? "Ошибка запроса",
@@ -25,6 +26,38 @@ export async function api<T = unknown>(
   }
   return data as T;
 }
+
+/** Как uploadFile, но с прогрессом («как в TG»): XHR даёт upload.onprogress. */
+export function uploadFileWithProgress(
+  file: File,
+  onProgress: (loaded: number, total: number) => void,
+): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const params = new URLSearchParams({
+      name: file.name || "file",
+      type: file.type || "application/octet-stream",
+      size: String(file.size),
+    });
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", `/api/upload?${params.toString()}`);
+    xhr.withCredentials = true;
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) onProgress(e.loaded, e.total);
+    };
+    xhr.onload = () => {
+      try {
+        const d = JSON.parse(xhr.responseText) as { url?: string; error?: string };
+        if (xhr.status >= 200 && xhr.status < 300 && d.url) resolve(d.url);
+        else reject(new ApiError(d.error ?? "Не удалось загрузить файл", xhr.status));
+      } catch {
+        reject(new ApiError("Не удалось загрузить файл", xhr.status));
+      }
+    };
+    xhr.onerror = () => reject(new ApiError("Не удалось загрузить файл — проверьте интернет", 0));
+    xhr.send(file);
+  });
+}
+
 
 export class ApiError extends Error {
   status: number;

@@ -90,7 +90,11 @@ export const POST = withApi("stories:create", async ({ req, me, log }) => {
       userId: me.id,
       mediaUrl,
       caption,
-      expiresAt: new Date(Date.now() + STORY_TTL_MS),
+      expiresAt: new Date(
+        Date.now() +
+          // Pulse Premium: сторис живут до 48 часов — как в ТГ
+          (me.premium && body.ttlHours === 48 ? 48 * 60 * 60 * 1000 : STORY_TTL_MS),
+      ),
     })
     .returning();
 
