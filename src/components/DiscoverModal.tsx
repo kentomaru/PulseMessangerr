@@ -7,6 +7,7 @@ import { Compass, Hash, Link2, Loader2, LogIn, Megaphone, SearchX, Users, X } fr
 import Avatar from "./Avatar";
 import { ModalShell } from "./ProfileModal";
 import { api } from "@/lib/api";
+import { stripDiscussionMarker } from "@/lib/discussionMarker";
 import type { DiscoverItem } from "@/lib/types";
 
 type Props = {
@@ -149,7 +150,9 @@ export default function DiscoverModal({ onClose, onJoined, notify }: Props) {
                     )}
                     {it.name}
                   </p>
-                  {it.about && <p className="truncate text-xs text-white/40">{it.about}</p>}
+                  {stripDiscussionMarker(it.about) && (
+                    <p className="truncate text-xs text-white/40">{stripDiscussionMarker(it.about)}</p>
+                  )}
                   <p className="mt-0.5 flex items-center gap-1 text-[11px] text-white/30">
                     <Users className="h-3 w-3" /> {it.memberCount} участников
                   </p>
