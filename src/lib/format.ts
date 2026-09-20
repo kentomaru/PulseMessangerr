@@ -193,6 +193,10 @@ export function previewInfo(type: string, content: string): { kind: PreviewKind;
   if (type === "text" && content.startsWith("location:")) {
     return { kind: null, text: "Местоположение" };
   }
+  // «Тычок» собеседника
+  if (type === "text" && content === "nudge:") {
+    return { kind: null, text: "💫 Тычок" };
+  }
   // Ответ на историю («storyquote:{...}»): показываем сам текст ответа
   if (type === "text" && content.startsWith("storyquote:")) {
     const sq = parseStoryQuote(content);

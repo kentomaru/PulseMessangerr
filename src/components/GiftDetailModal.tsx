@@ -105,7 +105,7 @@ export default function GiftDetailModal({
           }`}
         >
           {gift.img ? (
-            <NftFigure gift={gift} size={168} rounded="rounded-2xl" variant={variant} />
+            <NftFigure gift={gift} size={168} rounded="rounded-2xl" variant={variant} full />
           ) : (
             <span
               className={`${gift.anim ?? "gift-anim"} h-28 w-28 [&>svg]:h-full [&>svg]:w-full`}

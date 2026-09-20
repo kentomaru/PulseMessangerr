@@ -99,12 +99,15 @@ export default function NftFigure({
   size,
   rounded = "rounded-2xl",
   variant,
+  full = false,
 }: {
   gift: Gift;
   size: number;
   rounded?: string;
   /** Расцветка 0–4. */
   variant?: number;
+  /** Полный размер: грузить оригинал, а не лёгкую миниатюру. */
+  full?: boolean;
 }) {
   const ch = CHOREO[gift.key] ?? FALLBACK;
   /** «Живой подарок»: играем видео; если оно не загрузилось — фолбэк на текстуру. */
@@ -137,8 +140,10 @@ export default function NftFigure({
             <div className={`nft-cam ${ch.cam}`} style={{ position: "absolute", inset: 0 }}>
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
-                src={gift.img}
+                src={!full && gift.thumb ? gift.thumb : gift.img}
                 alt={gift.name}
+                loading="lazy"
+                decoding="async"
                 draggable={false}
                 className={`h-full w-full ${rounded} object-cover`}
                 style={{ filter: variantFilter(variant) }}

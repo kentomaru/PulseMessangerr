@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, memo } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   ArrowLeft,
@@ -368,7 +368,10 @@ export default function ChatView({
   const [activeCall, setActiveCall] = useState<CallSummary | null>(null);
   const [wallpaper, setWallpaper] = useState<string | null>(null);
   // Черновик восстанавливается из общего хранилища (не теряется при смене чата).
-  const [text, setText] = useState(() => getStoredDraft(conversationId).text);
+  /** Ключ черновика: у «комментариев к посту» он свой, чтобы черновики
+   *  не перетекали между обычным чатом и режимом комментариев. */
+  const draftKey = commentFilter ? `${conversationId}#c-${commentFilter.postId}` : conversationId;
+  const [text, setText] = useState(() => getStoredDraft(draftKey).text);
   const [sending, setSending] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -473,7 +476,7 @@ export default function ChatView({
   const prevLenRef = useRef(0);
   const [editing, setEditing] = useState<ChatMessage | null>(null);
   const [highlight, setHighlight] = useState<string | null>(null);
-  const [draftFiles, setDraftFiles] = useState<DraftFile[]>(() => getStoredDraft(conversationId).files);
+  const [draftFiles, setDraftFiles] = useState<DraftFile[]>(() => getStoredDraft(draftKey).files);
   // «Летящие» файлы в стиле TG: сообщение видно сразу, с прогрессом загрузки
   const [pendingUploads, setPendingUploads] = useState<
     {
@@ -712,7 +715,10 @@ export default function ChatView({
     setPinnedIdx(0);
     setEmojiOpen(false);
     void load();
-    const t = setInterval(() => void load(), 2_500);
+    // В скрытой вкладке не опрашиваем сервер — экономим сеть и батарею
+    const t = setInterval(() => {
+      if (!document.hidden) void load();
+    }, 2_500);
     return () => clearInterval(t);
   }, [load]);
 
@@ -728,26 +734,31 @@ export default function ChatView({
   // Черновик (текст + файлы) держим в общем хранилище, чтобы при переключении
   // чатов он не пропадал. При СМЕНЕ чата: сохраняем текст в СТАРЫЙ чат и
   // подгружаем черновик НОВОГО (иначе текст «переезжал» между чатами).
-  const draftConvRef = useRef(conversationId);
+  const draftConvRef = useRef(draftKey);
   useEffect(() => {
     const prev = draftConvRef.current;
-    if (prev !== conversationId) {
+    if (prev !== draftKey) {
       draftStore.set(prev, { text, files: draftFiles });
       writeTextDraft(prev, text);
-      draftConvRef.current = conversationId;
-      const d = getStoredDraft(conversationId);
+      draftConvRef.current = draftKey;
+      const d = getStoredDraft(draftKey);
       setText(d.text);
       setDraftFiles(d.files);
       window.dispatchEvent(new Event("pulse-drafts"));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [conversationId]);
+  }, [draftKey]);
+  const draftWriteTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
-    if (draftConvRef.current !== conversationId) return;
-    draftStore.set(conversationId, { text, files: draftFiles });
-    writeTextDraft(conversationId, text);
-    window.dispatchEvent(new Event("pulse-drafts"));
-  }, [conversationId, text, draftFiles]);
+    if (draftConvRef.current !== draftKey) return;
+    draftStore.set(draftKey, { text, files: draftFiles });
+    // Дебаунс: не пишем в localStorage и не будим список чатов на каждый символ
+    if (draftWriteTimer.current) clearTimeout(draftWriteTimer.current);
+    draftWriteTimer.current = setTimeout(() => {
+      writeTextDraft(draftKey, text);
+      window.dispatchEvent(new Event("pulse-drafts"));
+    }, 350);
+  }, [draftKey, text, draftFiles]);
 
   // при уходе из чата — останавливаем запись голоса; черновики НЕ трогаем,
   // они дождутся пользователя в draftStore.
@@ -768,7 +779,7 @@ export default function ChatView({
   const draftReplyRestored = useRef(false);
   useEffect(() => {
     if (draftReplyRestored.current || messages.length === 0 || replyTo) return;
-    const rid = getStoredDraft(conversationId).replyToId;
+    const rid = getStoredDraft(draftKey).replyToId;
     if (!rid) {
       draftReplyRestored.current = true;
       return;
@@ -780,16 +791,17 @@ export default function ChatView({
   }, [messages]);
   useEffect(() => {
     const save = () => {
-      draftStore.set(conversationId, draftLatest.current);
-      writeTextDraft(conversationId, draftLatest.current.text);
-      writeDraftReply(conversationId, replyRef.current?.id ?? null);
+      if (draftWriteTimer.current) clearTimeout(draftWriteTimer.current);
+      draftStore.set(draftKey, draftLatest.current);
+      writeTextDraft(draftKey, draftLatest.current.text);
+      writeDraftReply(draftKey, replyRef.current?.id ?? null);
     };
     window.addEventListener("beforeunload", save);
     return () => {
       window.removeEventListener("beforeunload", save);
       save();
     };
-  }, [conversationId]);
+  }, [draftKey]);
 
   const kind = meta?.kind ?? initialKind;
   // Псевдоним контакта перекрывает имя в шапке личного чата
@@ -799,6 +811,30 @@ export default function ChatView({
     kind === "direct" ? getNickname(peerState?.id ?? peer?.id) : null;
   void nickTick;
   const title = peerNick ?? meta?.title ?? initialTitle;
+
+  /** Синтетический «отправитель» постов канала — чтобы не пересоздавать
+   *  объект на каждый рендер (важно для мемоизации строк). */
+  const channelSenderUser = useMemo<PublicUser | null>(
+    () =>
+      kind === "channel" && !commentFilter
+        ? ({
+            id: conversationId,
+            username: "channel",
+            displayName: title,
+            avatarUrl: meta?.avatarUrl ?? null,
+            bannerUrl: null,
+            bio: "",
+            statusEmoji: "",
+            lastSeenAt: null,
+            createdAt: "",
+            online: false,
+            showOnline: false,
+            allowCalls: false,
+            allowMessages: false,
+          } as PublicUser)
+        : null,
+    [kind, commentFilter, conversationId, title, meta?.avatarUrl],
+  );
   const verifiedChat = !!(meta as { verified?: boolean } | null)?.verified;
   const avatar = kind === "direct" ? (peerState?.avatarUrl ?? initialAvatar) : (meta?.avatarUrl ?? initialAvatar);
   const isSpace = kind !== "direct";
@@ -2634,25 +2670,7 @@ export default function ChatView({
                       onMenu={openContextMenu}
                       onJump={jumpTo}
                       onViewUser={onViewUser}
-                      channelSender={
-                        kind === "channel" && !commentFilter
-                          ? ({
-                              id: conversationId,
-                              username: "channel",
-                              displayName: title,
-                              avatarUrl: meta?.avatarUrl ?? null,
-                              bannerUrl: null,
-                              bio: "",
-                              statusEmoji: "",
-                              lastSeenAt: null,
-                              createdAt: "",
-                              online: false,
-                              showOnline: false,
-                              allowCalls: false,
-                              allowMessages: false,
-                            } as PublicUser)
-                          : null
-                      }
+                      channelSender={channelSenderUser}
                       onOpenChannelInfo={onOpenInfo}
                     />
                   )}
@@ -4766,7 +4784,54 @@ function LongText({
   );
 }
 
-function MessageBubble({
+type MessageBubbleProps = React.ComponentProps<typeof MessageBubbleInner>;
+
+/** Мемоизированный пузырь: сравниваем только данные, функции-обработчики
+ *  пересоздаются на каждый рендер, но поведение их идентично. */
+const MessageBubble = memo(function MessageBubbleMemo(props: MessageBubbleProps) {
+  return <MessageBubbleInner {...props} />;
+}, (a, b) => {
+  const m1 = a.message;
+  const m2 = b.message;
+  return (
+    m1.id === m2.id &&
+    m1.content === m2.content &&
+    m1.editedAt === m2.editedAt &&
+    m1.deletedAt === m2.deletedAt &&
+    m1.pinned === m2.pinned &&
+    (m1.views ?? 0) === (m2.views ?? 0) &&
+    (m1.transcript ?? "") === (m2.transcript ?? "") &&
+    (m1.quoteText ?? "") === (m2.quoteText ?? "") &&
+    JSON.stringify(m1.reactions ?? []) === JSON.stringify(m2.reactions ?? []) &&
+    JSON.stringify(m1.pollVotes ?? []) === JSON.stringify(m2.pollVotes ?? []) &&
+    JSON.stringify(m1.myPollVotes ?? []) === JSON.stringify(m2.myPollVotes ?? []) &&
+    (m1.sender?.displayName ?? "") === (m2.sender?.displayName ?? "") &&
+    (m1.sender?.avatarUrl ?? "") === (m2.sender?.avatarUrl ?? "") &&
+    !!((m1.sender ?? undefined) as { deleted?: boolean } | undefined)?.deleted ===
+      !!((m2.sender ?? undefined) as { deleted?: boolean } | undefined)?.deleted &&
+    (m1.forwardedFrom ?? "") === (m2.forwardedFrom ?? "") &&
+    (m1.replyTo?.id ?? "") === (m2.replyTo?.id ?? "") &&
+    a.meId === b.meId &&
+    a.own === b.own &&
+    a.space === b.space &&
+    a.grouped === b.grouped &&
+    a.lastOfGroup === b.lastOfGroup &&
+    a.read === b.read &&
+    a.canDelete === b.canDelete &&
+    a.canPin === b.canPin &&
+    a.highlighted === b.highlighted &&
+    (a.commentCount ?? 0) === (b.commentCount ?? 0) &&
+    (a.postNum ?? 0) === (b.postNum ?? 0) &&
+    !!a.restricted === !!b.restricted &&
+    !!a.premium === !!b.premium &&
+    a.meUsername === b.meUsername &&
+    (a.channelSender?.displayName ?? "") === (b.channelSender?.displayName ?? "") &&
+    (a.channelSender?.avatarUrl ?? "") === (b.channelSender?.avatarUrl ?? "") &&
+    !!a.onDiscuss === !!b.onDiscuss
+  );
+});
+
+function MessageBubbleInner({
   message,
   meId,
   own,

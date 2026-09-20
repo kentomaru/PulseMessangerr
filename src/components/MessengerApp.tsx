@@ -182,7 +182,10 @@ export default function MessengerApp({ me: initialMe }: { me: PublicUser }) {
   useEffect(() => {
     void loadConversations();
     void loadStories();
-    const t = setInterval(loadConversations, 4000);
+    // Скрытая вкладка — пауза в опросе списка чатов
+    const t = setInterval(() => {
+      if (!document.hidden) void loadConversations();
+    }, 4000);
     const ts = setInterval(loadStories, 30_000);
   return () => {
       clearInterval(t);

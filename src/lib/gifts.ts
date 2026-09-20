@@ -21,6 +21,8 @@ export type Gift = {
   nft?: boolean;
   /** Текстура (картинка) вместо вектора — для NFT. */
   img?: string;
+  /** Лёгкая миниатюра для сеток и списков (оригинал грузится в детальных видах). */
+  thumb?: string;
   /** Тираж лимитированной серии. */
   edition?: number;
   /** Доступен только в рулетке NFT (не продаётся в каталоге). */
@@ -255,6 +257,7 @@ export const GIFTS: Gift[] = [
     bg: "from-violet-500/30 to-indigo-400/10",
     nft: true,
     img: "/gifts/nft-cat.png",
+    thumb: "/gifts/thumbs/nft-cat.webp",
     edition: 1000,
     icon: "",
   },
@@ -266,6 +269,7 @@ export const GIFTS: Gift[] = [
     bg: "from-pink-500/30 to-fuchsia-400/10",
     nft: true,
     img: "/gifts/nft-heart.png",
+    thumb: "/gifts/thumbs/nft-heart.webp",
     edition: 750,
     icon: "",
   },
@@ -277,6 +281,7 @@ export const GIFTS: Gift[] = [
     bg: "from-sky-500/30 to-cyan-400/10",
     nft: true,
     img: "/gifts/nft-rocket.png",
+    thumb: "/gifts/thumbs/nft-rocket.webp",
     edition: 500,
     icon: "",
   },
@@ -288,6 +293,7 @@ export const GIFTS: Gift[] = [
     bg: "from-amber-500/30 to-orange-400/10",
     nft: true,
     img: "/gifts/nft-bear.png",
+    thumb: "/gifts/thumbs/nft-bear.webp",
     edition: 350,
     icon: "",
   },
@@ -299,6 +305,7 @@ export const GIFTS: Gift[] = [
     bg: "from-rose-500/30 to-amber-400/10",
     nft: true,
     img: "/gifts/nft-crown.png",
+    thumb: "/gifts/thumbs/nft-crown.webp",
     edition: 200,
     icon: "",
   },
@@ -313,6 +320,7 @@ export const GIFTS: Gift[] = [
     live: true,
     video: "/gifts/dragon.mp4",
     img: "/gifts/nft-dragon.png",
+    thumb: "/gifts/thumbs/nft-dragon.webp",
     edition: 10,
     icon: "",
   },
@@ -324,6 +332,7 @@ export const GIFTS: Gift[] = [
     bg: "from-indigo-500/30 to-cyan-400/10",
     nft: true,
     img: "/gifts/nft-whale.png",
+    thumb: "/gifts/thumbs/nft-whale.webp",
     edition: 80,
     rouletteOnly: true,
     icon: "",
@@ -336,6 +345,7 @@ export const GIFTS: Gift[] = [
     bg: "from-purple-500/30 to-rose-500/10",
     nft: true,
     img: "/gifts/nft-oni.png",
+    thumb: "/gifts/thumbs/nft-oni.webp",
     edition: 60,
     rouletteOnly: true,
     icon: "",
@@ -348,6 +358,7 @@ export const GIFTS: Gift[] = [
     bg: "from-violet-500/30 to-sky-400/10",
     nft: true,
     img: "/gifts/nft-pegasus.png",
+    thumb: "/gifts/thumbs/nft-pegasus.webp",
     edition: 45,
     rouletteOnly: true,
     icon: "",
@@ -360,6 +371,7 @@ export const GIFTS: Gift[] = [
     bg: "from-slate-500/30 to-cyan-300/10",
     nft: true,
     img: "/gifts/nft-wolf.png",
+    thumb: "/gifts/thumbs/nft-wolf.webp",
     edition: 30,
     rouletteOnly: true,
     icon: "",
@@ -372,6 +384,7 @@ export const GIFTS: Gift[] = [
     bg: "from-cyan-400/30 to-blue-500/10",
     nft: true,
     img: "/gifts/nft-diamond.png",
+    thumb: "/gifts/thumbs/nft-diamond.webp",
     edition: 15,
     rouletteOnly: true,
     icon: "",
@@ -384,6 +397,7 @@ export const GIFTS: Gift[] = [
     bg: "from-orange-500/30 to-amber-400/10",
     nft: true,
     img: "/gifts/nft-phoenix.png",
+    thumb: "/gifts/thumbs/nft-phoenix.webp",
     edition: 5,
     rouletteOnly: true,
     icon: "",
