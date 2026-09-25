@@ -93,6 +93,7 @@ import { renderRichText } from "@/lib/richText";
 import { stripDiscussionMarker } from "@/lib/discussionMarker";
 import { getNickname, onNicknames } from "@/lib/nicknames";
 import { isDndActiveNow, getAutoReply } from "@/lib/dnd";
+import { getDraftText, setDraftText } from "@/lib/drafts";
 import { addScheduled, readScheduled, removeScheduled, type ScheduledMsg } from "@/lib/scheduledStore";
 import { parseStoryQuote, type StoryQuoteInfo } from "@/lib/storyQuote";
 import { setCachedTranscript } from "@/lib/transcribe";
@@ -219,62 +220,39 @@ type DraftFile = {
  * дожидаются пользователя; текст дополнительно переживает перезагрузку
  * страницы (localStorage).
  */
-type SavedDraft = { text: string; files: DraftFile[]; replyToId?: string | null };
-const draftStore = new Map<string, SavedDraft>();
-const TEXT_DRAFTS_KEY = "pulse_text_drafts_v1";
+const REPLY_DRAFTS_KEY = "pulse_draft_replies_v1";
+/** Файлы-черновики держим в памяти на сессию (в хранилище их не положить). */
+const fileDraftStore = new Map<string, DraftFile[]>();
+const replyDraftMemory = new Map<string, string>();
 
-function readTextDrafts(): Record<string, string> {
+function readDraftText(key: string): string {
+  return getDraftText(key);
+}
+function writeDraftText(key: string, text: string): void {
+  setDraftText(key, text);
+}
+
+function readDraftReply(key: string): string | null {
   try {
-    const raw = localStorage.getItem(TEXT_DRAFTS_KEY);
-    const parsed = raw ? (JSON.parse(raw) as unknown) : {};
-    return parsed && typeof parsed === "object" ? (parsed as Record<string, string>) : {};
+    const all = JSON.parse(localStorage.getItem(REPLY_DRAFTS_KEY) ?? "{}") as Record<string, string>;
+    if (typeof all[key] === "string") return all[key];
   } catch {
-    return {};
+    /* память ниже */
   }
+  return replyDraftMemory.get(key) ?? null;
 }
 
-function writeTextDraft(convId: string, text: string): void {
+function writeDraftReply(key: string, replyToId: string | null): void {
+  if (replyToId) replyDraftMemory.set(key, replyToId);
+  else replyDraftMemory.delete(key);
   try {
-    const all = readTextDrafts();
-    if (text.trim()) all[convId] = text;
-    else delete all[convId];
-    localStorage.setItem(TEXT_DRAFTS_KEY, JSON.stringify(all));
-  } catch {
-    /* переполнение квоты не критично — черновик останется в памяти */
-  }
-}
-
-function getStoredDraft(convId: string): SavedDraft {
-  let d = draftStore.get(convId);
-  if (!d) {
-    let replyToId: string | null = null;
-    try {
-      const replies = JSON.parse(localStorage.getItem("pulse_draft_replies_v1") ?? "{}") as Record<
-        string,
-        string
-      >;
-      replyToId = replies[convId] ?? null;
-    } catch {
-      /* ignore */
-    }
-    d = { text: readTextDrafts()[convId] ?? "", files: [], replyToId };
-    draftStore.set(convId, d);
-  }
-  return d;
-}
-function writeDraftReply(convId: string, replyToId: string | null): void {
-  try {
-    const all = JSON.parse(localStorage.getItem("pulse_draft_replies_v1") ?? "{}") as Record<
-      string,
-      string
-    >;
-    if (replyToId) all[convId] = replyToId;
-    else delete all[convId];
-    localStorage.setItem("pulse_draft_replies_v1", JSON.stringify(all));
+    const all = JSON.parse(localStorage.getItem(REPLY_DRAFTS_KEY) ?? "{}") as Record<string, string>;
+    if (replyToId) all[key] = replyToId;
+    else delete all[key];
+    localStorage.setItem(REPLY_DRAFTS_KEY, JSON.stringify(all));
   } catch {
     /* ignore */
   }
-  if (draftStore.has(convId)) draftStore.set(convId, { ...draftStore.get(convId)!, replyToId });
 }
 
 type ContextMenuState = {
@@ -371,7 +349,7 @@ export default function ChatView({
   /** Ключ черновика: у «комментариев к посту» он свой, чтобы черновики
    *  не перетекали между обычным чатом и режимом комментариев. */
   const draftKey = commentFilter ? `${conversationId}#c-${commentFilter.postId}` : conversationId;
-  const [text, setText] = useState(() => getStoredDraft(draftKey).text);
+  const [text, setText] = useState(() => readDraftText(draftKey));
   const [sending, setSending] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -476,7 +454,7 @@ export default function ChatView({
   const prevLenRef = useRef(0);
   const [editing, setEditing] = useState<ChatMessage | null>(null);
   const [highlight, setHighlight] = useState<string | null>(null);
-  const [draftFiles, setDraftFiles] = useState<DraftFile[]>(() => getStoredDraft(draftKey).files);
+  const [draftFiles, setDraftFiles] = useState<DraftFile[]>(() => fileDraftStore.get(draftKey) ?? []);
   // «Летящие» файлы в стиле TG: сообщение видно сразу, с прогрессом загрузки
   const [pendingUploads, setPendingUploads] = useState<
     {
@@ -738,12 +716,11 @@ export default function ChatView({
   useEffect(() => {
     const prev = draftConvRef.current;
     if (prev !== draftKey) {
-      draftStore.set(prev, { text, files: draftFiles });
-      writeTextDraft(prev, text);
+      fileDraftStore.set(prev, draftFiles);
+      writeDraftText(prev, text);
       draftConvRef.current = draftKey;
-      const d = getStoredDraft(draftKey);
-      setText(d.text);
-      setDraftFiles(d.files);
+      setText(readDraftText(draftKey));
+      setDraftFiles(fileDraftStore.get(draftKey) ?? []);
       window.dispatchEvent(new Event("pulse-drafts"));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -751,17 +728,18 @@ export default function ChatView({
   const draftWriteTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
     if (draftConvRef.current !== draftKey) return;
-    draftStore.set(draftKey, { text, files: draftFiles });
-    // Дебаунс: не пишем в localStorage и не будим список чатов на каждый символ
+    // Текст сохраняем СРАЗУ — черновик не теряется ни при каком сценарии
+    fileDraftStore.set(draftKey, draftFiles);
+    writeDraftText(draftKey, text);
+    // Список чатов будим с задержкой, чтобы не перерисовываться на каждый символ
     if (draftWriteTimer.current) clearTimeout(draftWriteTimer.current);
     draftWriteTimer.current = setTimeout(() => {
-      writeTextDraft(draftKey, text);
       window.dispatchEvent(new Event("pulse-drafts"));
     }, 350);
   }, [draftKey, text, draftFiles]);
 
   // при уходе из чата — останавливаем запись голоса; черновики НЕ трогаем,
-  // они дождутся пользователя в draftStore.
+  // они дождутся пользователя в хранилище черновиков.
   useEffect(() => {
     return () => {
       voiceRef.current?.stream.getTracks().forEach((t) => t.stop());
@@ -779,7 +757,7 @@ export default function ChatView({
   const draftReplyRestored = useRef(false);
   useEffect(() => {
     if (draftReplyRestored.current || messages.length === 0 || replyTo) return;
-    const rid = getStoredDraft(draftKey).replyToId;
+    const rid = readDraftReply(draftKey);
     if (!rid) {
       draftReplyRestored.current = true;
       return;
@@ -792,8 +770,8 @@ export default function ChatView({
   useEffect(() => {
     const save = () => {
       if (draftWriteTimer.current) clearTimeout(draftWriteTimer.current);
-      draftStore.set(draftKey, draftLatest.current);
-      writeTextDraft(draftKey, draftLatest.current.text);
+      fileDraftStore.set(draftKey, draftLatest.current.files);
+      writeDraftText(draftKey, draftLatest.current.text);
       writeDraftReply(draftKey, replyRef.current?.id ?? null);
     };
     window.addEventListener("beforeunload", save);
@@ -1027,6 +1005,8 @@ export default function ChatView({
             });
             if (d.preview) URL.revokeObjectURL(d.preview);
           } catch (e) {
+            // Подпись к первому файлу возвращаем в поле, если она не ушла
+            if (i === 0 && caption) setText((t) => (t.trim() ? t : caption));
             notify(e instanceof Error ? e.message : "Не удалось отправить файлы");
           } finally {
             setPendingUploads((ps) => ps.filter((x) => x.lid !== lid));

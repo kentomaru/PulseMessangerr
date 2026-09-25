@@ -52,6 +52,7 @@ import { api } from "@/lib/api";
 import { timeHHmm, cleanSnippet } from "@/lib/format";
 import type { ConversationListItem, DiscoverItem, PublicUser, StoryGroup } from "@/lib/types";
 import { getNickname, onNicknames } from "@/lib/nicknames";
+import { getAllDraftTexts } from "@/lib/drafts";
 
 type Props = {
   me: PublicUser;
@@ -297,14 +298,7 @@ export default function Sidebar({
   }, []);
   const drafts = useMemo(() => {
     void draftTick;
-    try {
-      return JSON.parse(localStorage.getItem("pulse_text_drafts_v1") ?? "{}") as Record<
-        string,
-        string
-      >;
-    } catch {
-      return {} as Record<string, string>;
-    }
+    return getAllDraftTexts();
   }, [draftTick, conversations]);
   /** Сортировка списка: по времени / по имени / по непрочитанным. */
   const [sortMode, setSortMode] = useState<"time" | "name" | "unread">(() => {
