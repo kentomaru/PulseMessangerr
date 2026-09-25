@@ -20,11 +20,20 @@
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiError } from "@/lib/api";
+import { ensureAudioUnlocked, getAudioContext } from "@/lib/notify";
+import {
+
+  loadAudioSettings,
+  saveAudioSettings,
+  type AudioSettings,
+} from "@/lib/audioSettings";
 import type {
   CallMedia,
+  CallParticipantInfo,
   CallState,
   IncomingCall,
   PublicUser,
+  SignalInfo,
 } from "@/lib/types";
 
 /**
@@ -36,32 +45,68 @@ import type {
  *   NEXT_PUBLIC_TURN_CREDENTIAL=secret
  */
 const ICE_SERVERS: RTCIceServer[] = [
-  { urls: ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"] },
-  ...(process.env.NEXT_PUBLIC_TURN_URL
+  // Несколько STUN + открытый TURN-релей: если сеть режет UDP (прокси,
+  // корпоративные ограничения), медиа всё равно пройдёт через TURN.
+  // Раньше был только один STUN — в «плохих» сетях звук/видео могли не
+  // идти вовсе, пока включение демки не перезапускало соединение.
+  {
+    urls: [
+      "stun:stun.l.google.com:19302",
+      "stun:stun1.l.google.com:19302",
+      "stun:stun2.l.google.com:19302",
+    ],
+  },
+  // TURN — из переменных окружения (см. .env: NEXT_PUBLIC_TURN_URL и т.д.).
+  // Без TURN за строгим NAT медиа не доходит — слышно/видно только себя.
+  ...((process.env.NEXT_PUBLIC_TURN_URL || process.env.TURN_URL)
     ? [
         {
-          urls: process.env.NEXT_PUBLIC_TURN_URL.split(",").map((u) => u.trim()),
-          username: process.env.NEXT_PUBLIC_TURN_USERNAME || undefined,
-          credential: process.env.NEXT_PUBLIC_TURN_CREDENTIAL || undefined,
+          urls: (process.env.NEXT_PUBLIC_TURN_URL || process.env.TURN_URL)!.split(",").map((u) => u.trim()),
+          username: process.env.NEXT_PUBLIC_TURN_USERNAME || process.env.TURN_USER || undefined,
+          credential: process.env.NEXT_PUBLIC_TURN_CREDENTIAL || process.env.TURN_CRED || undefined,
         },
       ]
     : []),
+  // Запасной открытый TURN (Open Relay Project) — если свой недоступен,
+  // медиа всё равно пройдёт через релей, а не умрёт за NAT.
+  {
+    urls: ["turn:openrelay.metered.ca:80", "turn:openrelay.metered.ca:443"],
+    username: "openrelayproject",
+    credential: "openrelayproject",
+  },
 ];
 
 const INCOMING_POLL_MS = 3_000;
 const CALL_POLL_MS = 1_200;
+/** Точно как в эталонном примере Google webrtc/samples (pc1): оффер явно
+ *  просит принимать и аудио, и видео. */
+const OFFER_OPTIONS: RTCOfferOptions = {
+  offerToReceiveAudio: true,
+  offerToReceiveVideo: true,
+};
 /** Сколько ждём answer, прежде чем переотправить оффер. */
-const OFFER_RETRY_MS = 6_000;
 
-/** Состояние соединения с одним участником. */
+
+/** Состояние соединения с одним участником (паттерн Perfect Negotiation,
+ *  рекомендованный W3C/MDN: https://developer.mozilla.org/en-US/docs/Web/API/WebRTC_API/Perfect_negotiation). */
 type PeerLink = {
   pc: RTCPeerConnection;
-  /** Кто инициировал текущее согласование. */
+  /** Вежливая сторона уступает при столкновении офферов (детерминированно). */
+  polite: boolean;
+  /** Готовим свой оффер прямо сейчас (аналог makingOffer из паттерна). */
+  makingOffer: boolean;
+  /** Игнорировать входящие кандидаты отклонённого оффера. */
+  ignoreOffer: boolean;
+  /** Применяем answer прямо сейчас. */
+  settingRemoteAnswer: boolean;
+  /** Когда создан линк — для страховочного повторного оффера. */
+  createdAt: number;
+  /** Кто инициировал текущее согласование (для совместимости). */
   offering: boolean;
-  /** Когда отправили оффер — чтобы повторить, если ответ так и не пришёл. */
   offeringSince: number | null;
-  /** SDP, который я опубликовал/отправил этому участнику. */
   publishedSdp: string | null;
+  /** Когда последний раз делали ICE-рестарт (защита от спама). */
+  lastIceRestart?: number;
   /** Кандидаты, пришедшие до setRemoteDescription. */
   pendingIce: RTCIceCandidateInit[];
 };
@@ -84,12 +129,19 @@ export type CallSession = {
  */
 function startRingtone(): { stop: () => void } | null {
   try {
-    const Ctx =
-      window.AudioContext ??
-      (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-    if (!Ctx) return null;
-    const ctx = new Ctx();
-    void ctx.resume().catch(() => {});
+    // Рингтон можно выключить в настройках уведомлений (колокольчик в сайдбаре).
+    try {
+      if (localStorage.getItem("pulse_call_sound") === "off") return null;
+    } catch {
+      /* localStorage недоступен — играем как обычно */
+    }
+    // Используем ОБЩИЙ аудиоконтекст приложения (см. lib/notify): он один раз
+    // разблокируется жестом пользователя и не закрывается. Раньше рингтон
+    // создавал свой контекст, который без жеста висел в «suspended», и входящий
+    // звонок звонил молча.
+    ensureAudioUnlocked();
+    const ctx = getAudioContext();
+    if (!ctx) return null;
     let stopped = false;
 
     const beep = (freq: number, at: number, dur: number) => {
@@ -107,7 +159,12 @@ function startRingtone(): { stop: () => void } | null {
     };
 
     const cycle = () => {
-      if (stopped) return;
+      if (stopped || ctx.state === "closed") return;
+      // Вкладка могла долго висеть в фоне — пробуем разморозить перед циклом.
+      if (ctx.state === "suspended") {
+        void ctx.resume().catch(() => {});
+        return;
+      }
       const t0 = ctx.currentTime + 0.02;
       beep(880, t0, 0.35);
       beep(660, t0 + 0.42, 0.35);
@@ -119,7 +176,7 @@ function startRingtone(): { stop: () => void } | null {
       stop: () => {
         stopped = true;
         clearInterval(timer);
-        void ctx.close().catch(() => {});
+        // Общий контекст НЕ закрываем — он нужен уведомлениям.
       },
     };
   } catch {
@@ -135,6 +192,8 @@ export function useCallController(
 ) {
   const [session, setSession] = useState<CallSession | null>(null);
   const [incoming, setIncoming] = useState<IncomingCall | null>(null);
+  /** Качество связи с каждым участником: 0 — нет, 1 — плохая, 2 — средняя, 3 — отличная. */
+  const [connQuality, setConnQuality] = useState<Record<string, number>>({});
   const [muted, setMuted] = useState(false);
   const [cameraOn, setCameraOn] = useState(false);
   const [screenSharing, setScreenSharing] = useState(false);
@@ -158,6 +217,20 @@ export function useCallController(
   const busyRef = useRef(false);
   const ringtoneRef = useRef<{ stop: () => void } | null>(null);
   const syncingRef = useRef(false);
+  /**
+   * Очередь входящих сигналов (offer/answer/ice). Сервер помечает сигналы
+   * прочитанными в момент выдачи, поэтому их нельзя просто выбросить, если
+   * прошлый syncMesh ещё крутится: складываем сюда и обрабатываем в следующем
+   * проходе — без этого терялись answer/ICE и соединение могло не собраться.
+   */
+  const signalQueueRef = useRef<SignalInfo[]>([]);
+  /** Зеркало muted для VOX-гейта (чтобы ручной мьют имел приоритет). */
+  const mutedRef = useRef(false);
+  /** Текущий уровень микрофона (0–100) — индикатор в панели настроек звука. */
+  const micLevelRef = useRef(0);
+  /** rAF-цикл VOX/уровня и его аудио-узлы. */
+  const gateRafRef = useRef<number | null>(null);
+  const gateNodesRef = useRef<{ src: MediaStreamAudioSourceNode; analyser: AnalyserNode } | null>(null);
   const meIdRef = useRef(meId);
   const notifyRef = useRef(notify);
   const unauthorizedRef = useRef(onUnauthorized);
@@ -168,6 +241,7 @@ export function useCallController(
   endedRef.current = onCallEnded;
   sessionRef.current = session;
   incomingRef.current = incoming;
+  mutedRef.current = muted;
 
   /* ─────────────────────────── утилиты ─────────────────────────── */
 
@@ -196,6 +270,20 @@ export function useCallController(
   );
 
   const cleanup = useCallback(() => {
+    // Останавливаем VOX-гейт и индикатор уровня микрофона
+    if (gateRafRef.current !== null) {
+      cancelAnimationFrame(gateRafRef.current);
+      gateRafRef.current = null;
+    }
+    try {
+      gateNodesRef.current?.src.disconnect();
+      gateNodesRef.current?.analyser.disconnect();
+    } catch {
+      /* уже отключены */
+    }
+    gateNodesRef.current = null;
+    micLevelRef.current = 0;
+
     linksRef.current.forEach((l) => {
       try {
         l.pc.close();
@@ -215,6 +303,7 @@ export function useCallController(
     incomingRef.current = null;
     busyRef.current = false;
     syncingRef.current = false;
+    signalQueueRef.current = [];
     setSession(null);
     setIncoming(null);
     setSeconds(0);
@@ -241,12 +330,20 @@ export function useCallController(
   );
 
   /** Я предлагаю соединение, если мой id «меньше» (детерминированно для обоих). */
-  const iShouldOffer = useCallback((peerId: string) => meIdRef.current < peerId, []);
+
 
   const createLink = useCallback(
     (peerId: string): PeerLink => {
       const callId = sessionRef.current?.id ?? "";
-      const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+      // ВАЖНО: «max-bundle» — аудио и видео идут по ОДНОМУ транспорту.
+      // С политикой по умолчанию браузер мог развести их по разным
+      // транспортам: видео (демка) шло по рабочему, а звук — по мёртвому,
+      // и звонок был немым, пока пересогласование случайно не переносило
+      // аудио на рабочий транспорт.
+      const pc = new RTCPeerConnection({
+        iceServers: ICE_SERVERS,
+        bundlePolicy: "max-bundle",
+      });
       const local = localStreamRef.current;
       if (local) local.getTracks().forEach((t) => pc.addTrack(t, local));
 
@@ -257,23 +354,126 @@ export function useCallController(
       }
       const remote = stream;
 
-      pc.ontrack = (e) => {
-        const [track] = e.streams[0]?.getTracks() ?? [];
-        const t = track ?? e.track;
-        if (t && !remote.getTracks().some((x) => x.id === t.id)) remote.addTrack(t);
+      /* PERFECT NEGOTIATION: роли назначаются детерминированно по id,
+         офферы создаются САМИ по событию negotiationneeded (после каждого
+         addTrack/removeTrack/replaceTrack-через-добавление) — ручной
+         очереди «кто кому должен предложить» больше нет. */
+      const polite = meIdRef.current > peerId;
+      pc.onnegotiationneeded = async () => {
+        const link = linksRef.current.get(peerId);
+        if (!link) return;
+        try {
+          link.makingOffer = true;
+          // Оффер — по образцу сэмпла: явные опции приёма аудио/видео.
+          const offer = await pc.createOffer(OFFER_OPTIONS);
+          await pc.setLocalDescription(offer);
+          const d = pc.localDescription;
+          const s = sessionRef.current;
+          if (s && d)
+            await sendSignal(s.id, peerId, d.type === "answer" ? "answer" : "offer", {
+              type: d.type,
+              sdp: d.sdp,
+            });
+        } catch {
+          /* событие повторится */
+        } finally {
+          link.makingOffer = false;
+        }
+      };
+
+    pc.ontrack = (e) => {
+      // ВАЖНО: берём именно e.track — дорожку ЭТОГО события. Раньше брали
+      // e.streams[0].getTracks()[0], но к моменту второго события (видео)
+      // в потоке уже лежит аудио, и оно всегда оказывалось «первым» —
+      // видеодорожка молча отбрасивалась. Итог: собеседник слышал звук,
+      // но не видел ни камеру, ни демонстрацию экрана.
+      const t = e.track;
+      if (t && !remote.getTracks().some((x) => x.id === t.id)) remote.addTrack(t);
+      publishStreams();
+      // Дорожка закончилась (собеседник выключил демку/камеру целиком) —
+      // мгновенно убираем её из потока, чтобы плитка не висела чёрной.
+      t.onended = () => {
+        try {
+          remote.removeTrack(t);
+        } catch {
+          /* уже убрана */
+        }
         publishStreams();
       };
+      if (t.kind === "video") {
+        // Часть браузеров на остановку видео у собеседника шлёт не «ended»,
+        // а «mute» (дорожка как бы замирает). Если видео молчит 2.5 секунды —
+        // убираем плитку сами; если ожило — возвращаем.
+        let muteTimer: ReturnType<typeof setTimeout> | null = null;
+        t.onmute = () => {
+          if (muteTimer) clearTimeout(muteTimer);
+          muteTimer = setTimeout(() => {
+            try {
+              remote.removeTrack(t);
+            } catch {
+              /* уже убрана */
+            }
+            publishStreams();
+          }, 2500);
+        };
+        t.onunmute = () => {
+          if (muteTimer) {
+            clearTimeout(muteTimer);
+            muteTimer = null;
+          }
+          if (!remote.getTracks().some((x) => x.id === t.id)) {
+            try {
+              remote.addTrack(t);
+            } catch {
+              /* уже есть */
+            }
+            publishStreams();
+          }
+        };
+      }
+    };
       pc.onicecandidate = (e) => {
         if (e.candidate && callId) void sendSignal(callId, peerId, "ice", e.candidate.toJSON());
       };
       pc.onconnectionstatechange = () => {
-        if (pc.connectionState === "failed") {
-          notifyRef.current("Соединение с одним из участников потеряно");
+        const st = pc.connectionState;
+        if (st === "failed" || st === "disconnected") {
+          // Авто-переподключение: пересобираем маршрут медиа через
+          // ICE-рестарт. Раньше при обрыве звук/видео умирали навсегда,
+          // пока кто-нибудь не включал демку.
+          const link = linksRef.current.get(peerId);
+          const last = link?.lastIceRestart ?? 0;
+          if (link && Date.now() - last > 8000) {
+            link.lastIceRestart = Date.now();
+            (async () => {
+              try {
+                link.offering = true;
+                link.offeringSince = Date.now();
+                const offer = await pc.createOffer({ iceRestart: true });
+                await pc.setLocalDescription(offer);
+                const s = sessionRef.current;
+                if (s)
+                  await sendSignal(s.id, peerId, "offer", {
+                    type: offer.type,
+                    sdp: offer.sdp,
+                  });
+              } catch {
+                link.offering = false;
+                link.offeringSince = null;
+              }
+            })();
+          }
+          if (st === "failed") notifyRef.current("Переподключаемся к участнику…");
         }
       };
 
       const link: PeerLink = {
         pc,
+        polite,
+        makingOffer: false,
+        ignoreOffer: false,
+        settingRemoteAnswer: false,
+        createdAt: Date.now(),
         offering: false,
         offeringSince: null,
         publishedSdp: null,
@@ -300,10 +500,74 @@ export function useCallController(
    * Синхронизация mesh-соединений по состоянию комнаты:
    * создаём недостающие пиры, отвечаем на офферы, предлагаем свои.
    */
-  const syncMesh = useCallback(
+  /** Обработка одного входящего сигнала по канонам Perfect Negotiation
+ *  (MDN/W3C): вежливый уступает при коллизии, невежливый игнорирует чужой
+ *  оффер. Один и тот же код для «звонящего» и «принимающего». */
+const handlePeerSignal = async (
+  link: PeerLink,
+  peerId: string,
+  sig: { kind: "offer" | "answer" | "ice"; payload?: unknown },
+) => {
+  const pc = link.pc;
+  const s = sessionRef.current;
+
+  if (sig.kind === "ice" && sig.payload) {
+    if (pc.remoteDescription) {
+      try {
+        await pc.addIceCandidate(sig.payload as RTCIceCandidateInit);
+      } catch {
+        /* кандидат от отклонённого оффера или устаревший */
+      }
+    } else {
+      link.pendingIce.push(sig.payload as RTCIceCandidateInit);
+    }
+    return;
+  }
+
+  if (
+    (sig.kind === "offer" || sig.kind === "answer") &&
+    sig.payload &&
+    typeof (sig.payload as { sdp?: unknown }).sdp === "string"
+  ) {
+    const description: RTCSessionDescriptionInit = {
+      type: sig.kind,
+      sdp: (sig.payload as { sdp: string }).sdp,
+    };
+    const readyForOffer =
+      !link.makingOffer &&
+      (pc.signalingState === "stable" || link.settingRemoteAnswer);
+    const offerCollision = description.type === "offer" && !readyForOffer;
+    link.ignoreOffer = !link.polite && offerCollision;
+    if (link.ignoreOffer) return;
+
+    link.settingRemoteAnswer = description.type === "answer";
+    await pc.setRemoteDescription(description);
+    link.settingRemoteAnswer = false;
+
+    if (description.type === "offer") {
+      // setLocalDescription() без аргументов сам создаёт ответ.
+      await pc.setLocalDescription();
+      const d = pc.localDescription;
+      if (s && d)
+        await sendSignal(s.id, peerId, d.type === "answer" ? "answer" : "offer", {
+          type: d.type,
+          sdp: d.sdp,
+        });
+    }
+    await flushIce(link);
+  }
+};
+
+const syncMesh = useCallback(
     async (state: CallState) => {
       if (syncingRef.current) return;
       syncingRef.current = true;
+      // Страховка: даже если какой-то внутренний await зависнет, блокировка
+      // снимется сама через 12 секунд и соединения продолжат создаваться.
+      const lockTimer = setTimeout(() => {
+        syncingRef.current = false;
+      }, 12_000);
+      const signals = signalQueueRef.current.splice(0, signalQueueRef.current.length);
       try {
         const me = meIdRef.current;
         const callId = state.call.id;
@@ -316,109 +580,193 @@ export function useCallController(
         }
 
         for (const p of active) {
-          const existing = linksRef.current.get(p.userId);
-          const pc = existing?.pc ?? createLink(p.userId).pc;
-          const link = linksRef.current.get(p.userId)!;
+          const link = linksRef.current.get(p.userId) ?? createLink(p.userId);
 
-          // 1) Собеседник опубликовал SDP-оффер — значит, он ждёт мой answer
-          if (p.sdp) {
-            const remoteChanged =
-              pc.remoteDescription?.sdp !== p.sdp ||
-              (pc.signalingState === "stable" && !existing);
-            if (remoteChanged) {
-              try {
-                // Встречные офферы: «вежливая» сторона откатывает свой
-                if (pc.signalingState === "have-local-offer" && !iShouldOffer(p.userId)) {
-                  await pc.setLocalDescription({ type: "rollback" });
-                  link.offering = false;
-                  link.offeringSince = null;
-                }
-                await pc.setRemoteDescription({ type: "offer", sdp: p.sdp });
-                link.publishedSdp = p.sdp;
-                await flushIce(link);
-                const answer = await pc.createAnswer();
-                await pc.setLocalDescription(answer);
-                await sendSignal(callId, p.userId, "answer", {
-                  type: answer.type,
-                  sdp: answer.sdp,
-                });
-                continue;
-              } catch {
-                /* попробуем на следующем опросе */
-              }
-            }
-          }
-
-          // 2) Входящие сигналы (answer / ice) от этого участника
-          for (const sig of state.signals.filter((s) => s.from === p.userId)) {
+          // Оффер, опубликованный при входе, может прийти через поле участника
+          if (p.sdp && link.pc.remoteDescription?.sdp !== p.sdp) {
             try {
-              if (sig.kind === "answer" && typeof sig.payload?.sdp === "string") {
-                if (pc.signalingState === "have-local-offer") {
-                  await pc.setRemoteDescription({ type: "answer", sdp: sig.payload.sdp });
-                  link.offering = false; // согласование завершено
-                  link.offeringSince = null;
-                  await flushIce(link);
-                }
-              } else if (sig.kind === "ice" && sig.payload) {
-                if (pc.remoteDescription) await pc.addIceCandidate(sig.payload as RTCIceCandidateInit);
-                else link.pendingIce.push(sig.payload as RTCIceCandidateInit);
-              } else if (sig.kind === "offer" && typeof sig.payload?.sdp === "string") {
-                // Внезапный оффер (например, после включения камеры)
-                if (pc.signalingState === "have-local-offer" && iShouldOffer(p.userId)) {
-                  // «Невоспитанная» сторона игнорирует встречный оффер
-                  continue;
-                }
-                if (pc.signalingState !== "stable") {
-                  await pc.setLocalDescription({ type: "rollback" }).catch(() => {});
-                }
-                await pc.setRemoteDescription({ type: "offer", sdp: sig.payload.sdp });
-                await flushIce(link);
-                const answer = await pc.createAnswer();
-                await pc.setLocalDescription(answer);
-                await sendSignal(callId, p.userId, "answer", { type: answer.type, sdp: answer.sdp });
-              }
+              await handlePeerSignal(link, p.userId, {
+                kind: "offer",
+                payload: { type: "offer", sdp: p.sdp },
+              });
             } catch {
-              /* сигнал обработаем повторно */
+              /* повторится на следующем опросе */
             }
           }
 
-          // 3) Моя очередь предлагать — создаём/обновляем оффер
-          if (iShouldOffer(p.userId)) {
-            // Ответ потерялся (сеть/вкладка спала) — откатываемся и пробуем снова,
-            // иначе соединение навсегда останется в have-local-offer без звука.
-            if (
-              link.offering &&
-              link.offeringSince !== null &&
-              Date.now() - link.offeringSince > OFFER_RETRY_MS &&
-              pc.signalingState === "have-local-offer"
-            ) {
-              await pc.setLocalDescription({ type: "rollback" }).catch(() => {});
-              link.offering = false;
-              link.offeringSince = null;
+          // Все накопленные сигналы от этого участника — через один обработчик
+          for (const sig of signals.filter((s) => s.from === p.userId)) {
+            try {
+              await handlePeerSignal(link, p.userId, sig);
+            } catch {
+              /* попробуем на следующем опросе */
             }
+          }
 
-            const needOffer =
-              !existing || (pc.signalingState === "stable" && !pc.remoteDescription);
-            if (needOffer && !link.offering) {
-              try {
-                link.offering = true;
-                link.offeringSince = Date.now();
-                const offer = await pc.createOffer();
-                await pc.setLocalDescription(offer);
-                await sendSignal(callId, p.userId, "offer", { type: offer.type, sdp: offer.sdp });
-              } catch {
-                link.offering = false;
-                link.offeringSince = null;
-              }
+          // Страховка от потерянного оффера: если связи всё ещё нет дольше
+          // 8 секунд — напоминаем о себе (идемпотентно, по паттерну).
+          if (
+            link.pc.signalingState === "stable" &&
+            !link.pc.remoteDescription &&
+            !link.makingOffer &&
+            Date.now() - link.createdAt > 8_000
+          ) {
+            try {
+              const offer = await link.pc.createOffer(OFFER_OPTIONS);
+              await link.pc.setLocalDescription(offer);
+              const d = link.pc.localDescription;
+              if (d)
+                await sendSignal(callId, p.userId, "offer", {
+                  type: d.type,
+                  sdp: d.sdp,
+                });
+            } catch {
+              /* следующее событие договорит */
             }
           }
         }
       } finally {
+        clearTimeout(lockTimer);
         syncingRef.current = false;
       }
     },
-    [createLink, dropPeer, flushIce, iShouldOffer, sendSignal],
+    [createLink, dropPeer, flushIce, sendSignal],
   );
+  const syncMeshRef = useRef(syncMesh);
+  syncMeshRef.current = syncMesh;
+
+  /**
+   * СТОРОЖ ЗВУКА. Каждые 3 секунды читаем реальную статистику соединений
+   * (сколько байт звука отправлено/получено). Если связь установлена, но
+   * звук не течёт >10 секунд — чиним сами: свежий захват микрофона +
+   * пересогласование. Плюс отдаём цифры на экран («Диагностика»), чтобы
+   * всегда было видно, где именно тишина.
+   */
+  const [audioWatchdog, setAudioWatchdog] = useState<
+    Record<string, { conn: string; sentKB: number; recvKB: number; frames: number }>
+  >({});
+  const watchdogRef = useRef<
+    Record<string, { sent: number; recv: number; stuck: number }>
+  >({});
+  // Автолечение «односторонней тишины»: иногда аудио-м-линия договаривается
+  // только на приём (собеседника слышно, а нас — нет), пока кто-то не
+  // запустит демку (та запускает полное пересогласование). Сторож считает
+  // тики, где соединение «connected», микрофон жив, но отправлено 0 байт,
+  // и через ~12 секунд один раз делает то же самое пересогласование сам.
+  const healRef = useRef<{ zeroTicks: Record<string, number>; stage: number }>({
+    zeroTicks: {},
+    stage: 0,
+  });
+  useEffect(() => {
+    const s = session;
+    if (!s || s.status !== "live") return;
+    const t = setInterval(() => {
+      (async () => {
+        const diag: Record<string, { conn: string; sentKB: number; recvKB: number; frames: number }> = {};
+        for (const [peerId, l] of linksRef.current) {
+          let sent = 0;
+          let recv = 0;
+          let frames = 0;
+          try {
+            const stats = await l.pc.getStats();
+            stats.forEach((r) => {
+              if (r.type === "outbound-rtp" && r.kind === "audio")
+                sent = (r as RTCOutboundRtpStreamStats).bytesSent ?? sent;
+              if (r.type === "inbound-rtp" && r.kind === "audio")
+                recv = (r as RTCInboundRtpStreamStats).bytesReceived ?? recv;
+              if (r.type === "inbound-rtp" && r.kind === "video")
+                frames = (r as RTCInboundRtpStreamStats).framesReceived ?? frames;
+            });
+          } catch {
+            continue;
+          }
+          const prevSent = watchdogRef.current[peerId]?.sent ?? -1;
+          const micLive =
+            localStreamRef.current?.getAudioTracks().some(
+              (t) => t.readyState === "live" && t.enabled,
+            ) ?? false;
+          const h = healRef.current;
+          if (
+            micLive &&
+            (l.pc.connectionState === "connected" ||
+              (l.pc.connectionState as string) === "completed") &&
+            prevSent >= 0 &&
+            sent - prevSent === 0
+          ) {
+            h.zeroTicks[peerId] = (h.zeroTicks[peerId] ?? 0) + 1;
+          } else {
+            h.zeroTicks[peerId] = 0;
+          }
+          watchdogRef.current[peerId] = { sent, recv, stuck: 0 };
+          diag[peerId] = {
+            conn: l.pc.connectionState,
+            sentKB: Math.round(sent / 1024),
+            recvKB: Math.round(recv / 1024),
+            frames,
+          };
+        }
+        setAudioWatchdog(diag);
+
+        // Лечение «односторонней тишины»: соединение стоит, микрофон не
+        // выключен, но звук не уходит уже ~12 секунд. Ступень 1 — проверяем,
+        // что аудиотрек вообще стоит на отправку (иначе добавляем), и делаем
+        // полный ре-оффер — ровно то, что происходило при включении демки.
+        // Ступень 2 (если через 12 секунд всё ещё тишина) — ICE-рестарт.
+        const hh = healRef.current;
+        const maxZero = Object.values(hh.zeroTicks).reduce((m, n) => Math.max(m, n), 0);
+        if (hh.stage < 2 && maxZero >= 4) {
+          hh.zeroTicks = {};
+          const micTrack = localStreamRef.current?.getAudioTracks()[0] ?? null;
+          if (micTrack && micTrack.readyState === "live") {
+            for (const [, l] of linksRef.current) {
+              const hasAudio = l.pc
+                .getSenders()
+                .some(
+                  (s) => s.track && s.track.kind === "audio" && s.track.readyState === "live",
+                );
+              if (!hasAudio) {
+                try {
+                  l.pc.addTrack(micTrack, localStreamRef.current as MediaStream);
+                } catch {
+                  /* уже добавлен параллельно */
+                }
+              }
+            }
+          }
+          if (hh.stage === 0) {
+            hh.stage = 1;
+            void renegotiateAllRef.current(false);
+          } else {
+            hh.stage = 2;
+            void iceRestartAllRef.current();
+          }
+        }
+
+        // Если участников больше одного, а соединений нет (сигнал потерялся,
+        // вкладка засыпала) — принудительно пересинхронизируем mesh.
+        const cur = sessionRef.current;
+        if (cur && cur.status === "live") {
+          const others = cur.participants.filter((p) => p.userId !== meIdRef.current);
+          if (others.length > 0 && linksRef.current.size === 0) {
+            void syncMeshRef.current({
+              call: { id: cur.id },
+              participants: cur.participants,
+            } as unknown as CallState);
+          }
+        }
+      })();
+    }, 3_000);
+    return () => {
+      clearInterval(t);
+      watchdogRef.current = {};
+      healRef.current = { zeroTicks: {}, stage: 0 };
+    };
+  // В зависимостях ТОЛЬКО стабильные значения: объект session меняется
+  // каждые 2 секунды опроса, и интервал пересоздавался раньше, чем успевал
+  // сработать (3 с) — из-за этого диагностика вечно показывала
+  // «Пока нет соединений», а сторож никогда не лечил тишину.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session?.id, session?.status]);
 
   /** Применить состояние комнаты к локальному состоянию + синхронизировать mesh. */
   const applyState = useCallback(
@@ -445,10 +793,29 @@ export function useCallController(
         status: s.status === "ringing" ? "ringing" : "live",
         participants: state.participants,
       };
+      // Личный звонок 1:1: собеседник вышел — звонок завершается сам, чтобы
+      // не висеть в пустой комнате («тыкаю на новое окошко и звонок
+      // сбрасывается» не нужен).
+      const others = next.participants.filter((p) => p.userId !== meIdRef.current);
+      const prev = sessionRef.current;
+      const wasLiveWithPeer =
+        !!prev && prev.status === "live" && prev.id === next.id &&
+        prev.participants.some((p) => p.userId !== meIdRef.current);
+      if (next.kind === "direct" && wasLiveWithPeer && others.length === 0) {
+        cleanup();
+        notifyRef.current("Собеседник вышел — звонок завершён");
+        endedRef.current();
+        return;
+      }
+
       sessionRef.current = next;
       setSession(next);
       setIncoming(null);
       incomingRef.current = null;
+      // Сигналы сервер выдаёт ровно один раз (помечает прочитанными) —
+      // складываем их в очередь ДО запуска синхронизации, чтобы они не
+      // потерялись, даже если прошлый проход ещё занят.
+      if (state.signals.length > 0) signalQueueRef.current.push(...state.signals);
       void syncMesh(state);
     },
     [cleanup, syncMesh],
@@ -456,21 +823,30 @@ export function useCallController(
 
   /* ─────────────────────── вход в комнату ─────────────────────── */
 
-  const acquireMedia = useCallback(async (media: CallMedia): Promise<MediaStream> => {
+  const acquireMedia = useCallback(async (media: CallMedia): Promise<MediaStream | null> => {
+    // ВАЖНО: захватываем микрофон МАКСИМАЛЬНО ПРОСТО — { audio: true }, как
+    // в старой рабочей версии и в эталонных примерах. Ограничения
+    // (шумоподавление и т.д.) применяются ТОЛЬКО если пользователь сам нажмёт
+    // «Применить» в панели настроек звука: на части систем они ломают захват
+    // и звонок становился немым.
     try {
       return await navigator.mediaDevices.getUserMedia({ audio: true, video: media === "video" });
-    } catch (err) {
+    } catch {
       if (media === "video") {
         // Камеры может не быть — продолжаем хотя бы с аудио
         try {
-          const audioOnly = await navigator.mediaDevices.getUserMedia({ audio: true });
-          notifyRef.current("Камера недоступна — переключаемся на аудио");
-          return audioOnly;
+          return await navigator.mediaDevices.getUserMedia({ audio: true });
         } catch {
-          /* упадём ниже */
+          /* пробуем дальше */
         }
       }
-      throw err;
+      // Ничего не дало (нет доступа к микрофону, запрет в браузере и т.п.) —
+      // НЕ роняем звонок: заходим в режиме прослушивания (собеседников будет
+      // слышно и видно, но вас — нет).
+      notifyRef.current(
+        "Нет доступа к микрофону/камере — вы в режиме прослушивания. Разрешите доступ в настройках браузера, чтобы говорить",
+      );
+      return null;
     }
   }, []);
 
@@ -485,13 +861,25 @@ export function useCallController(
       if (sessionRef.current || busyRef.current) return;
       busyRef.current = true;
       setStarting(true);
+      // Размораживаем AudioContext ПРЯМО в жесте пользователя (клик
+      // «Позвонить»/«Принять») — иначе первый звонок мог идти без звука.
+      try {
+        void getAudioContext()?.resume().catch(() => {});
+      } catch {
+        /* нет WebAudio */
+      }
       let stream: MediaStream | null = null;
       try {
         stream = await acquireMedia(opts.media);
+        // stream может быть null — режим прослушивания (нет доступа к
+        // микрофону): звонок всё равно работает, мы слышим и видим других.
         localStreamRef.current = stream;
-        const videoOn = stream.getVideoTracks().some((t) => t.enabled);
+        const videoOn = !!stream?.getVideoTracks().some((t) => t.enabled);
         setCameraOn(videoOn);
         setMuted(false);
+        mutedRef.current = false;
+        // VOX-гейт и индикатор уровня микрофона
+        restartVoiceGate();
 
         let state: CallState;
         if (opts.callId) {
@@ -649,7 +1037,9 @@ export function useCallController(
     setIncoming(null);
   }, []);
 
-  // Закрытие вкладки во время звонка — деликатно выходим из комнаты
+  // Закрытие вкладки во время звонка — деликатно выходим из комнаты.
+  // Слушаем И beforeunload, И pagehide: на мобильных и при сворачивании
+  // срабатывает только pagehide, а раньше звонок «шёл дальше».
   useEffect(() => {
     const onLeave = () => {
       const id = sessionRef.current?.id;
@@ -664,7 +1054,11 @@ export function useCallController(
       }
     };
     window.addEventListener("beforeunload", onLeave);
-    return () => window.removeEventListener("beforeunload", onLeave);
+    window.addEventListener("pagehide", onLeave);
+    return () => {
+      window.removeEventListener("beforeunload", onLeave);
+      window.removeEventListener("pagehide", onLeave);
+    };
   }, []);
 
   /* ─────────────────────── опросы ─────────────────────── */
@@ -731,6 +1125,50 @@ export function useCallController(
     return () => clearInterval(t);
   }, [session?.status, session?.id]);
 
+  // Уровень связи с каждым участником: раз в 3 секунды смотрим статистику
+  // WebRTC (пинг + потери пакетов) и переводим в 0–3 «палочки».
+  useEffect(() => {
+    if (session?.status !== "live") {
+      setConnQuality({});
+      return;
+    }
+    const t = setInterval(async () => {
+      const next: Record<string, number> = {};
+      for (const [peerId, l] of Array.from(linksRef.current.entries())) {
+        try {
+          const stats = await l.pc.getStats();
+          let rtt: number | null = null;
+          let lost = 0;
+          let received = 0;
+          stats.forEach((r) => {
+            const s = r as Record<string, unknown>;
+            if (s.type === "candidate-pair" && s.state === "succeeded" && typeof s.currentRoundTripTime === "number") {
+              rtt = (s.currentRoundTripTime as number) * 1000;
+            }
+            if (s.type === "inbound-rtp") {
+              lost += typeof s.packetsLost === "number" ? (s.packetsLost as number) : 0;
+              received += typeof s.packetsReceived === "number" ? (s.packetsReceived as number) : 0;
+            }
+          });
+          const lossRatio = received + lost > 0 ? lost / (received + lost) : 0;
+          const ping = rtt ?? 0;
+          let q = 3;
+          if (ping > 900 || lossRatio > 0.2) q = 0;
+          else if (ping > 400 || lossRatio > 0.08) q = 1;
+          else if (ping > 150 || lossRatio > 0.02) q = 2;
+          next[peerId] = q;
+        } catch {
+          next[peerId] = 0;
+        }
+      }
+      setConnQuality((cur) => {
+        const key = JSON.stringify(cur);
+        return JSON.stringify(next) === key ? cur : next;
+      });
+    }, 3_000);
+    return () => clearInterval(t);
+  }, [session?.status, session?.id]);
+
   // Рингтон входящего. Зависимость — только id звонящего звонка: объект incoming
   // обновляется каждым опросом, и рингтон перезапускался бы каждые 3 секунды.
   const ringingId = incoming && incoming.status === "ringing" ? incoming.id : null;
@@ -750,15 +1188,36 @@ export function useCallController(
 
   /* ─────────────────────── медиа ─────────────────────── */
 
+  /**
+   * Оптимистично обновить МОЙ медиастатус в списке участников, не дожидаясь
+   * следующего опроса комнаты (1+ с). Иначе иконка «микрофон выкл/вкл»
+   * переключалась с заметной задержкой («статус долго обновляется»).
+   */
+  const patchMyMediaState = useCallback(
+    (patch: Partial<Pick<CallParticipantInfo, "muted" | "videoOn" | "screenOn">>) => {
+      const s = sessionRef.current;
+      if (!s) return;
+      const me = meIdRef.current;
+      const next: CallSession = {
+        ...s,
+        participants: s.participants.map((p) => (p.userId === me ? { ...p, ...patch } : p)),
+      };
+      sessionRef.current = next;
+      setSession(next);
+    },
+    [],
+  );
+
   const toggleMute = useCallback(() => {
     setMuted((m) => {
       const next = !m;
       localStreamRef.current?.getAudioTracks().forEach((t) => (t.enabled = !next));
+      patchMyMediaState({ muted: next });
       const s = sessionRef.current;
       if (s) void api(`/api/calls/${s.id}`, { method: "POST", body: JSON.stringify({ action: "state", muted: next }) }).catch(() => {});
       return next;
     });
-  }, []);
+  }, [patchMyMediaState]);
 
   /**
    * Повторное согласование со всеми: нужно, когда изменился состав дорожек
@@ -767,12 +1226,59 @@ export function useCallController(
    * а раньше «большая» сторона не могла добавить камеру — её оффер никто
    * не создавал, и собеседник не видел видео.
    */
-  const renegotiateAll = useCallback(async () => {
+  const renegotiateAll = useCallback(async (plain = false) => {
     for (const [peerId, l] of Array.from(linksRef.current.entries())) {
       try {
         l.offering = true;
         l.offeringSince = Date.now();
-        const offer = await l.pc.createOffer();
+        const offer = await l.pc.createOffer(plain ? undefined : OFFER_OPTIONS);
+        await l.pc.setLocalDescription(offer);
+        const d = l.pc.localDescription;
+        const s = sessionRef.current;
+        if (s && d) await sendSignal(s.id, peerId, d.type === "answer" ? "answer" : "offer", { type: d.type, sdp: d.sdp });
+      } catch {
+        l.offering = false;
+        l.offeringSince = null;
+      }
+    }
+  }, [sendSignal]);
+  const renegotiateAllRef = useRef(renegotiateAll);
+  renegotiateAllRef.current = renegotiateAll;
+
+  // Лечащий ICE-рестарт: тот же ре-оффер, но с пересбором ICE-кандидатов.
+  const iceRestartAll = useCallback(async () => {
+    for (const [peerId, l] of Array.from(linksRef.current.entries())) {
+      try {
+        l.offering = true;
+        l.offeringSince = Date.now();
+        const offer = await l.pc.createOffer({ ...OFFER_OPTIONS, iceRestart: true });
+        await l.pc.setLocalDescription(offer);
+        const d = l.pc.localDescription;
+        const s = sessionRef.current;
+        if (s && d) await sendSignal(s.id, peerId, "offer", { type: d.type, sdp: d.sdp });
+      } catch {
+        l.offering = false;
+        l.offeringSince = null;
+      }
+    }
+  }, [sendSignal]);
+  const iceRestartAllRef = useRef(iceRestartAll);
+  iceRestartAllRef.current = iceRestartAll;
+
+
+
+  /**
+   * Принудительное переподключение медиа со всеми (кнопка «перезвук»):
+   * новые офферы с ICE-рестартом. Лечит «звук пропал / не было с самого
+   * начала» без выхода из звонка.
+   */
+  const reconnectMedia = useCallback(async () => {
+    for (const [peerId, l] of Array.from(linksRef.current.entries())) {
+      try {
+        l.lastIceRestart = Date.now();
+        l.offering = true;
+        l.offeringSince = Date.now();
+        const offer = await l.pc.createOffer({ iceRestart: true });
         await l.pc.setLocalDescription(offer);
         const s = sessionRef.current;
         if (s) await sendSignal(s.id, peerId, "offer", { type: offer.type, sdp: offer.sdp });
@@ -781,7 +1287,184 @@ export function useCallController(
         l.offeringSince = null;
       }
     }
+    notifyRef.current("Переподключаем звук и видео…");
   }, [sendSignal]);
+
+  /* ─────────── порог активации голоса (VOX) + уровень микрофона ─────────── */
+
+  /**
+   * Запускает (перезапускает) анализатор микрофона:
+   *  — отдаёт текущий уровень (для индикатора в настройках);
+   *  — при пороге > 0 работает как VOX-гейт: пока тише порога, дорожка
+   *    «закрыта» (собеседники не слышат фон), голос открывается мгновенно.
+   * Ручной мьют всегда в приоритете.
+   */
+  /**
+   * ИЗМЕРИТЕЛЬ УРОВНЯ МИКРОФОНА (только индикация для полоски в звонке).
+   * Раньше здесь был VOX-гейт, который сам дёргал track.enabled — любой сбой
+   * логики молча выключал микрофон насовсем («говоришь, а звука нет»).
+   * Теперь код звонка НИКОГДА не трогает enabled дорожки без явного мьюта
+   * пользователя — как в эталонных примерах WebRTC.
+   */
+  const restartVoiceGate = useCallback(() => {
+    if (gateRafRef.current !== null) {
+      cancelAnimationFrame(gateRafRef.current);
+      gateRafRef.current = null;
+    }
+    try {
+      gateNodesRef.current?.src.disconnect();
+      gateNodesRef.current?.analyser.disconnect();
+    } catch {
+      /* уже отключены */
+    }
+    gateNodesRef.current = null;
+    micLevelRef.current = 0;
+
+    const track = localStreamRef.current?.getAudioTracks()[0];
+    if (!track) return;
+    const ctx = getAudioContext();
+    if (!ctx) return;
+    try {
+      const src = ctx.createMediaStreamSource(new MediaStream([track]));
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 1024;
+      src.connect(analyser);
+      gateNodesRef.current = { src, analyser };
+
+      const data = new Uint8Array(analyser.fftSize);
+      const loop = () => {
+        gateRafRef.current = requestAnimationFrame(loop);
+        analyser.getByteTimeDomainData(data);
+        let sum = 0;
+        for (let i = 0; i < data.length; i++) {
+          const v = (data[i] - 128) / 128;
+          sum += v * v;
+        }
+        const rms = Math.sqrt(sum / data.length); // 0..1
+        micLevelRef.current = Math.min(100, Math.round(rms * 400));
+      };
+      gateRafRef.current = requestAnimationFrame(loop);
+    } catch {
+      /* нет WebAudio — индикатор просто не двигается */
+    }
+  }, []);
+  const restartVoiceGateRef = useRef(restartVoiceGate);
+  restartVoiceGateRef.current = restartVoiceGate;
+
+  /**
+   * Применить новые настройки звука прямо во время звонка: микрофон
+   * перезахватывается с новыми ограничениями (шумоподавление и т.д.), дорожка
+   * прозрачно подменяется у всех участников (replaceTrack) — звонок не рвётся.
+   */
+  /* ──────── МИКС ЗВУКА ДЕМОНСТРАЦИИ: экран/вкладка + микрофон ────────
+     Браузер проигрывает у собеседника только ОДИН входящий аудиотрек,
+     поэтому звук шаренного окна и микрофон сводятся в один трек через
+     Web Audio (MediaStreamDestination) и подменяются на сендере через
+     replaceTrack — без пересогласования. */
+  const screenAudioMixRef = useRef<{
+    ctx: AudioContext;
+    mixed: MediaStreamTrack;
+    destStream: MediaStream;
+    originalMic: MediaStreamTrack | null;
+  } | null>(null);
+
+  const teardownScreenAudioMix = useCallback(() => {
+    const mix = screenAudioMixRef.current;
+    if (!mix) return;
+    screenAudioMixRef.current = null;
+    // Возвращаем на все аудиосендеры чистый микрофон
+    for (const l of linksRef.current.values()) {
+      const snd = l.pc.getSenders().find((x) => x.track?.kind === "audio");
+      if (snd) void snd.replaceTrack(mix.originalMic).catch(() => {});
+    }
+    void mix.ctx.close().catch(() => {});
+  }, []);
+
+  /** Возвращает: удалось ли подмешать звук экрана (и нужен ли ренегот). */
+  const buildScreenAudioMix = useCallback(
+    (screenStream: MediaStream): boolean => {
+      const screenAudio = screenStream.getAudioTracks()[0];
+      if (!screenAudio) return false; // Safari/macOS: звука экрана нет
+      try {
+        const ctx = new AudioContext();
+        if (ctx.state !== "running") void ctx.resume().catch(() => {});
+        const dest = ctx.createMediaStreamDestination();
+        const mic = localStreamRef.current?.getAudioTracks()[0] ?? null;
+        if (mic) ctx.createMediaStreamSource(new MediaStream([mic])).connect(dest);
+        ctx.createMediaStreamSource(new MediaStream([screenAudio])).connect(dest);
+        const mixed = dest.stream.getAudioTracks()[0];
+        if (!mixed) {
+          void ctx.close().catch(() => {});
+          return false;
+        }
+        mixed.enabled = true;
+        screenAudioMixRef.current = {
+          ctx,
+          mixed,
+          destStream: dest.stream,
+          originalMic: mic,
+        };
+        for (const l of linksRef.current.values()) {
+          const snd = l.pc.getSenders().find((x) => x.track?.kind === "audio");
+          if (snd) void snd.replaceTrack(mixed).catch(() => {});
+        }
+        return true;
+      } catch {
+        /* Web Audio недоступен — демонстрация пойдёт без звука экрана */
+        return false;
+      }
+    },
+    [],
+  );
+
+  const applyAudioSettings = useCallback(
+    async (next: AudioSettings) => {
+      saveAudioSettings(next);
+      const stream = localStreamRef.current;
+      if (!stream) return;
+      try {
+        const fresh = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            noiseSuppression: next.noiseSuppression,
+            echoCancellation: next.echoCancellation,
+            autoGainControl: next.autoGainControl,
+          },
+        });
+        const [newTrack] = fresh.getAudioTracks();
+        if (!newTrack) throw new Error("no audio track");
+        const oldTrack = stream.getAudioTracks()[0];
+        // Сохраняем текущее состояние мьюта на новой дорожке
+        newTrack.enabled = oldTrack ? oldTrack.enabled : !mutedRef.current;
+        if (oldTrack) {
+          stream.removeTrack(oldTrack);
+          oldTrack.stop();
+        }
+        stream.addTrack(newTrack);
+        let addedSomewhere = false;
+        for (const l of linksRef.current.values()) {
+          const sender = l.pc.getSenders().find((x) => x.track?.kind === "audio");
+          if (sender) {
+            void sender.replaceTrack(newTrack).catch(() => {});
+          } else {
+            l.pc.addTrack(newTrack, stream);
+            addedSomewhere = true;
+          }
+        }
+        if (addedSomewhere) void renegotiateAll();
+        // Если идёт демонстрация — пересобираем микс с новым микрофоном,
+        // иначе звук экрана остался бы без голоса.
+        if (screenStreamRef.current && screenAudioMixRef.current) {
+          teardownScreenAudioMix();
+          buildScreenAudioMix(screenStreamRef.current);
+        }
+        setStreamTick((v) => v + 1);
+        restartVoiceGate();
+      } catch {
+        notifyRef.current("Не удалось применить настройки звука");
+      }
+    },
+    [renegotiateAll, restartVoiceGate, teardownScreenAudioMix, buildScreenAudioMix],
+  );
 
   const toggleCamera = useCallback(async () => {
     const s = sessionRef.current;
@@ -796,10 +1479,26 @@ export function useCallController(
         const local = localStreamRef.current;
         if (local) {
           local.addTrack(track);
-          linksRef.current.forEach((l) => l.pc.addTrack(track, local));
+          // ВАЖНО: как и в демонстрации экрана — если у пира уже есть
+          // видео-сендер, ПОДМЕНЯЕМ дорожку (мгновенно, без пересогласования).
+          // Только если сендера нет вовсе — добавляем трек и ренеготиируем.
+          // Раньше всегда делали addTrack + offer, и при малейшем сбое
+          // пересогласования собеседник не видел камеру (а демку — видел,
+          // т.к. она шла через replaceTrack).
+          let needRenegotiate = false;
+          linksRef.current.forEach((l) => {
+            const sender = l.pc.getSenders().find((x) => x.track?.kind === "video");
+            if (sender) void sender.replaceTrack(track).catch(() => {});
+            else {
+              l.pc.addTrack(track, local);
+              needRenegotiate = true;
+            }
+          });
+          if (needRenegotiate) void renegotiateAll();
         } else {
           localStreamRef.current = video;
         }
+        setStreamTick((v) => v + 1);
       } catch {
         notifyRef.current("Камера недоступна");
         return;
@@ -809,16 +1508,18 @@ export function useCallController(
     setCameraOn((on) => {
       const next = !on;
       localStreamRef.current?.getVideoTracks().forEach((t) => (t.enabled = next));
+      // Мгновенно показываем новый статус в списке участников (сервер догонит опросом)
+      patchMyMediaState({ videoOn: next });
       void api(`/api/calls/${s.id}`, {
         method: "POST",
         body: JSON.stringify({ action: "state", videoOn: next }),
       }).catch(() => {});
       return next;
     });
-
-    // Сообщаем остальным, что состав дорожек изменился
-    void renegotiateAll();
-  }, [cameraOn, renegotiateAll]);
+    // Ренеготиация теперь делается ТОЛЬКО если добавляли новый трек
+    // (см. выше) — при подмене через replaceTrack она не нужна, а лишний
+    // оффер мог «перекричать» ответ собеседника и видео не доезжало.
+  }, [cameraOn, renegotiateAll, patchMyMediaState]);
 
   /* ─────────────────────── демонстрация экрана ─────────────────────── */
 
@@ -830,19 +1531,61 @@ export function useCallController(
     setScreenSharing(false);
     setStreamTick((v) => v + 1);
     stream?.getTracks().forEach((t) => t.stop());
+    // Возвращаем собеседникам чистый микрофон вместо микса и закрываем
+    // AudioContext, чтобы он не висел в памяти.
+    teardownScreenAudioMix();
+    // Статус «демонстрация выключена» — сразу, без ожидания опроса сервера
+    patchMyMediaState({ screenOn: false });
 
-    // возвращаем камеру (если включена) или пустую дорожку
+    // ЧТО ВИДИТ СОБЕСЕДНИК: либо живую камеру, либо НИЧЕГО.
+    // Раньше мы подставляли на место демки выключенную/пустую дорожку — и
+    // у второго участника висела ЧЁРНАЯ плитка. Теперь: рабочая камера
+    // включена → подменяем на неё; иначе → ПОЛНОСТЬЮ убираем видеодорожку
+    // и делаем пересогласование: у собеседника дорожка реально «заканчивается»
+    // и чёрная плитка исчезает.
     const cameraTrack = localStreamRef.current?.getVideoTracks()[0] ?? null;
+    const cameraUsable =
+      !!cameraTrack && cameraTrack.readyState === "live" && cameraTrack.enabled;
+    let needsRenegotiate = false;
     for (const l of linksRef.current.values()) {
-      const sender = l.pc.getSenders().find((x) => x.track?.kind === "video");
-      if (sender) void sender.replaceTrack(cameraTrack).catch(() => {});
+      const sender = l.pc.getSenders().find(
+        (x) => x.track?.kind === "video" || x.track === null,
+      );
+      if (!sender) continue;
+      if (cameraUsable) {
+        void sender.replaceTrack(cameraTrack).catch(() => {});
+      } else {
+        l.pc.removeTrack(sender);
+        // ВАЖНО: полностью ОСТАНАВЛИВАЕМ видеотрансивер (линия в оффере
+        // становится «отклонённой», порт 0). Именно на отклонённую линию
+        // браузер собеседника гарантированно отвечает событием «ended»
+        // дорожки — плитка исчезает. Направление «inactive» даёт только
+        // «mute», дорожка не заканчивается, и чёрная плитка висит дальше.
+        // Камера потом добавится новым трансивером — это штатно.
+        const tr = l.pc.getTransceivers().find((t) => t.sender === sender);
+        if (tr) {
+          try {
+            tr.stop();
+          } catch {
+            try {
+              tr.direction = "inactive";
+            } catch {
+              /* браузер сам разберётся */
+            }
+          }
+        }
+        needsRenegotiate = true;
+      }
     }
+    // После демки — чистое пересогласование БЕЗ принудительного приёма
+    // видео (иначе видеосекция воскреснет пустой и плитка останется чёрной).
+    void renegotiateAll(true);
     if (s)
       void api(`/api/calls/${s.id}`, {
         method: "POST",
         body: JSON.stringify({ action: "state", screenOn: false }),
       }).catch(() => {});
-  }, []);
+  }, [patchMyMediaState, renegotiateAll, teardownScreenAudioMix]);
 
   const stopScreenShareRef = useRef(stopScreenShare);
   stopScreenShareRef.current = stopScreenShare;
@@ -864,8 +1607,21 @@ export function useCallController(
       notifyRef.current("Демонстрация экрана не поддерживается этим браузером");
       return;
     }
+    // Звук экрана/вкладки: просим браузер захватить и видео, и звук
+    // (галочка «поделиться звуком» в системном диалоге). Если платформа
+    // не умеет (например, часть браузеров на macOS) — падаем на видео.
+    let stream: MediaStream;
     try {
-      const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+      stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+    } catch {
+      try {
+        stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+      } catch {
+        notifyRef.current("Не удалось начать демонстрацию экрана");
+        return;
+      }
+    }
+    try {
       const [track] = stream.getVideoTracks();
       if (!track) {
         stream.getTracks().forEach((t) => t.stop());
@@ -889,8 +1645,28 @@ export function useCallController(
         }
       }
 
+      // ЗВУК ДЕМОНСТРАЦИИ: микс «экран + микрофон» в один трек. Собеседник
+      // услышит и вас, и звук шаренного окна/вкладки. Если звука экрана нет
+      // (ОС не отдала) или микс не собрался — остаётся обычный микрофон.
+      if (buildScreenAudioMix(stream)) {
+        // Там, где аудиосендера не было вовсе (режим «только слушать»),
+        // микс добавляется как новая дорожка — нужно пересогласование.
+        const mix = screenAudioMixRef.current;
+        if (mix) {
+          for (const l of linksRef.current.values()) {
+            const snd = l.pc.getSenders().find((x) => x.track?.kind === "audio");
+            if (!snd) {
+              l.pc.addTrack(mix.mixed, mix.destStream);
+              needsRenegotiate = true;
+            }
+          }
+        }
+      }
+
       setScreenSharing(true);
       setStreamTick((v) => v + 1);
+      // Статус «демонстрация включена» — сразу, без ожидания опроса сервера
+      patchMyMediaState({ screenOn: true });
       void api(`/api/calls/${s.id}`, {
         method: "POST",
         body: JSON.stringify({ action: "state", screenOn: true }),
@@ -899,7 +1675,7 @@ export function useCallController(
     } catch {
       notifyRef.current("Не удалось начать демонстрацию экрана");
     }
-  }, [renegotiateAll]);
+  }, [renegotiateAll, patchMyMediaState, buildScreenAudioMix]);
 
   /** Ссылка-приглашение в текущий звонок (её можно кинуть кому угодно). */
   const getShareLink = useCallback(async (): Promise<string | null> => {
@@ -944,6 +1720,9 @@ export function useCallController(
     screenSharing,
     screenStreamRef,
     seconds,
+    connQuality,
+    reconnectMedia,
+    audioWatchdog,
     minimized,
     setMinimized,
     streamTick,
@@ -962,6 +1741,8 @@ export function useCallController(
     toggleScreenShare,
     getShareLink,
     inviteUsers,
+    applyAudioSettings,
+    micLevelRef,
   };
 }
 

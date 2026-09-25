@@ -1,3 +1,7 @@
+// Маркер и его очистка переехали в клиентобезопасный модуль;
+// серверный код продолжает импортировать их отсюда.
+export { DISCUSSION_MARKER, stripDiscussionMarker } from "./discussionMarker";
+
 /**
  * Серверные помощники для диалогов: личные чаты, группы и каналы.
  * Здесь живут проверки доступа (кто участник, кто админ/владелец),
@@ -100,6 +104,10 @@ export function memberItem(m: ConversationMember, u: User): ConversationMemberIt
     role: normalizeRole(m.role),
     lastReadAt: m.lastReadAt ? new Date(m.lastReadAt).toISOString() : null,
     typingAt: m.typingAt ? new Date(m.typingAt).toISOString() : null,
+    recordingAt: (m as { recordingAt?: Date | null }).recordingAt
+      ? new Date((m as { recordingAt?: Date | null }).recordingAt as Date).toISOString()
+      : null,
+    recordingKind: (m as { recordingKind?: string | null }).recordingKind ?? null,
     joinedAt: new Date(m.joinedAt).toISOString(),
   };
 }
@@ -132,10 +140,17 @@ export async function serializeConversation(
     avatarUrl: conv.avatarUrl,
     about: conv.about ?? "",
     isPrivate: !!conv.isPrivate,
+    // «Запрет копирования/сохранения» — как ограниченные каналы в ТГ
+    restricted: !!(conv as { restricted?: boolean }).restricted,
+    // Владелец канала может скрыть, что он владелец
+    showOwner: (conv as { showOwner?: boolean }).showOwner !== false,
+    slowMode: typeof (conv as { slowMode?: number }).slowMode === "number" ? (conv as { slowMode?: number }).slowMode ?? 0 : 0,
     ownerId: conv.ownerId,
     createdAt: new Date(conv.createdAt).toISOString(),
     memberCount: rows.length,
     myRole: normalizeRole(myMembership?.role ?? "member"),
+    // Токен-юзернейм канала/группы видят только владельцы и админы
+    inviteToken: isManager(myMembership?.role ?? "member") ? conv.inviteToken ?? null : null,
     title: conversationTitle({ kind, name: conv.name }, peer),
     members: rows.map((r) => memberItem(r.member, r.user)),
   };

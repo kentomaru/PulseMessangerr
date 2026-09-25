@@ -30,10 +30,11 @@ export const GET = withApi("conversations", async ({ me }) => {
   const convIds = myMemberships.map((m) => m.conversationId);
   const myRoleById = new Map(myMemberships.map((m) => [m.conversationId, normalizeRole(m.role)]));
 
+  // Заблокированные администрацией чаты исчезают из списка
   const convs = await db
     .select()
     .from(conversations)
-    .where(inArray(conversations.id, convIds));
+    .where(and(inArray(conversations.id, convIds), isNull(conversations.bannedAt)));
 
   const allMembers = await db
     .select({ member: conversationMembers, user: users })
@@ -85,7 +86,8 @@ export const GET = withApi("conversations", async ({ me }) => {
   // Живые звонки (заодно убираем «мёртвые» комнаты)
   const activeCalls = await toCallSummaries(await sweepStaleCalls(convIds));
 
-  const userNameById = new Map(allMembers.map((r) => [r.user.id, r.user.displayName]));
+  // Имена через publicUser: удалённые аккаунты видны как «Удалённый аккаунт»
+  const userNameById = new Map(allMembers.map((r) => [r.user.id, publicUser(r.user).displayName]));
 
   const result: ConversationListItem[] = [];
   for (const conv of convs) {
@@ -106,6 +108,10 @@ export const GET = withApi("conversations", async ({ me }) => {
             ? new Date(peerRow.member.lastReadAt).toISOString()
             : null,
           typingAt: peerRow.member.typingAt ? new Date(peerRow.member.typingAt).toISOString() : null,
+          recordingAt: peerRow.member.recordingAt
+            ? new Date(peerRow.member.recordingAt).toISOString()
+            : null,
+          recordingKind: (peerRow.member as { recordingKind?: string | null }).recordingKind ?? null,
         }
       : isSaved
         ? {
@@ -114,6 +120,7 @@ export const GET = withApi("conversations", async ({ me }) => {
               ? new Date(rows[0].member.lastReadAt).toISOString()
               : null,
             typingAt: null,
+            recordingAt: null,
           }
         : null;
     const lastMessage = lastMessageByConv.get(conv.id) ?? null;
@@ -122,8 +129,9 @@ export const GET = withApi("conversations", async ({ me }) => {
       id: conv.id,
       kind,
       name: conv.name,
-      avatarUrl: conv.avatarUrl ?? peerRow?.user.avatarUrl ?? null,
+      avatarUrl: kind === "direct" ? (conv.avatarUrl ?? peerRow?.user.avatarUrl ?? null) : (conv.avatarUrl ?? null),
       isPrivate: !!conv.isPrivate,
+      verified: !!(conv as { verified?: boolean }).verified,
       memberCount: countByConv.get(conv.id) ?? rows.length,
       myRole: myRoleById.get(conv.id) ?? "member",
       title:
@@ -142,6 +150,7 @@ export const GET = withApi("conversations", async ({ me }) => {
             senderId: lastMessage.senderId,
             senderName: userNameById.get(lastMessage.senderId) ?? null,
             createdAt: new Date(lastMessage.createdAt).toISOString(),
+            silent: !!(lastMessage as { silent?: boolean }).silent,
           }
         : null,
       unreadCount: unreadByConv.get(conv.id) ?? 0,
@@ -171,10 +180,10 @@ export const POST = withApi("conversations:create", async ({ req, me, log }) => 
 
   /* ── Группа / канал ── */
   if (kind === "group" || kind === "channel") {
-    const name = String(body.name ?? "").trim().slice(0, 60);
-    if (name.length < 2)
-      return NextResponse.json({ error: "Название должно быть не короче 2 символов" }, { status: 400 });
-    const about = String(body.about ?? "").trim().slice(0, 280);
+    const name = String(body.name ?? "").trim().slice(0, 32);
+    if (name.length < 5)
+      return NextResponse.json({ error: "Название: от 5 до 32 символов" }, { status: 400 });
+    const about = String(body.about ?? "").trim().slice(0, 255);
     const avatarUrl =
       typeof body.avatarUrl === "string" && body.avatarUrl.startsWith("/api/files/")
         ? body.avatarUrl
@@ -182,9 +191,22 @@ export const POST = withApi("conversations:create", async ({ req, me, log }) => 
     const isPrivate = body.isPrivate === undefined ? true : !!body.isPrivate;
 
     const memberIds = Array.isArray(body.memberIds) ? body.memberIds.map(String) : [];
-    const invited = (await findUsersByIds(memberIds)).filter((u) => u.id !== me.id);
+    const invited = (await findUsersByIds(memberIds)).filter(
+      (u) => u.id !== me.id && !u.deletedAt && !u.bannedAt,
+    );
     if (invited.length > 200)
       return NextResponse.json({ error: "Слишком много участников" }, { status: 400 });
+    // Приватность: пользователи, запретившие добавление в группы, не приглашаются.
+    const blocked = invited.filter((u) => !u.allowGroupInvites);
+    if (blocked.length > 0) {
+      const names = blocked.map((u) => `@${u.username}`).join(", ");
+      return NextResponse.json(
+        {
+          error: `Нельзя добавить: ${names} запретили добавление в группы в настройках приватности`,
+        },
+        { status: 403 },
+      );
+    }
 
     const [conv] = await db
       .insert(conversations)
@@ -261,6 +283,11 @@ export const POST = withApi("conversations:create", async ({ req, me, log }) => 
   const peerRows = await db.select().from(users).where(eq(users.id, userId)).limit(1);
   const peer = peerRows[0];
   if (!peer) return NextResponse.json({ error: "Пользователь не найден" }, { status: 404 });
+  // Удалённые и заблокированные аккаунты недоступны для переписки
+  if (peer.deletedAt)
+    return NextResponse.json({ error: "Этот аккаунт удалён" }, { status: 403 });
+  if (peer.bannedAt)
+    return NextResponse.json({ error: "Этот аккаунт заблокирован" }, { status: 403 });
 
   // ищем существующий личный чат с этим человеком
   const shared = await db

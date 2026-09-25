@@ -4,6 +4,7 @@ import { useRef, useState } from "react";
 import { Film, ImagePlus, Loader2, Send, X } from "lucide-react";
 import { ModalShell } from "./ProfileModal";
 import { api, uploadFile } from "@/lib/api";
+import { compressImage } from "@/lib/images";
 import { formatBytes } from "@/lib/format";
 import type { StoryItem } from "@/lib/types";
 
@@ -11,17 +12,22 @@ type Props = {
   onClose: () => void;
   onPublished: (story: StoryItem) => void;
   notify: (msg: string) => void;
+  /** Pulse Premium включён — можно публиковать истории на 48 часов. */
+  premium?: boolean;
 };
 
-const MAX_STORY_BYTES = 500 * 1024 * 1024;
+/** Истории — только фото/видео, максимум 100 МБ (пункт ТЗ). */
+const MAX_STORY_BYTES = 100 * 1024 * 1024;
 
-/** Создание истории: фото или видео + подпись, живёт 24 часа. */
-export default function StoryComposer({ onClose, onPublished, notify }: Props) {
+/** Создание истории: фото или видео + подпись, живёт 24 часа (48 — с Premium). */
+export default function StoryComposer({ onClose, onPublished, notify, premium }: Props) {
   const [file, setFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [caption, setCaption] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  /** Срок жизни истории: 24 ч всем, 48 ч — с Pulse Premium (как в ТГ). */
+  const [ttlHours, setTtlHours] = useState<24 | 48>(24);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
   const isVideo = !!file && file.type.startsWith("video/");
@@ -34,7 +40,7 @@ export default function StoryComposer({ onClose, onPublished, notify }: Props) {
       return;
     }
     if (f.size > MAX_STORY_BYTES) {
-      setError(`Файл больше 500 МБ (${formatBytes(f.size)})`);
+      setError(`Для историй — до 100 МБ (у вас ${formatBytes(f.size)})`);
       return;
     }
     setFile(f);
@@ -52,10 +58,13 @@ export default function StoryComposer({ onClose, onPublished, notify }: Props) {
     setBusy(true);
     setError("");
     try {
-      const mediaUrl = await uploadFile(file);
+      // Фото-истории сжимаем до 1920px — истории на ПК грузятся заметно
+      // быстрее (видео и гифки не трогаем).
+      const light = await compressImage(file, 1920);
+      const mediaUrl = await uploadFile(light);
       const d = await api<{ story: StoryItem }>("/api/stories", {
         method: "POST",
-        body: JSON.stringify({ mediaUrl, caption }),
+        body: JSON.stringify({ mediaUrl, caption, ...(premium ? { ttlHours } : {}) }),
       });
       notify("История опубликована");
       onPublished(d.story);
@@ -111,19 +120,43 @@ export default function StoryComposer({ onClose, onPublished, notify }: Props) {
         ) : (
           <button
             onClick={() => inputRef.current?.click()}
-            className="flex h-48 w-full flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-white/15 bg-white/[0.03] text-white/40 transition-colors hover:border-violet-400/40 hover:text-white/70"
+            className="flex h-48 w-full flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-white/15 bg-white/[0.03] text-white/40 transition-colors hover:border-[#5865f2]/40 hover:text-white/70"
           >
             <ImagePlus className="h-8 w-8" />
-            <span className="text-sm">Фото или видео (до 500 МБ)</span>
+            <span className="text-sm">Фото или видео (до 100 МБ)</span>
           </button>
+        )}
+
+        {premium && (
+          <div className="flex items-center gap-2">
+            <span className="text-[11px] font-semibold tracking-widest text-white/30 uppercase">Срок жизни</span>
+            {([24, 48] as const).map((h) => (
+              <button
+                key={h}
+                onClick={() => setTtlHours(h)}
+                className={`rounded-xl px-3 py-1.5 text-xs font-medium transition-colors ${
+                  ttlHours === h ? "bg-[#5865f2] text-white" : "glass text-white/60 hover:text-white"
+                }`}
+              >
+                {h} ч
+              </button>
+            ))}
+          </div>
         )}
 
         <textarea
           value={caption}
           onChange={(e) => setCaption(e.target.value)}
+          onKeyDown={(e) => {
+            // Enter — опубликовать (Shift+Enter — перенос строки)
+            if (e.key === "Enter" && !e.shiftKey && file && !busy) {
+              e.preventDefault();
+              void publish();
+            }
+          }}
           maxLength={140}
           rows={2}
-          placeholder="Подпись (необязательно)…"
+          placeholder="Подпись (необязательно)…  Enter — опубликовать"
           className="ring-focus nice-scroll w-full resize-none rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3 text-[15px] transition-all placeholder:text-white/25"
         />
 

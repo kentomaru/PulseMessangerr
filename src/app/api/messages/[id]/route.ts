@@ -5,6 +5,39 @@ import { and, eq } from "drizzle-orm";
 import { isUuid, withApi } from "@/lib/api-helpers";
 
 /**
+ * GET /api/messages/[id] — метаданные сообщения для перехода по ссылке
+ * (#msg=<id>): в каком оно чате и когда отправлено.
+ */
+export const GET = withApi<{ id: string }>("messages:locate", async ({ params, me }) => {
+  const { id } = params;
+  if (!isUuid(id)) return NextResponse.json({ error: "Сообщение не найдено" }, { status: 404 });
+  const [msg] = await db.select().from(messages).where(eq(messages.id, id)).limit(1);
+  if (!msg || msg.deletedAt)
+    return NextResponse.json({ error: "Сообщение не найдено" }, { status: 404 });
+
+  const membership = await db
+    .select({ userId: conversationMembers.userId })
+    .from(conversationMembers)
+    .where(
+      and(
+        eq(conversationMembers.conversationId, msg.conversationId),
+        eq(conversationMembers.userId, me.id),
+      ),
+    )
+    .limit(1);
+  if (membership.length === 0)
+    return NextResponse.json({ error: "Нет доступа" }, { status: 403 });
+
+  return NextResponse.json({
+    message: {
+      id: msg.id,
+      conversationId: msg.conversationId,
+      createdAt: new Date(msg.createdAt).toISOString(),
+    },
+  });
+});
+
+/**
  * PATCH /api/messages/[id] — редактирование своего сообщения.
  *  — text: новый текст (до 4000 символов);
  *  — image/file: новая подпись (content — JSON, url сохраняется);

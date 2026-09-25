@@ -1,8 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createLogger } from "@/lib/logger";
-import { createReadStream, statSync } from "fs";
+import { presignedGetUrl, storageEnabled } from "@/lib/storage";
+import { createReadStream, statSync, writeFileSync, mkdirSync } from "fs";
 import path from "path";
 import { Readable } from "stream";
+import { eq } from "drizzle-orm";
+import { db } from "@/db";
+import { files } from "@/db/schema";
 
 const log = createLogger("api:files");
 
@@ -15,10 +19,17 @@ const MIME: Record<string, string> = {
   svg: "image/svg+xml",
   bmp: "image/bmp",
   avif: "image/avif",
+  heic: "image/heic",
+  heif: "image/heif",
+  tiff: "image/tiff",
+  tif: "image/tiff",
+  jxl: "image/jxl",
   ico: "image/x-icon",
   webm: "video/webm",
   mp4: "video/mp4",
   m4v: "video/mp4",
+  "3gp": "video/3gpp",
+  "3g2": "video/3gpp2",
   mov: "video/quicktime",
   mkv: "video/x-matroska",
   avi: "video/x-msvideo",
@@ -48,6 +59,39 @@ const MIME: Record<string, string> = {
 };
 
 /**
+ * Достаёт файл из таблицы files (копия на диске может отсутствовать после
+ * редеплоя — ФС контейнера эфемерная). Возвращает байты или null.
+ * Заодно пытается прогреть дисковый кэш, чтобы дальше отдавать потоком.
+ *
+ * Почему это важно: после каждого редеплоя папка data/uploads пустела, и ВСЕ
+ * загруженные картинки — истории, баннеры, аватары — «переставали грузиться».
+ */
+async function restoreFromDb(name: string, filePath: string): Promise<Buffer | null> {
+  try {
+    const rows = await db.select().from(files).where(eq(files.name, name)).limit(1);
+    const row = rows[0];
+    if (!row || !row.data || row.data.length === 0) return null;
+    const data = row.data as Buffer;
+    try {
+      mkdirSync(path.dirname(filePath), { recursive: true });
+      writeFileSync(filePath, data); // прогреваем дисковый кэш
+    } catch (err) {
+      log.warn("Не удалось записать восстановленный файл на диск", {
+        name,
+        err: err instanceof Error ? err.message : String(err),
+      });
+    }
+    return data;
+  } catch (err) {
+    log.warn("Не удалось восстановить файл из БД", {
+      name,
+      err: err instanceof Error ? err.message : String(err),
+    });
+    return null;
+  }
+}
+
+/**
  * GET /api/files/[name] — отдача загруженных файлов.
  *
  *  — поддерживает HTTP Range: без него <audio>/<video> не перематываются,
@@ -72,11 +116,42 @@ export async function GET(
 
   const filePath = path.join(process.cwd(), "data", "uploads", name);
   let size: number;
+  let onDisk = true;
+  let dbData: Buffer | null = null;
   try {
     size = statSync(filePath).size;
   } catch {
-    log.debug("Файл не найден", { name });
-    return NextResponse.json({ error: "Не найден" }, { status: 404 });
+    // На диске нет — так бывает после редеплоя/рестарта (эфемерная ФС
+    // контейнера). Пробуем восстановить копию из базы: пока файл ≤25 МБ
+    // загружался, он продублирован в таблицу files.
+    const restored = await restoreFromDb(name, filePath);
+    if (!restored) {
+      // Ни на диске, ни в БД — файл может жить только в B2 (после редеплоя
+      // диск эфемерный, а в базу файлы >100 МБ не копируются). Редиректим
+      // на подписанную ссылку: Range/перемотку B2 обработает сам.
+      if (storageEnabled()) {
+        const url = await presignedGetUrl(name, name, mime, disposition);
+        if (url) {
+          return NextResponse.redirect(url, {
+            status: 302,
+            headers: { "Cache-Control": "private, max-age=0" },
+          });
+        }
+      }
+      log.debug("Файл не найден", { name });
+      return NextResponse.json({ error: "Не найден" }, { status: 404 });
+    }
+    log.info("Файл восстановлен из БД", { name, size: String(restored.length) });
+    dbData = restored;
+    size = restored.length;
+    // Если прогреть дисковый кэш не удалось — отдадим прямо из памяти.
+    onDisk = (() => {
+      try {
+        return statSync(filePath).size === size;
+      } catch {
+        return false;
+      }
+    })();
   }
 
   const baseHeaders: Record<string, string> = {
@@ -101,6 +176,16 @@ export async function GET(
         });
       }
       end = Math.min(end, size - 1);
+      if (!onDisk && dbData) {
+        return new NextResponse(new Uint8Array(dbData.subarray(start, end + 1)), {
+          status: 206,
+          headers: {
+            ...baseHeaders,
+            "Content-Range": `bytes ${start}-${end}/${size}`,
+            "Content-Length": String(end - start + 1),
+          },
+        });
+      }
       const stream = createReadStream(filePath, { start, end });
       return new NextResponse(Readable.toWeb(stream) as unknown as ReadableStream, {
         status: 206,
@@ -111,6 +196,13 @@ export async function GET(
         },
       });
     }
+  }
+
+  if (!onDisk && dbData) {
+    return new NextResponse(new Uint8Array(dbData), {
+      status: 200,
+      headers: { ...baseHeaders, "Content-Length": String(size) },
+    });
   }
 
   const stream = createReadStream(filePath);

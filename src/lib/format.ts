@@ -1,4 +1,6 @@
 import type { AttachmentInfo, CallLogInfo } from "@/lib/types";
+import { gifpackId, findGif, replaceCustomEmoji } from "./premiumContent";
+import { findGift } from "./gifts";
 
 export function timeHHmm(iso: string | Date) {
   const d = new Date(iso);
@@ -124,6 +126,8 @@ export function parseAttachment(type: string, content: string): AttachmentInfo |
   if (typeof obj.size === "number" && Number.isFinite(obj.size)) att.size = obj.size;
   if (typeof obj.duration === "number" && Number.isFinite(obj.duration)) att.duration = obj.duration;
   if (typeof obj.caption === "string" && obj.caption.trim()) att.caption = obj.caption;
+  if (obj.sticker === true) att.sticker = true;
+  if (obj.spoiler === true) att.spoiler = true;
 
   // «кружок» или голосовое, сохранившееся как text — пропускаем только аудио/видео
   if (type === "text") {
@@ -137,28 +141,120 @@ export function parseAttachment(type: string, content: string): AttachmentInfo |
 export function legacyAttachmentKind(att: AttachmentInfo | null): "voice" | "video_note" | null {
   if (!att || !att.mimeType) return null;
   const mime = att.mimeType.toLowerCase();
-  if (mime.startsWith("video/")) return "video_note";
+  // Кружок — это записанное видео с длительностью; обычный видео-файл кружком не является
+  if (mime.startsWith("video/")) return att.duration ? "video_note" : null;
   if (mime.startsWith("audio/")) return "voice";
   return null;
 }
 
-/** Короткая строка-превью сообщения (сайдбар, цитаты, пересылка). */
-export function messagePreview(type: string, content: string): string {
+/** Тип превью для иконки (вместо эмодзи — SVG в компоненте PreviewLabel). */
+export type PreviewKind = "call" | "image" | "voice" | "video" | "file" | null;
+
+/** Разобрать сообщение на «иконку» и чистый текст превью (без эмодзи). */
+import { parseStoryQuote } from "./storyQuote";
+
+export function previewInfo(type: string, content: string): { kind: PreviewKind; text: string } {
+  if (type === "gift") {
+    try {
+      const p = JSON.parse(content) as { giftKey?: unknown };
+      const g = typeof p.giftKey === "string" ? findGift(p.giftKey) : undefined;
+      return { kind: null, text: g ? `Подарок · ${g.name}` : "Подарок" };
+    } catch {
+      return { kind: null, text: "Подарок" };
+    }
+  }
   if (type === "call") {
     const info = parseCallContent(content);
-    return info ? `📞 ${callLogLabel(info)}` : "📞 Звонок";
+    return { kind: "call", text: info ? callLogLabel(info) : "Звонок" };
+  }
+  // Анимированная гифка (сообщение «gifpack:<id>»)
+  const gif = type === "text" ? gifpackId(content) : null;
+  if (gif) return { kind: "video", text: `ГИФ${findGif(gif) ? ` · ${findGif(gif)!.title}` : ""}` };
+  // Опрос («poll:{...}»): в превью показываем «Опрос» + вопрос, а не сырой JSON
+  if (type === "text" && content.startsWith("poll:")) {
+    try {
+      const p = JSON.parse(content.slice(5)) as { q?: unknown };
+      const q = typeof p.q === "string" ? p.q.replace(/\n/g, " ").slice(0, 40) : "";
+      return { kind: null, text: q ? `Опрос · ${q}` : "Опрос" };
+    } catch {
+      return { kind: null, text: "Опрос" };
+    }
+  }
+  // Визитка («contact:{...}») и местоположение («location:{...}»)
+  if (type === "text" && content.startsWith("contact:")) {
+    try {
+      const c = JSON.parse(content.slice(8)) as { name?: unknown };
+      const name = typeof c.name === "string" && c.name ? ` · ${c.name.slice(0, 30)}` : "";
+      return { kind: null, text: `Контакт${name}` };
+    } catch {
+      return { kind: null, text: "Контакт" };
+    }
+  }
+  if (type === "text" && content.startsWith("location:")) {
+    return { kind: null, text: "Местоположение" };
+  }
+  // «Тычок» собеседника
+  if (type === "text" && content === "nudge:") {
+    return { kind: null, text: "💫 Тычок" };
+  }
+  // Ответ на историю («storyquote:{...}»): показываем сам текст ответа
+  if (type === "text" && content.startsWith("storyquote:")) {
+    const sq = parseStoryQuote(content);
+    if (sq) return { kind: null, text: sq.text.replace(/\n/g, " ").slice(0, 60) || "Ответ на историю" };
+    return { kind: null, text: "Ответ на историю" };
   }
   const att = parseAttachment(type, content);
   if (att) {
     const caption = att.caption ? ` ${att.caption.replace(/\n/g, " ").slice(0, 40)}` : "";
-    if (type === "image") return `🖼 Фото${caption}`;
+    if (type === "image") return { kind: "image", text: `Фото${caption}` };
     if (type === "voice" || legacyAttachmentKind(att) === "voice")
-      return `🎤 Голосовое${att.duration ? ` · ${formatDuration(Math.round(att.duration))}` : ""}`;
+      return {
+        kind: "voice",
+        text: `Голосовое${att.duration ? ` · ${formatDuration(Math.round(att.duration))}` : ""}`,
+      };
     if (type === "video_note" || legacyAttachmentKind(att) === "video_note")
-      return `🎬 Видеосообщение${att.duration ? ` · ${formatDuration(Math.round(att.duration))}` : ""}`;
-    if (type === "file") return `📎 ${att.name ?? "Файл"}${caption}`;
+      return {
+        kind: "video",
+        text: `Видеосообщение${att.duration ? ` · ${formatDuration(Math.round(att.duration))}` : ""}`,
+      };
+    // обычное видео (в т.ч. старое «сломанное» text-сообщение с видео)
+    if ((att.mimeType ?? "").toLowerCase().startsWith("video/"))
+      return { kind: "video", text: `Видео${caption}` };
+    if (type === "file") {
+      // Видео-файл — отдельная подпись, как в ТГ
+      if ((att.mimeType ?? "").toLowerCase().startsWith("video/"))
+        return { kind: "video", text: `Видео${caption}` };
+      return { kind: "file", text: `${att.name ?? "Файл"}${caption}` };
+    }
   }
-  return content.replace(/\n/g, " ").slice(0, 80);
+  return {
+    kind: null,
+    // Токены кастомных эмодзи («:ce_x:») в превью заменяем на сами эмодзи —
+    // та же проблема, что была с опросами: служебный текст не должен светиться.
+    text: replaceCustomEmoji(content).replace(/\n/g, " ").slice(0, 80),
+  };
+}
+
+/** Короткая строка-превью сообщения (уведомления, title — только текст, без эмодзи). */
+export function messagePreview(type: string, content: string): string {
+  return previewInfo(type, content).text;
+}
+
+/**
+ * Текст состоит только из 1–3 эмодзи? Такие сообщения рисуем как «стикеры» —
+ * крупно и без пузыря.
+ */
+export function emojiOnly(text: string): boolean {
+  const t = text.trim();
+  if (!t || t.length > 32) return false;
+  const emojis = t.match(/\p{Extended_Pictographic}/gu);
+  if (!emojis || emojis.length < 1 || emojis.length > 3) return false;
+  // кроме эмодзи допускаем только вариаторы/модификаторы и пробелы
+  const rest = t
+    .replace(/\p{Extended_Pictographic}/gu, "")
+    .replace(/[\uFE0F\u200D\u20E3\u{1F1E6}-\u{1F1FF}\u{1F3FB}-\u{1F3FF}]/gu, "")
+    .replace(/\s/g, "");
+  return rest.length === 0;
 }
 
 /** «2,4 МБ» / «500 МБ» — размер файла для карточек. */
@@ -168,4 +264,27 @@ export function formatBytes(bytes: number | undefined): string {
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} КБ`;
   if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1).replace(".", ",")} МБ`;
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(2).replace(".", ",")} ГБ`;
+}
+
+
+/** Сниппет из поиска: прячем служебные префиксы и токены кастомных эмодзи. */
+export function cleanSnippet(snippet: string): string {
+  if (snippet.startsWith("poll:")) {
+    try {
+      const p = JSON.parse(snippet.slice(5)) as { q?: unknown };
+      const q = typeof p.q === "string" ? p.q : "";
+      return q ? `Опрос · ${q}` : "Опрос";
+    } catch {
+      return "Опрос";
+    }
+  }
+  if (snippet.startsWith("contact:")) return "Контакт";
+  if (snippet.startsWith("location:")) return "Местоположение";
+  if (snippet.startsWith("storyquote:")) {
+    const nl = snippet.indexOf("\n");
+    const rest = nl === -1 ? "" : snippet.slice(nl + 1);
+    return rest.trim() || "Ответ на историю";
+  }
+  if (snippet.startsWith("gifpack:")) return "ГИФ-анимация";
+  return replaceCustomEmoji(snippet);
 }

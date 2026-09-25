@@ -7,6 +7,7 @@ import { Compass, Hash, Link2, Loader2, LogIn, Megaphone, SearchX, Users, X } fr
 import Avatar from "./Avatar";
 import { ModalShell } from "./ProfileModal";
 import { api } from "@/lib/api";
+import { stripDiscussionMarker } from "@/lib/discussionMarker";
 import type { DiscoverItem } from "@/lib/types";
 
 type Props = {
@@ -143,13 +144,15 @@ export default function DiscoverModal({ onClose, onJoined, notify }: Props) {
                 <div className="min-w-0 flex-1">
                   <p className="flex items-center gap-1.5 truncate text-sm font-semibold">
                     {it.kind === "channel" ? (
-                      <Megaphone className="h-3.5 w-3.5 text-cyan-300" />
+                      <Megaphone className="h-3.5 w-3.5 text-slate-400" />
                     ) : (
-                      <Hash className="h-3.5 w-3.5 text-violet-300" />
+                      <Hash className="h-3.5 w-3.5 text-slate-400" />
                     )}
                     {it.name}
                   </p>
-                  {it.about && <p className="truncate text-xs text-white/40">{it.about}</p>}
+                  {stripDiscussionMarker(it.about) && (
+                    <p className="truncate text-xs text-white/40">{stripDiscussionMarker(it.about)}</p>
+                  )}
                   <p className="mt-0.5 flex items-center gap-1 text-[11px] text-white/30">
                     <Users className="h-3 w-3" /> {it.memberCount} участников
                   </p>

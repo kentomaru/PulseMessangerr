@@ -12,7 +12,7 @@ import {
   users,
 } from "@/db/schema";
 import { eq, or, sql } from "drizzle-orm";
-import { destroySession, getSessionUser, publicUser } from "@/lib/auth";
+import { destroySession, getSessionUser, hashPassword, publicUser } from "@/lib/auth";
 import { withApi } from "@/lib/api-helpers";
 import { cookies } from "next/headers";
 import { SESSION_COOKIE } from "@/lib/auth";
@@ -31,7 +31,43 @@ export const PATCH = withApi("auth/me", async ({ req, me, log }) => {
       return NextResponse.json({ error: "Имя не может быть пустым" }, { status: 400 });
     patch.displayName = dn;
   }
-  if (typeof body.bio === "string") patch.bio = body.bio.trim().slice(0, 280);
+  if (typeof body.bio === "string") patch.bio = body.bio.trim().slice(0, 70);
+  // Второй пароль (2ФА): установка и снятие
+  if (typeof body.setSecondPass === "string") {
+    const sp = body.setSecondPass;
+    if (sp === "") patch.secondPassHash = null;
+    else {
+      if (sp.length < 6)
+        return NextResponse.json({ error: "Второй пароль: минимум 6 символов" }, { status: 400 });
+      patch.secondPassHash = hashPassword(sp);
+    }
+  }
+  // Pulse Premium: включается/выключается бесплатно в два клика.
+  if (typeof body.premium === "boolean") patch.premium = body.premium;
+  // Смена юзернейма: латиница/цифры/«_», 3–20 символов, уникальность
+  if (typeof body.username === "string") {
+    const un = body.username.trim().toLowerCase().replace(/^@+/, "").slice(0, 32);
+    if (!/^[a-z0-9_]{5,32}$/.test(un))
+      return NextResponse.json(
+        { error: "Юзернейм: 5–32 символа, латиница, цифры и «_»" },
+        { status: 400 },
+      );
+    if (un !== me.username) {
+      const [taken] = await db
+        .select({ id: users.id })
+        .from(users)
+        .where(eq(users.username, un))
+        .limit(1);
+      if (taken)
+        return NextResponse.json({ error: "Юзернейм уже занят" }, { status: 409 });
+      patch.username = un;
+    }
+  }
+  // Кастомный статус-эмодзи: эмодзи или ссылка на анимированную гифку
+  if (typeof body.statusEmoji === "string") patch.statusEmoji = body.statusEmoji.trim().slice(0, 300);
+  // Pulse Premium: цвет имени в чатах
+  if (typeof body.nameColor === "string" || body.nameColor === null)
+    patch.nameColor = body.nameColor ? String(body.nameColor).slice(0, 20) : null;
   if (typeof body.avatarUrl === "string" || body.avatarUrl === null)
     patch.avatarUrl = body.avatarUrl || null;
   if (typeof body.bannerUrl === "string" || body.bannerUrl === null)
@@ -40,6 +76,9 @@ export const PATCH = withApi("auth/me", async ({ req, me, log }) => {
   if (typeof body.showOnline === "boolean") patch.showOnline = body.showOnline;
   if (typeof body.allowCalls === "boolean") patch.allowCalls = body.allowCalls;
   if (typeof body.allowMessages === "boolean") patch.allowMessages = body.allowMessages;
+  if (typeof body.allowGroupInvites === "boolean") patch.allowGroupInvites = body.allowGroupInvites;
+  if (typeof body.discoverable === "boolean") patch.discoverable = body.discoverable;
+  if (typeof body.birthday === "string") patch.birthday = body.birthday.trim().slice(0, 20);
 
   if (Object.keys(patch).length === 0)
     return NextResponse.json({ error: "Нечего обновлять" }, { status: 400 });

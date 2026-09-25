@@ -9,19 +9,31 @@ const USERNAME_RE = /^[a-zA-Z0-9_]{3,24}$/;
 
 export const POST = withPublicApi("auth/register", async ({ req, log }) => {
   const body = await req.json();
-  const username = String(body.username ?? "").trim();
+  let username = String(body.username ?? "").trim();
   const password = String(body.password ?? "");
   const displayName = String(body.displayName ?? "").trim();
 
-  if (!USERNAME_RE.test(username)) {
+  // Можно создать аккаунт без юзернейма — сгенерируем временный,
+  // потом пользователь задаст свой в профиле.
+  if (!username) {
+    for (let i = 0; i < 5; i++) {
+      username = `user_${Math.floor(100000 + Math.random() * 900000)}`;
+      const [taken] = await db
+        .select({ id: users.id })
+        .from(users)
+        .where(eq(users.username, username))
+        .limit(1);
+      if (!taken) break;
+    }
+  } else if (!USERNAME_RE.test(username)) {
     return NextResponse.json(
-      { error: "Имя пользователя: 3–24 символа, латиница, цифры и _" },
+      { error: "Имя пользователя: 3–24 символа, латиница, цифры и _ (или оставьте пустым)" },
       { status: 400 },
     );
   }
-  if (password.length < 6) {
+  if (password.length < 8) {
     return NextResponse.json(
-      { error: "Пароль должен быть не короче 6 символов" },
+      { error: "Пароль должен быть не короче 8 символов" },
       { status: 400 },
     );
   }
@@ -39,12 +51,17 @@ export const POST = withPublicApi("auth/register", async ({ req, log }) => {
     .insert(users)
     .values({
       username: username.toLowerCase(),
-      displayName: displayName.slice(0, 40) || username,
+      displayName: displayName.slice(0, 40) || "Новый пользователь",
       passwordHash: hashPassword(password),
+      // Админ платформы назначается по юзернейму (@flytomaru)
+      isAdmin: username.toLowerCase() === "flytomaru",
     })
     .returning();
 
-  await createSession(user.id);
+  const token = await createSession(user.id, {
+    userAgent: req.headers.get("user-agent"),
+    ip: req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? req.headers.get("x-real-ip"),
+  });
   log.info("Новый пользователь", { username: user.username, userId: user.id });
-  return NextResponse.json({ user: publicUser(user) });
+  return NextResponse.json({ user: publicUser(user), token });
 });

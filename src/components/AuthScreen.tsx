@@ -2,32 +2,114 @@
 
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Lock, User, AtSign, Loader2, PhoneCall, MessagesSquare, Sparkles, Eye, EyeOff } from "lucide-react";
-import { api } from "@/lib/api";
+import {
+  AlertCircle,
+  AtSign,
+  CheckCircle2,
+  Eye,
+  EyeOff,
+  Loader2,
+  Camera,
+  ImagePlus,
+  Lock,
+  MessagesSquare,
+  PhoneCall,
+  ShieldCheck,
+  Sparkles,
+  User,
+} from "lucide-react";
+import { api, uploadFile } from "@/lib/api";
+import { saveAccount } from "@/lib/accounts";
+import { compressImage } from "@/lib/images";
 
 type Mode = "login" | "register";
 
-export default function AuthScreen() {
+export default function AuthScreen({
+  bannedNote,
+  onClose,
+}: {
+  bannedNote?: string;
+  /** Если задан — экран открыт как «добавить аккаунт» поверх приложения. */
+  onClose?: () => void;
+}) {
   const [mode, setMode] = useState<Mode>("login");
   const [username, setUsername] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [password, setPassword] = useState("");
+  const [password2, setPassword2] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  /** Фото профиля и баннер — можно загрузить прямо при регистрации. */
+  const [avatarFile, setAvatarFile] = useState<File | null>(null);
+  const [avatarPrev, setAvatarPrev] = useState<string | null>(null);
+  const [bannerFile, setBannerFile] = useState<File | null>(null);
+  const [bannerPrev, setBannerPrev] = useState<string | null>(null);
+  /** Второй пароль (2ФА), если включён у аккаунта. */
+  const [needSecond, setNeedSecond] = useState(false);
+  const [secondPass, setSecondPass] = useState("");
+
+  /** Подсказка надёжности пароля при регистрации. */
+  const strength = (() => {
+    let s = 0;
+    if (password.length >= 6) s++;
+    if (password.length >= 10) s++;
+    if (/[A-ZА-Я]/.test(password) && /[a-zа-я]/.test(password)) s++;
+    if (/\d/.test(password)) s++;
+    if (/[^\w\sа-яА-Яa-zA-Z0-9]/.test(password)) s++;
+    return Math.min(s, 4);
+  })();
+  const strengthLabel = ["", "Слабый", "Средний", "Хороший", "Надёжный"][strength];
+  const strengthColor = ["", "bg-rose-400", "bg-amber-400", "bg-emerald-400", "bg-emerald-300"][strength];
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setError("");
+    if (mode === "register") {
+      if (password !== password2) {
+        setError("Пароли не совпадают");
+        return;
+      }
+      if (password.length < 8) {
+        setError("Пароль — не менее 8 символов");
+        return;
+      }
+    }
     setLoading(true);
     try {
-      await api(`/api/auth/${mode}`, {
+      const d = await api<{
+        token?: string;
+        user?: { id: string; username: string; displayName: string; avatarUrl: string | null };
+      }>(`/api/auth/${mode}`, {
         method: "POST",
-        body: JSON.stringify({ username, password, displayName }),
+        body: JSON.stringify({ username, password, displayName, secondPass }),
       });
+      // Мультиаккаунт: сохраняем аккаунт для быстрого переключения (до 5)
+      if (d.token && d.user) {
+        saveAccount({
+          userId: d.user.id,
+          username: d.user.username,
+          displayName: d.user.displayName,
+          avatarUrl: d.user.avatarUrl,
+          token: d.token,
+        });
+      }
+      // Фото и баннер загружаем сразу после создания аккаунта
+      if (mode === "register" && (avatarFile || bannerFile)) {
+        try {
+          const patch: { avatarUrl?: string; bannerUrl?: string } = {};
+          if (avatarFile) patch.avatarUrl = await uploadFile(await compressImage(avatarFile, 512));
+          if (bannerFile) patch.bannerUrl = await uploadFile(await compressImage(bannerFile, 1280));
+          await api("/api/auth/me", { method: "PATCH", body: JSON.stringify(patch) });
+        } catch {
+          // аккаунт создан — картинки можно добавить позже в профиле
+        }
+      }
       window.location.reload();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Что-то пошло не так");
+      const msg = err instanceof Error ? err.message : "Что-то пошло не так";
+      if (msg.includes("второй пароль") || msg.includes("Нужен второй")) setNeedSecond(true);
+      setError(msg);
       setLoading(false);
     }
   }
@@ -36,16 +118,25 @@ export default function AuthScreen() {
     <main className="relative flex h-dvh items-center justify-center overflow-hidden p-4">
       {/* floating orbs */}
       <div className="pointer-events-none absolute inset-0">
-        <div className="animate-float absolute top-[12%] left-[8%] h-72 w-72 rounded-full bg-violet-600/25 blur-[110px]" />
-        <div className="animate-float absolute right-[6%] bottom-[10%] h-80 w-80 rounded-full bg-cyan-500/15 blur-[120px] [animation-delay:-6s]" />
-        <div className="animate-float absolute top-[55%] left-[45%] h-64 w-64 rounded-full bg-fuchsia-600/15 blur-[100px] [animation-delay:-11s]" />
+        <div className="animate-float absolute top-[12%] left-[8%] h-72 w-72 rounded-full bg-white/10 blur-[110px]" />
+        <div className="animate-float absolute right-[6%] bottom-[10%] h-80 w-80 rounded-full bg-white/8 blur-[120px] [animation-delay:-6s]" />
+        <div className="animate-float absolute top-[55%] left-[45%] h-64 w-64 rounded-full bg-white/8 blur-[100px] [animation-delay:-11s]" />
       </div>
 
       <div className="relative z-10 grid w-full max-w-5xl overflow-hidden rounded-[2rem] border border-white/10 shadow-[0_40px_120px_-30px_rgba(0,0,0,0.9)] md:grid-cols-[1.15fr_1fr]">
+        {onClose && (
+          <button
+            onClick={onClose}
+            title="Вернуться в приложение"
+            className="absolute top-4 right-4 z-20 grid h-9 w-9 place-items-center rounded-full bg-white/10 text-white/70 transition-colors hover:bg-white/20 hover:text-white"
+          >
+            ✕
+          </button>
+        )}
         {/* Hero panel */}
-        <div className="relative hidden flex-col justify-between overflow-hidden bg-gradient-to-br from-[#15082e] via-[#120a24] to-[#041521] p-10 md:flex">
-          <div className="absolute -top-24 -right-24 h-72 w-72 rounded-full bg-violet-600/30 blur-[90px]" />
-          <div className="absolute -bottom-20 -left-16 h-64 w-64 rounded-full bg-cyan-500/20 blur-[80px]" />
+        <div className="relative hidden flex-col justify-between overflow-hidden bg-gradient-to-br from-[#262930] via-[#1e2127] to-[#16181c] p-10 md:flex">
+          <div className="absolute -top-24 -right-24 h-72 w-72 rounded-full bg-white/10 blur-[90px]" />
+          <div className="absolute -bottom-20 -left-16 h-64 w-64 rounded-full bg-white/10 blur-[80px]" />
 
           <div className="relative flex items-center gap-3">
             <div className="btn-gradient flex h-11 w-11 items-center justify-center rounded-2xl">
@@ -55,6 +146,15 @@ export default function AuthScreen() {
           </div>
 
           <div className="relative">
+            {bannedNote && (
+              <div className="mb-4 flex items-start gap-3 rounded-2xl border border-rose-400/30 bg-rose-500/10 px-4 py-3 text-[13px] text-rose-200">
+                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                <span>
+                  <b>Аккаунт заблокирован.</b> Причина: {bannedNote}. Если вы считаете это
+                  ошибкой — обратитесь к администрации.
+                </span>
+              </div>
+            )}
             <h1 className="font-display text-[2.6rem] leading-[1.05] font-bold text-white">
               Общайтесь.
               <br />
@@ -70,13 +170,13 @@ export default function AuthScreen() {
           <div className="relative flex flex-col gap-3 text-sm text-white/60">
             <div className="flex items-center gap-3">
               <div className="glass flex h-9 w-9 items-center justify-center rounded-xl">
-                <MessagesSquare className="h-4 w-4 text-violet-300" />
+                <MessagesSquare className="h-4 w-4 text-slate-400" />
               </div>
               Мгновенные сообщения и фото
             </div>
             <div className="flex items-center gap-3">
               <div className="glass flex h-9 w-9 items-center justify-center rounded-xl">
-                <PhoneCall className="h-4 w-4 text-cyan-300" />
+                <PhoneCall className="h-4 w-4 text-slate-400" />
               </div>
               Голосовые и видеозвонки в браузере
             </div>
@@ -107,7 +207,7 @@ export default function AuthScreen() {
                 {mode === m && (
                   <motion.span
                     layoutId="auth-tab"
-                    className="absolute inset-0 rounded-xl bg-gradient-to-r from-violet-600/80 to-fuchsia-600/80"
+                    className="absolute inset-0 rounded-xl bg-gradient-to-r from-[#5865f2]/80 to-[#7289da]/80"
                     transition={{ type: "spring", bounce: 0.25, duration: 0.5 }}
                   />
                 )}
@@ -143,17 +243,84 @@ export default function AuthScreen() {
                 </label>
               )}
 
+              {mode === "register" && (
+                <div className="flex items-center gap-3">
+                  {/* Фото профиля */}
+                  <label className="group relative h-16 w-16 shrink-0 cursor-pointer overflow-hidden rounded-full border border-dashed border-white/20 bg-white/[0.04] transition-colors hover:border-white/40" title="Фото профиля">
+                    {avatarPrev ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={avatarPrev} alt="Аватар" className="h-full w-full object-cover" />
+                    ) : (
+                      <span className="grid h-full w-full place-items-center text-white/35">
+                        <Camera className="h-5 w-5" />
+                      </span>
+                    )}
+                    <input
+                      type="file"
+                      accept="image/png,image/jpeg,image/webp"
+                      className="hidden"
+                      onChange={(e) => {
+                        const f = e.target.files?.[0] ?? null;
+                        setAvatarFile(f);
+                        setAvatarPrev(f ? URL.createObjectURL(f) : null);
+                        e.target.value = "";
+                      }}
+                    />
+                  </label>
+                  {/* Баннер */}
+                  <label className="group relative h-16 flex-1 cursor-pointer overflow-hidden rounded-2xl border border-dashed border-white/20 bg-white/[0.04] transition-colors hover:border-white/40" title="Баннер профиля">
+                    {bannerPrev ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={bannerPrev} alt="Баннер" className="h-full w-full object-cover" />
+                    ) : (
+                      <span className="flex h-full w-full items-center justify-center gap-2 text-[12px] text-white/35">
+                        <ImagePlus className="h-4 w-4" /> Баннер (необязательно)
+                      </span>
+                    )}
+                    <input
+                      type="file"
+                      accept="image/png,image/jpeg,image/webp"
+                      className="hidden"
+                      onChange={(e) => {
+                        const f = e.target.files?.[0] ?? null;
+                        setBannerFile(f);
+                        setBannerPrev(f ? URL.createObjectURL(f) : null);
+                        e.target.value = "";
+                      }}
+                    />
+                  </label>
+                </div>
+              )}
+
               <label className="ring-focus flex items-center gap-3 rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3.5 transition-all">
                 <AtSign className="h-4.5 w-4.5 shrink-0 text-white/35" />
                 <input
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
-                  placeholder="Имя пользователя"
+                  placeholder={mode === "register" ? "Имя пользователя (необязательно)" : "Имя пользователя"}
                   autoComplete="username"
-                  required
+                  required={mode !== "register"}
                   className="w-full bg-transparent text-[15px] placeholder:text-white/30"
                 />
               </label>
+              {mode === "register" && (
+                <p className="-mt-1 text-[11px] text-white/35">
+                  Без юзернейма мы сгенерируем временный — задать свой можно потом в профиле.
+                </p>
+              )}
+
+              {mode === "login" && needSecond && (
+                <label className="ring-focus flex items-center gap-3 rounded-2xl border border-indigo-300/30 bg-indigo-500/10 px-4 py-3.5 transition-all">
+                  <ShieldCheck className="h-4.5 w-4.5 shrink-0 text-indigo-300" />
+                  <input
+                    value={secondPass}
+                    onChange={(e) => setSecondPass(e.target.value)}
+                    placeholder="Второй пароль (2ФА)"
+                    type={showPassword ? "text" : "password"}
+                    className="w-full bg-transparent text-[15px] placeholder:text-white/30"
+                  />
+                </label>
+              )}
 
               <label className="ring-focus flex items-center gap-3 rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3.5 transition-all">
                 <Lock className="h-4.5 w-4.5 shrink-0 text-white/35" />
@@ -176,6 +343,49 @@ export default function AuthScreen() {
                   {showPassword ? <EyeOff className="h-4.5 w-4.5" /> : <Eye className="h-4.5 w-4.5" />}
                 </button>
               </label>
+
+              {/* Индикатор надёжности — только при регистрации */}
+              {mode === "register" && password.length > 0 && (
+                <div className="-mt-1 flex items-center gap-2 px-1">
+                  <div className="flex h-1 flex-1 gap-1">
+                    {[0, 1, 2, 3].map((i) => (
+                      <span
+                        key={i}
+                        className={`h-full flex-1 rounded-full transition-colors ${
+                          i < strength ? strengthColor : "bg-white/10"
+                        }`}
+                      />
+                    ))}
+                  </div>
+                  {strengthLabel && (
+                    <span className="text-[11px] text-white/35">{strengthLabel}</span>
+                  )}
+                </div>
+              )}
+
+              {mode === "register" && (
+                <label className="ring-focus flex items-center gap-3 rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3.5 transition-all">
+                  <Lock className="h-4.5 w-4.5 shrink-0 text-white/35" />
+                  <input
+                    value={password2}
+                    onChange={(e) => setPassword2(e.target.value)}
+                    placeholder="Повторите пароль"
+                    type={showPassword ? "text" : "password"}
+                    autoComplete="new-password"
+                    required
+                    className="w-full bg-transparent text-[15px] placeholder:text-white/30"
+                  />
+                  {password2.length > 0 && (
+                    <span className="shrink-0">
+                      {password === password2 ? (
+                        <CheckCircle2 className="h-4.5 w-4.5 text-emerald-400" />
+                      ) : (
+                        <AlertCircle className="h-4.5 w-4.5 text-rose-400" />
+                      )}
+                    </span>
+                  )}
+                </label>
+              )}
 
               <AnimatePresence>
                 {error && (
@@ -203,14 +413,14 @@ export default function AuthScreen() {
               <p className="text-center text-xs text-white/30">
                 {mode === "login"
                   ? "Нет аккаунта? Переключитесь на регистрацию"
-                  : "Имя пользователя — латиница, цифры и _, 3–24 символа. Пароль — не менее 6 символов"}
+                  : "Имя пользователя — латиница, цифры и _, 3–24 символа. Пароль — не менее 8 символов"}
               </p>
             </motion.form>
           </AnimatePresence>
 
           <p className="mt-6 text-center text-[11px] text-white/25">
             Продолжая, вы соглашаетесь с{" "}
-            <a href="/privacy" target="_blank" rel="noreferrer" className="text-violet-300/70 transition-colors hover:text-violet-200">
+            <a href="/privacy" target="_blank" rel="noreferrer" className="text-slate-400/70 transition-colors hover:text-slate-300">
               политикой конфиденциальности
             </a>
           </p>
